@@ -622,6 +622,34 @@ export default function InvoiceDetail() {
           if (data.betreff) {
             setForm(prev => ({ ...prev, betreff: prev.betreff || String(data.betreff) }));
           }
+          // Wenn die Kalkulation einem Kunden zugeordnet war, diesen ins
+          // Angebot übernehmen.
+          if (data.customer_id) {
+            (async () => {
+              const { data: cust } = await supabase
+                .from("customers")
+                .select("id, name, anrede, titel, uid_nummer, adresse, plz, ort, land, email, telefon, kundennummer")
+                .eq("id", data.customer_id)
+                .maybeSingle();
+              if (cust) {
+                setForm(prev => ({
+                  ...prev,
+                  customer_id: cust.id,
+                  kunde_name: cust.name,
+                  kunde_adresse: cust.adresse || "",
+                  kunde_plz: cust.plz || "",
+                  kunde_ort: cust.ort || "",
+                  kunde_land: cust.land || "Österreich",
+                  kunde_email: cust.email || "",
+                  kunde_telefon: cust.telefon || "",
+                  kunde_uid: (cust as any).uid_nummer || "",
+                  kunde_anrede: (cust as any).anrede || "",
+                  kunde_titel: (cust as any).titel || "",
+                  kundennummer: cust.kundennummer || "",
+                } as any));
+              }
+            })();
+          }
           toast({ title: "Aus Kalkulation übernommen", description: `${(data.items || []).length} Position(en) aus der Auftragskalkulation eingefügt.` });
         }
       } catch { /* ignore malformed payload */ }

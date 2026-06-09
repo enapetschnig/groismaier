@@ -33,7 +33,8 @@ import PurchaseInvoices from "./pages/PurchaseInvoices";
 import InvoiceTemplates from "./pages/InvoiceTemplates";
 import Customers from "./pages/Customers";
 import OfferPackages from "./pages/OfferPackages";
-import Auftragskalkulation from "./pages/Auftragskalkulation";
+import KalkulationHub from "./pages/KalkulationHub";
+import KalkulationEditor from "./pages/KalkulationEditor";
 import Standardaufbauten from "./pages/Standardaufbauten";
 import Preislisten from "./pages/Preislisten";
 import BueroVorlagen from "./pages/BueroVorlagen";
@@ -107,7 +108,8 @@ function AppContent() {
           <Route path="/invoices/:id" element={<ProtectedRoute feature="rechnungen"><InvoiceDetailKeyed /></ProtectedRoute>} />
           <Route path="/eingangsrechnungen" element={<ProtectedRoute feature="eingangsrechnungen"><PurchaseInvoices /></ProtectedRoute>} />
           <Route path="/materials" element={<ProtectedRoute feature="materialien"><InvoiceTemplates /></ProtectedRoute>} />
-          <Route path="/auftragskalkulation" element={<ProtectedRoute feature="materialien"><Auftragskalkulation /></ProtectedRoute>} />
+          <Route path="/auftragskalkulation" element={<ProtectedRoute feature="materialien"><KalkulationHub /></ProtectedRoute>} />
+          <Route path="/auftragskalkulation/:id" element={<ProtectedRoute feature="materialien"><KalkulationEditor /></ProtectedRoute>} />
           <Route path="/standardaufbauten" element={<ProtectedRoute feature="materialien"><Standardaufbauten /></ProtectedRoute>} />
           <Route path="/preislisten" element={<ProtectedRoute feature="materialien"><Preislisten /></ProtectedRoute>} />
           <Route path="/buero-vorlagen" element={<ProtectedRoute feature="materialien"><BueroVorlagen /></ProtectedRoute>} />
