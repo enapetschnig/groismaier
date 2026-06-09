@@ -1,0 +1,144 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Corporate Fonts: Montserrat (Überschriften) + system Sans-Serif mit Segoe UI bevorzugt (Fließtext) */
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800;900&display=swap');
+
+/* Definition of the design system.
+   Corporate Design Holzbau Groismaier:
+   - Navy/Petrol (Primär) #002337  (exakt aus Logo)
+   - Petrol (Akzent)      #185D7A
+   - Hellblau (Wasserzeichen / Letterhead) #CFE2E6
+   - Grau hell            #F2F2F2
+   - Grau mittel          #666666
+   All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    /* Clean, hellerer Hintergrund */
+    --background: 0 0% 100%;
+    --foreground: 202 45% 12%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 202 45% 12%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 202 45% 12%;
+
+    /* Holzbau Groismaier Navy #002337 als Hauptfarbe (exakt aus Logo) */
+    --primary: 202 100% 11%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Grau hell #F2F2F2 als secondary */
+    --secondary: 0 0% 95%;
+    --secondary-foreground: 202 100% 11%;
+
+    --muted: 0 0% 95%;
+    --muted-foreground: 0 0% 40%;  /* Grau mittel #666666 */
+
+    /* Petrol als accent */
+    --accent: 199 64% 26%;
+    --accent-foreground: 0 0% 100%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    /* Grün für Success */
+    --success: 152 55% 36%;
+    --success-foreground: 0 0% 100%;
+
+    --border: 0 0% 90%;
+    --input: 0 0% 92%;
+    --ring: 199 64% 26%;
+
+    --radius: 0.5rem;
+
+    /* Corporate design tokens - Holzbau Groismaier */
+    --groismaier-navy: 202 100% 11%;
+    --groismaier-petrol: 199 64% 26%;
+    --groismaier-hellblau: 193 28% 85%;
+    --groismaier-grau-hell: 0 0% 95%;
+    --groismaier-grau-mittel: 0 0% 40%;
+
+    /* Legacy-Aliase (damit bestehende Referenzen weiter funktionieren) */
+    --lutz-gruen: 202 100% 11%;
+    --lutz-hellgruen: 199 64% 26%;
+    --lutz-grau-hell: 0 0% 95%;
+    --lutz-grau-mittel: 0 0% 40%;
+
+    /* Shadows */
+    --shadow-soft: 0 2px 8px hsl(202 100% 11% / 0.08);
+    --shadow-medium: 0 4px 16px hsl(202 100% 11% / 0.12);
+
+    /* Transitions */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 202 100% 11%;
+    --sidebar-primary: 202 100% 11%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 95%;
+    --sidebar-accent-foreground: 202 100% 11%;
+    --sidebar-border: 0 0% 90%;
+    --sidebar-ring: 199 64% 26%;
+  }
+
+  .dark {
+    --background: 202 40% 8%;
+    --foreground: 200 15% 95%;
+
+    --card: 202 35% 12%;
+    --card-foreground: 200 15% 95%;
+
+    --popover: 202 35% 12%;
+    --popover-foreground: 200 15% 95%;
+
+    --primary: 199 70% 55%;
+    --primary-foreground: 202 100% 8%;
+
+    --secondary: 202 18% 21%;
+    --secondary-foreground: 200 15% 95%;
+
+    --muted: 202 18% 17%;
+    --muted-foreground: 200 10% 63%;
+
+    --accent: 199 70% 55%;
+    --accent-foreground: 202 100% 8%;
+
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 202 18% 21%;
+    --input: 202 18% 21%;
+    --ring: 199 70% 55%;
+    --sidebar-background: 202 40% 8%;
+    --sidebar-foreground: 200 15% 95%;
+    --sidebar-primary: 199 70% 55%;
+    --sidebar-primary-foreground: 202 100% 8%;
+    --sidebar-accent: 202 18% 15%;
+    --sidebar-accent-foreground: 200 15% 95%;
+    --sidebar-border: 202 18% 15%;
+    --sidebar-ring: 199 70% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    /* Body: Segoe UI (Windows/Mac System) mit Fallbacks */
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif;
+  }
+
+  /* Überschriften: Montserrat ExtraBold */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: "Montserrat", "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+}

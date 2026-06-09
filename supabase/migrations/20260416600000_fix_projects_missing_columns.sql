@@ -1,0 +1,21 @@
+-- Add ALL missing columns to projects table that the app expects
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS erfassungsdatum DATE;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS projektnummer TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS plz TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS ort TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS land TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS zusatzinfos TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS wegbeschreibung TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS projekt_typ TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS projektart TEXT;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS prioritaet TEXT DEFAULT 'normal';
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS leistungsarten JSONB;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS geplanter_start DATE;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS geplantes_ende DATE;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS budget NUMERIC;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS auftragsvolumen NUMERIC;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS projektverantwortlicher_id UUID;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS bauleiter_id UUID;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS zugewiesene_mitarbeiter JSONB;
+ALTER TABLE public.projects ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES auth.users(id);

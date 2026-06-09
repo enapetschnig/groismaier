@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>MONTI.PRO - Testcheckliste Rechnungen & Angebote</title>
+<style>
+  @page { margin: 20mm; size: A4; }
+  body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 11pt; line-height: 1.5; color: #1a1a1a; max-width: 800px; margin: 0 auto; padding: 20px; }
+  h1 { color: #E08A20; font-size: 20pt; border-bottom: 3px solid #E08A20; padding-bottom: 8px; }
+  h2 { color: #333; font-size: 14pt; margin-top: 24px; border-bottom: 1px solid #ddd; padding-bottom: 4px; }
+  .check-item { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; page-break-inside: avoid; }
+  .checkbox { width: 14px; height: 14px; border: 1.5px solid #666; border-radius: 2px; flex-shrink: 0; margin-top: 3px; }
+  .item-text { flex: 1; }
+  .item-text strong { color: #E08A20; }
+  .section-note { background: #f8f4ee; border-left: 3px solid #E08A20; padding: 8px 12px; margin: 12px 0; font-size: 10pt; color: #555; }
+  .header-info { display: flex; justify-content: space-between; margin-bottom: 20px; font-size: 10pt; color: #666; }
+  .logo-area { font-size: 18pt; font-weight: bold; color: #E08A20; }
+  .sub { font-size: 10pt; color: #888; font-weight: normal; }
+  @media print { body { padding: 0; } }
+</style>
+</head>
+<body>
+
+<div class="header-info">
+  <div>
+    <div class="logo-area">MONTI.PRO</div>
+    <div class="sub">Ihr Montagetischler</div>
+  </div>
+  <div style="text-align:right">
+    <div>Testcheckliste</div>
+    <div>Datum: _______________</div>
+    <div>Tester: _______________</div>
+  </div>
+</div>
+
+<h1>Testcheckliste: Rechnungen & Angebote</h1>
+<p style="color:#666; font-size:10pt;">Umfassende manuelle Testliste für alle Funktionen im Bereich Rechnungen & Angebote.</p>
+
+<h2>A) Listenansicht <span class="sub">/invoices</span></h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Seite lädt mit Statistik-Karten (Offen, Bezahlt, Überfällig)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Filter <strong>"Rechnungen"</strong> / <strong>"Angebote"</strong> funktioniert</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Suche nach Nummer, Kundenname, Betrag</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Status-Badges korrekt (Entwurf, Offen, Bezahlt, Teilbezahlt, Storniert)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Klick auf Rechnung/Angebot öffnet Detailansicht</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Archivierte Rechnungen ausblendbar</div></div>
+
+<h2>B) Neue Rechnung erstellen</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Neue Rechnung"</strong> Button → navigiert zu <code>/invoices/new</code></div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Kundendaten:</strong> Kunde aus Dropdown wählen → Adresse, PLZ, Ort, UID werden automatisch ausgefüllt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Belegdatum:</strong> Datum setzbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Leistungsdatum:</strong> Sichtbar (nur bei Rechnung, nicht bei Angebot)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Fällig am:</strong> Sichtbar (nur bei Rechnung)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Betreff/Referenz:</strong> Feld vorhanden und editierbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Zahlungsbedingungen:</strong> Setzbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Anrede & Titel:</strong> Werden vom Kunden übernommen</div></div>
+
+<h2>C) Positionen – Das Kernstück</h2>
+<div class="section-note">Die Positions-Bearbeitung hat eine eingebaute Autocomplete-Suche. Ab 2 Zeichen in der Beschreibung erscheinen Vorschläge aus dem Materialkatalog.</div>
+
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Autocomplete:</strong> In Beschreibung 2+ Zeichen tippen → Dropdown mit Materialien erscheint</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Autocomplete-Auswahl:</strong> Material anklicken → Beschreibung, Einheit, Preis, Produktnr. werden automatisch ausgefüllt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Materialien" Button:</strong> Öffnet Dialog mit Materialkatalog</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ Suche funktioniert (Name, Produktnummer, Beschreibung)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ Kategorie-Filter funktioniert</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ Favoriten (⭐ Sterne) sichtbar und umschaltbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ Mehrere Materialien gleichzeitig auswählbar (Checkboxen)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ Menge pro Material eingebbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text" style="padding-left:20px">→ "Übernehmen" fügt alle ausgewählten Positionen ein</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Position hinzufügen":</strong> Neue leere Zeile wird eingefügt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Menge:</strong> Änderbar → Gesamtpreis aktualisiert sich automatisch</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Einheit:</strong> Dropdown mit allen konfigurierten Einheiten (Stk., m², lfm, Std., ...)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Einzelpreis:</strong> Netto-Preis eingebbar → Gesamtpreis berechnet sich</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rabatt %:</strong> Pro Position möglich (0–100%)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Langtext:</strong> Optionales Textarea für Details unter der Beschreibung</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Produktnummer:</strong> Wird aus Material übernommen</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Reihenfolge:</strong> Positionen hoch/runter verschiebbar (↑↓ Pfeile)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Löschen:</strong> Position entfernbar (🗑️ Icon)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Gesamtpreis:</strong> Automatische Berechnung (Menge × Preis × (1 − Rabatt%))</div></div>
+
+<h2>D) Import-Funktionen</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Aus Angebot":</strong> Importiert Positionen aus bestehendem Angebot</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Aus Regiebericht":</strong> Importiert Material + Stunden aus Regiebericht</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Aus Projekt":</strong> Importiert Materialien aus Projektentnahmen</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Materialien":</strong> Öffnet Materialkatalog-Dialog (siehe Sektion C)</div></div>
+
+<h2>E) Summen & Rabatte</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Nettobetrag korrekt berechnet (Summe aller Positionsgesamtpreise)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">USt. korrekt berechnet (Standard 20%, änderbar auf 0%, 10%, 13%)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Bruttobetrag = Netto + USt.</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Gesamtrabatt:</strong> Prozent oder Betrag → Abzug korrekt angezeigt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Reverse Charge:</strong> Toggle → USt. entfällt, Hinweistext erscheint</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Skonto:</strong> Wenn konfiguriert, Skonto-Box mit korrekter Berechnung</div></div>
+
+<h2>F) Speichern & Nummernvergabe</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Speichern:</strong> Rechnung/Angebot wird gespeichert ohne Fehler</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Nummernformat:</strong> Entspricht der Admin-Konfiguration (z.B. <code>26001</code>, <code>AN26001</code>)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Status "Entwurf":</strong> Dokument kann weiter bearbeitet werden</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Nachträgliche Änderungen:</strong> Speichern aktualisiert korrekt (kein neues Dokument)</div></div>
+
+<h2>G) Neues Angebot – Unterschiede zur Rechnung</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Neues Angebot"</strong> → <code>/invoices/new?typ=angebot</code></div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>"Gültig bis"</strong> Feld sichtbar (statt "Fällig am")</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Leistungsdatum</strong> NICHT sichtbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Nummernformat:</strong> Mit Prefix <code>AN</code> (z.B. AN26001)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Alle Positions-Features funktionieren identisch wie bei Rechnung</div></div>
+
+<h2>H) PDF-Vorschau & Export</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">PDF-Vorschau lädt korrekt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Briefkopf:</strong> Zeigt konfigurierte Firmendaten (Name, Adresse, Telefon, E-Mail)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Logo:</strong> Wird korrekt angezeigt (Position, Größe wie konfiguriert)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Absenderzeile:</strong> Korrekt über Empfängeradresse</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Empfänger:</strong> Kundenanrede, Name, Adresse korrekt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Positionen:</strong> Alle Positionen mit Kurztext + Langtext (kursiv) korrekt dargestellt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Summenblock:</strong> Netto, USt., Brutto korrekt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Footer:</strong> Konfigurierte Fußzeile mit Bankverbindung</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Akzentfarbe:</strong> Konfigurierte Farbe (Trennlinien, Hervorhebungen)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Seitenumbruch:</strong> Bei vielen Positionen korrekt (Footer auf jeder Seite)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>UID-Nummer:</strong> Wird angezeigt wenn konfiguriert</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>QR-Code:</strong> Wird auf Rechnung angezeigt (EPC-QR für Banking)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>PDF-Download:</strong> Funktioniert, Datei hat korrekten Namen</div></div>
+
+<h2>I) Sonderfälle & Workflows</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Teilzahlung:</strong> Bezahlten Betrag eintragen → "Offener Betrag" erscheint im PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Storno:</strong> Rechnung stornieren → Storno-Grund eingeben → Storno-PDF generieren</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Mahnung:</strong> Überfällige Rechnung mahnen → Mahnstufe wählen → Mahnungs-PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Angebot → Rechnung:</strong> Angebot in Rechnung umwandeln (alle Positionen werden übernommen)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Zahlungseingang verbuchen:</strong> Teilzahlung oder Vollzahlung eintragen</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Mehrere Zahlungen:</strong> Mehrere Teilzahlungen eintragbar</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Skonto-Box:</strong> Bei konfiguriertem Skonto → Anzeige auf PDF mit Berechnung</div></div>
+
+<h2>J) Admin-Konfiguration (wirkt sich auf Rechnungen/Angebote aus)</h2>
+<div class="section-note">Diese Einstellungen im Admin-Bereich beeinflussen das Aussehen und Verhalten aller Rechnungen und Angebote.</div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Firmendaten ändern → PDF spiegelt Änderungen wider</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Logo hochladen → Logo erscheint auf PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Absenderzeile ändern → Zeigt sich auf PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Fußzeile (3 Zeilen) konfigurieren → Footer auf PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Schlusstext Rechnung/Angebot anpassen</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Rechnungs-Layout</strong> → Akzentfarbe ändern → Farbe auf PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Nummernkreise</strong> → Prefix/Format ändern → Neue Nummern nutzen neues Format</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Bankverbindung</strong> → IBAN/BIC ändern → Erscheint auf PDF + QR-Code</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Firmen-UID</strong> → UID-Nummer setzen → Erscheint auf PDF</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text"><strong>Einheiten</strong> → Neue Einheit hinzufügen → Erscheint im Einheiten-Dropdown</div></div>
+
+<h2>K) Fehlerfälle testen</h2>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Rechnung ohne Positionen speichern → Fehlermeldung oder leere Rechnung?</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Rechnung ohne Kunde speichern → Funktioniert (Kundendaten optional)</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Sehr viele Positionen (20+) → Seitenumbruch korrekt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Sehr langer Langtext → Wird korrekt umgebrochen</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Negative Menge oder Preis → Wird auf 0 begrenzt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Rabatt über 100% → Wird auf 100% begrenzt</div></div>
+<div class="check-item"><div class="checkbox"></div><div class="item-text">Browser-Zurück-Button → Daten gehen nicht verloren</div></div>
+
+<div style="margin-top:40px; border-top:2px solid #E08A20; padding-top:15px; font-size:10pt; color:#888;">
+  <p><strong>MONTI.PRO</strong> – Testcheckliste Rechnungen & Angebote</p>
+  <p>Generiert am: April 2026 | Gesamt: 78 Testpunkte</p>
+</div>
+
+</body>
+</html>

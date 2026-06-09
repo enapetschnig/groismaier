@@ -1,0 +1,25 @@
+project_id = "tnwpvrvpyyzwifmshdsn"
+
+[functions.polish-text]
+verify_jwt = false
+
+[functions.send-disturbance-report]
+verify_jwt = false
+
+[functions.generate-invoice-pdf]
+verify_jwt = false
+
+[functions.send-invitation]
+verify_jwt = false
+
+[functions.create-team-time-entries]
+verify_jwt = false
+
+[functions.create-user]
+verify_jwt = false
+
+[functions.delete-user]
+verify_jwt = false
+
+[functions.parse-invoice-document]
+verify_jwt = false

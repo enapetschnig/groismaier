@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Holzbau Groismaier — Zimmerei & Holzbau</title>
+    <meta name="description" content="Angebote, Rechnungen, Kalkulation und Zeiterfassung für Holzbau Groismaier GmbH">
+    <meta name="author" content="Holzbau Groismaier GmbH" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png">
+    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png">
+
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#002337">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Holzbau Groismaier">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+
+
+
+    <meta property="og:type" content="website" />
+
+    <meta name="twitter:card" content="summary_large_image" />
+
+
+
+
+  <meta property="og:title" content="Holzbau Groismaier — Zimmerei & Holzbau">
+  <meta name="twitter:title" content="Holzbau Groismaier — Zimmerei & Holzbau">
+  <meta property="og:description" content="Angebote, Rechnungen, Kalkulation und Zeiterfassung für Holzbau Groismaier GmbH">
+  <meta name="twitter:description" content="Angebote, Rechnungen, Kalkulation und Zeiterfassung für Holzbau Groismaier GmbH">
+</head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      // Auto-reload on chunk load failure (after deployment)
+      window.addEventListener('error', function(e) {
+        if (e.message && e.message.includes('Failed to fetch dynamically imported module')) {
+          window.location.reload();
+        }
+      });
+      window.addEventListener('unhandledrejection', function(e) {
+        if (e.reason && e.reason.message && e.reason.message.includes('Failed to fetch dynamically imported module')) {
+          window.location.reload();
+        }
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#CC4400"/>
+      <stop offset="100%" stop-color="#F0A830"/>
+    </linearGradient>
+  </defs>
+  <!-- House roof -->
+  <path d="M32 6L4 30h8v24h40V30h8L32 6z" fill="url(#g)" opacity="0.9"/>
+  <!-- Door -->
+  <rect x="26" y="36" width="12" height="18" rx="1" fill="white" opacity="0.9"/>
+  <!-- Window left -->
+  <rect x="14" y="34" width="8" height="8" rx="1" fill="white" opacity="0.7"/>
+  <!-- Window right -->
+  <rect x="42" y="34" width="8" height="8" rx="1" fill="white" opacity="0.7"/>
+  <!-- M letter -->
+  <text x="32" y="30" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="14" fill="white">M</text>
+</svg>
