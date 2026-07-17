@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Session, User } from "@supabase/supabase-js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Clock, FolderKanban, Users, BarChart3, LogOut, FileText, ArrowRight, Info, User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown, Calculator, Layers, Tag, FolderOpen } from "lucide-react";
+import { Clock, FolderKanban, Users, BarChart3, LogOut, FileText, ArrowRight, Info, User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown, Calculator, Plus, TrendingUp, CalendarRange, Wallet, HardHat } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useOnboarding } from "@/contexts/OnboardingContext";
 import {
@@ -16,8 +16,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
-import { usePermissions } from "@/hooks/usePermissions";
+import { usePermissions, type FeatureKey } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
+import { GeschaeftsbereichTile } from "@/components/dashboard/GeschaeftsbereichTile";
+
+// Diese Feature-Keys werden zentral in usePermissions ergänzt
+const NACHKALKULATION_FEATURE = "nachkalkulation" as string as FeatureKey;
+const FINANZPLANUNG_FEATURE = "finanzplanung" as string as FeatureKey;
 
 type Project = {
   id: string;
@@ -273,10 +278,15 @@ export default function Index() {
       <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
         <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
           <div className="flex justify-between items-center gap-3">
-            <div className="flex items-center gap-2 sm:gap-3">
-              <div className="flex flex-col">
-                <span className="text-xs sm:text-sm text-muted-foreground">Hallo</span>
-                <span className="text-sm sm:text-base font-semibold">{userName || "Benutzer"}</span>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              <img
+                src="/groismaier-logo-transparent.png"
+                alt="Holzbau Groismaier"
+                className="h-9 sm:h-11 w-auto shrink-0"
+              />
+              <div className="flex flex-col min-w-0">
+                <span className="text-sm sm:text-base font-bold leading-tight truncate">Holzbau Groismaier</span>
+                <span className="text-xs sm:text-sm text-muted-foreground truncate">Hallo {userName || "Benutzer"}</span>
               </div>
             </div>
             <DropdownMenu>
@@ -349,25 +359,153 @@ export default function Index() {
           </p>
         </div>
 
-        {/* Meine Einteilung — für Mitarbeiter und Vorarbeiter */}
-        {user && !isAdmin && <MeineEinteilung userId={user.id} />}
+        {/* Meine Einteilung — für Mitarbeiter und Vorarbeiter prominent oben */}
+        {user && !isAdmin && (
+          <div className="mb-6 sm:mb-8">
+            <MeineEinteilung userId={user.id} />
+          </div>
+        )}
 
-        {/* Main Actions Grid — Admin: R&A, Projekte, Material, Materialien, Kunden, Admin, Zeit, Stunden */}
+        {/* Schnellaktionen — KingBill-Stil, nur wenn Rechnungen sichtbar */}
+        {canView('rechnungen') && (
+          <section className="mb-6 sm:mb-8">
+            <h2 className="text-xl sm:text-2xl font-bold mb-3 sm:mb-4">Schnellaktionen</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+              <Button size="lg" className="h-14 sm:h-16 text-base justify-start gap-3" onClick={() => navigate("/invoices/new?typ=rechnung")}>
+                <Plus className="h-5 w-5 shrink-0" />
+                Neue Rechnung
+              </Button>
+              <Button size="lg" variant="secondary" className="h-14 sm:h-16 text-base justify-start gap-3" onClick={() => navigate("/invoices/new?typ=angebot")}>
+                <Plus className="h-5 w-5 shrink-0" />
+                Neues Angebot
+              </Button>
+              {canView('kunden') && (
+                <Button size="lg" variant="outline" className="h-14 sm:h-16 text-base justify-start gap-3" onClick={() => navigate("/customers")}>
+                  <Plus className="h-5 w-5 shrink-0" />
+                  Neuer Kunde
+                </Button>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Geschäftsbereiche — nummerierte Kacheln laut Kundenskizze */}
+        {(canView('materialien') || canView('rechnungen') || canView(NACHKALKULATION_FEATURE) || canView('plantafel') || canView(FINANZPLANUNG_FEATURE)) && (
+          <section className="mb-6 sm:mb-8">
+            <h2 className="text-xl sm:text-2xl font-bold mb-3 sm:mb-4">Geschäftsbereiche</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+              {canView('materialien') && (
+                <GeschaeftsbereichTile
+                  nummer={1}
+                  title="Kalkulation"
+                  description="Aufbauten, Holzberechnung, Arbeitszeit & Lohnlackierung"
+                  icon={Calculator}
+                  buttonLabel="Kalkulieren"
+                  onClick={() => navigate("/auftragskalkulation")}
+                />
+              )}
+              {canView('rechnungen') && (
+                <GeschaeftsbereichTile
+                  nummer={2}
+                  title="Angebote & Rechnungen"
+                  description="Angebot → Auftrag → Lieferschein → Rechnung"
+                  icon={Receipt}
+                  buttonLabel="Öffnen"
+                  onClick={() => navigate("/invoices")}
+                />
+              )}
+              {canView(NACHKALKULATION_FEATURE) && (
+                <GeschaeftsbereichTile
+                  nummer={3}
+                  title="Nachkalkulation & Firmenzahlen"
+                  description="Soll-Ist-Vergleich & betriebliche Kennzahlen"
+                  icon={TrendingUp}
+                  buttonLabel="Öffnen"
+                  onClick={() => navigate("/nachkalkulation")}
+                />
+              )}
+              {canView('plantafel') && (
+                <GeschaeftsbereichTile
+                  nummer={4}
+                  title="Auslastung (Jahresübersicht)"
+                  description="Jahresplanung & Auslastung der Mannschaft"
+                  icon={CalendarRange}
+                  buttonLabel="Öffnen"
+                  onClick={() => navigate("/schedule?view=year")}
+                />
+              )}
+              {canView(FINANZPLANUNG_FEATURE) && (
+                <GeschaeftsbereichTile
+                  nummer={5}
+                  title="Finanzplanung"
+                  description="Liquidität, Budget & Zahlungsplanung"
+                  icon={Wallet}
+                  buttonLabel="Öffnen"
+                  onClick={() => navigate("/finanzplanung")}
+                />
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Stammdaten */}
+        <section className="mb-6 sm:mb-8">
+          <h2 className="text-xl sm:text-2xl font-bold mb-3 sm:mb-4">Stammdaten</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
+
+            {/* Kunden */}
+            {canView('kunden') && (
+              <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/customers")}>
+                <CardHeader className="space-y-2 pb-3">
+                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><BookUser className="h-6 w-6 text-primary" /></div>
+                  <CardTitle className="text-lg sm:text-xl">Kunden</CardTitle>
+                  <CardDescription className="text-sm">Kundendatenbank verwalten</CardDescription>
+                </CardHeader>
+                <CardContent><Button className="w-full" size="sm" variant="outline">Kunden öffnen</Button></CardContent>
+              </Card>
+            )}
+
+            {/* Materialien & Preise */}
+            {canView('materialien') && (
+              <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/materials")}>
+                <CardHeader className="space-y-2 pb-3">
+                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Package className="h-6 w-6 text-primary" /></div>
+                  <CardTitle className="text-lg sm:text-xl">Materialien & Preise</CardTitle>
+                  <CardDescription className="text-sm">Materialstamm, Preise & Kalkulation (EK → Aufschlag → VK)</CardDescription>
+                </CardHeader>
+                <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
+              </Card>
+            )}
+
+            {/* Mitarbeiter — nur Admin */}
+            {isAdmin && (
+              <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/employees")}>
+                <CardHeader className="space-y-2 pb-3">
+                  <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><HardHat className="h-6 w-6 text-primary" /></div>
+                  <CardTitle className="text-lg sm:text-xl">Mitarbeiter</CardTitle>
+                  <CardDescription className="text-sm">Mitarbeiterdaten & Dokumente verwalten</CardDescription>
+                </CardHeader>
+                <CardContent><Button className="w-full" size="sm" variant="outline">Mitarbeiter öffnen</Button></CardContent>
+              </Card>
+            )}
+
+            {/* Projekte - Für alle */}
+            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/projects")}>
+              <CardHeader className="space-y-2 pb-3">
+                <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center"><FolderKanban className="h-6 w-6 text-accent" /></div>
+                <CardTitle className="text-lg sm:text-xl">Projekte</CardTitle>
+                <CardDescription className="text-sm">{isAdmin ? "Bauvorhaben & Dokumentation" : "Pläne, Bilder, Berichte, etc. hochladen"}</CardDescription>
+              </CardHeader>
+              <CardContent><Button className="w-full" size="sm" variant="secondary">Projekte öffnen</Button></CardContent>
+            </Card>
+          </div>
+        </section>
+
+        {/* Täglicher Betrieb */}
+        <h2 className="text-xl sm:text-2xl font-bold mb-3 sm:mb-4">Täglicher Betrieb</h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 lg:gap-6">
 
-          {/* 1. Rechnungen & Angebote */}
-          {canView('rechnungen') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/invoices")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Receipt className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Rechnungen & Angebote</CardTitle>
-                <CardDescription className="text-sm">Rechnungen und Angebote erstellen & verwalten</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm">Rechnungen öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* 1b. Eingangsrechnungen — Belege hochladen (insb. für Handy-Nutzung) */}
+          {/* Eingangsrechnungen — Belege hochladen (insb. für Handy-Nutzung) */}
           {canView('eingangsrechnungen') && (
             <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/eingangsrechnungen")}>
               <CardHeader className="space-y-2 pb-3">
@@ -387,16 +525,6 @@ export default function Index() {
               <CardDescription className="text-sm">Stunden auf Projekte buchen</CardDescription>
             </CardHeader>
             <CardContent><Button className="w-full" size="sm">Stunden erfassen</Button></CardContent>
-          </Card>
-
-          {/* 3. Projekte - Für alle */}
-          <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/projects")}>
-            <CardHeader className="space-y-2 pb-3">
-              <div className="h-12 w-12 rounded-lg bg-accent/10 flex items-center justify-center"><FolderKanban className="h-6 w-6 text-accent" /></div>
-              <CardTitle className="text-lg sm:text-xl">Projekte</CardTitle>
-              <CardDescription className="text-sm">{isAdmin ? "Bauvorhaben & Dokumentation" : "Pläne, Bilder, Berichte, etc. hochladen"}</CardDescription>
-            </CardHeader>
-            <CardContent><Button className="w-full" size="sm" variant="secondary">Projekte öffnen</Button></CardContent>
           </Card>
 
           {/* 4. Plantafel */}
@@ -421,78 +549,6 @@ export default function Index() {
             </CardHeader>
             <CardContent><Button className="bg-yellow-600 hover:bg-yellow-700 w-full" size="sm">Regieberichte öffnen</Button></CardContent>
           </Card>
-          )}
-
-          {/* 5. Materialien */}
-          {canView('materialien') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/materials")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Package className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Materialien & Kalkulation</CardTitle>
-                <CardDescription className="text-sm">Materialstamm, Preise & Kalkulation (EK → Aufschlag → VK)</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* Auftragskalkulation — GROISMAIER Aufbauten/Material/Lohnlackierung */}
-          {canView('materialien') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/auftragskalkulation")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Calculator className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Auftragskalkulation</CardTitle>
-                <CardDescription className="text-sm">Aufbauten, Holzberechnung, Arbeitszeit, Nachkalkulation &amp; Lohnlackierung</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Kalkulieren</Button></CardContent>
-            </Card>
-          )}
-
-          {/* Standardaufbauten — GROISMAIER Wand-/Dach-/Deckenaufbauten */}
-          {canView('materialien') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/standardaufbauten")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Layers className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Standardaufbauten</CardTitle>
-                <CardDescription className="text-sm">Wand-, Dach- &amp; Deckenaufbauten als PDF-Referenz</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* Preislisten — Lieferanten-Preislisten */}
-          {canView('materialien') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/preislisten")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><Tag className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Preislisten</CardTitle>
-                <CardDescription className="text-sm">Lieferanten-Preislisten (Holz, Dämmung, Kran, Transport …)</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* Büro-Vorlagen — Deckblätter, Ordnerrücken, Stundendoku */}
-          {canView('materialien') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/buero-vorlagen")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><FolderOpen className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Büro-Vorlagen</CardTitle>
-                <CardDescription className="text-sm">Deckblätter, Ordnerrücken, Stundendoku, Stempel &amp; Briefpapier</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Öffnen</Button></CardContent>
-            </Card>
-          )}
-
-          {/* 5. Kunden */}
-          {canView('kunden') && (
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary/50" onClick={() => navigate("/customers")}>
-              <CardHeader className="space-y-2 pb-3">
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center"><BookUser className="h-6 w-6 text-primary" /></div>
-                <CardTitle className="text-lg sm:text-xl">Kunden</CardTitle>
-                <CardDescription className="text-sm">Kundendatenbank verwalten</CardDescription>
-              </CardHeader>
-              <CardContent><Button className="w-full" size="sm" variant="outline">Kunden öffnen</Button></CardContent>
-            </Card>
           )}
 
           {/* 6. Admin-Bereich */}

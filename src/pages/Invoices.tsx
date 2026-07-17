@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2 } from "lucide-react";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, Truck } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
@@ -72,6 +72,8 @@ const rechnungStatuses = ["offen", "teilbezahlt", "bezahlt"];
 const angebotStatuses = ["entwurf", "offen", "angenommen", "abgelehnt", "verrechnet"];
 // Auftragsbestätigung IST das angenommene Angebot → angenommen/abgelehnt sind redundant.
 const abStatuses = ["offen", "verrechnet"];
+// Lieferschein: preislos. "verrechnet" = in einer Rechnung aufgegangen.
+const lieferscheinStatuses = ["entwurf", "offen", "verrechnet"];
 // Gutschrift = Auszahlung an Kunden. "teilbezahlt/bezahlt" passt nicht;
 // "verrechnet" markiert, dass die Gutschrift mit einer Rechnung verrechnet wurde.
 const gutschriftStatuses = ["offen", "verrechnet"];
@@ -99,6 +101,8 @@ export default function Invoices() {
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
   const [createProjectForInvoiceId, setCreateProjectForInvoiceId] = useState<string | null>(null);
   const [createProjectDefaults, setCreateProjectDefaults] = useState({ name: "", customerName: "", customerId: null as string | null, adresse: "", plz: "", ort: "", email: "", telefon: "", uidNummer: "", anrede: "", titel: "" });
+  // Projekt-Namen (id → name) für die Projekt-Spalte im Lieferscheine-Tab.
+  const [projectNames, setProjectNames] = useState<Record<string, string>>({});
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
 
   // Payment dialog for status change to teilbezahlt/bezahlt
@@ -115,7 +119,13 @@ export default function Invoices() {
   useEffect(() => {
     fetchInvoices();
     fetchNumberSettings();
+    fetchProjectNames();
   }, []);
+
+  const fetchProjectNames = async () => {
+    const { data } = await supabase.from("projects").select("id, name");
+    if (data) setProjectNames(Object.fromEntries((data as { id: string; name: string }[]).map(p => [p.id, p.name])));
+  };
 
   const fetchNumberSettings = async () => {
     const { data } = await supabase
@@ -491,7 +501,9 @@ export default function Invoices() {
     ? rechnungStatuses
     : filterTyp === "angebot"
       ? angebotStatuses
-      : [...new Set([...rechnungStatuses, ...angebotStatuses])];
+      : filterTyp === "lieferschein"
+        ? lieferscheinStatuses
+        : [...new Set([...rechnungStatuses, ...angebotStatuses])];
 
   return (
     <div className="min-h-screen bg-background">
@@ -515,6 +527,32 @@ export default function Invoices() {
                   <CardContent className="p-3">
                     <p className="text-xs text-muted-foreground">Stornierte Summe</p>
                     <p className="text-xl font-bold text-red-600">€ {summe.toFixed(2)}</p>
+                  </CardContent>
+                </Card>
+              </div>
+            );
+          }
+          if (filterTyp === "lieferschein") {
+            // Lieferscheine sind preislos → Zähler statt €-Summen.
+            const lsDocs = invoices.filter(i => i.typ === "lieferschein" && i.status !== "storniert");
+            return (
+              <div className="grid grid-cols-3 gap-3 mb-4">
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="text-xs text-muted-foreground">Lieferscheine</p>
+                    <p className="text-xl font-bold">{lsDocs.length}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="text-xs text-muted-foreground">Offen</p>
+                    <p className="text-xl font-bold text-orange-600">{lsDocs.filter(i => i.status === "offen").length}</p>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardContent className="p-3">
+                    <p className="text-xs text-muted-foreground">Verrechnet</p>
+                    <p className="text-xl font-bold text-purple-700">{lsDocs.filter(i => i.status === "verrechnet").length}</p>
                   </CardContent>
                 </Card>
               </div>
@@ -576,6 +614,13 @@ export default function Invoices() {
                   Angebote
                 </button>
                 <button
+                  onClick={() => { setFilterTyp("lieferschein"); setFilterSubTyp("alle"); }}
+                  className={`px-4 py-2 text-sm font-medium transition-colors border-l ${filterTyp === "lieferschein" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
+                  title="Lieferscheine (ohne Preise)"
+                >
+                  Lieferscheine
+                </button>
+                <button
                   onClick={() => { setFilterTyp("storno"); setFilterSubTyp("alle"); }}
                   className={`px-4 py-2 text-sm font-medium transition-colors border-l ${filterTyp === "storno" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
                   title="Stornierte Rechnungen / Storno-Belege"
@@ -595,13 +640,17 @@ export default function Invoices() {
                       {/* Haupt-Button: Default-Aktion je nach aktuellem Tab */}
                       <Button
                         onClick={() =>
-                          navigate(filterTyp === "angebot" ? "/invoices/new?typ=angebot" : "/invoices/new?typ=rechnung")
+                          navigate(
+                            filterTyp === "angebot" ? "/invoices/new?typ=angebot"
+                              : filterTyp === "lieferschein" ? "/invoices/new?typ=lieferschein"
+                              : "/invoices/new?typ=rechnung"
+                          )
                         }
                         variant="default"
                         className="gap-2 rounded-r-none"
                       >
-                        {filterTyp === "angebot" ? <FileText className="w-4 h-4" /> : <Receipt className="w-4 h-4" />}
-                        {filterTyp === "angebot" ? "Neues Angebot" : "Neue Rechnung"}
+                        {filterTyp === "angebot" ? <FileText className="w-4 h-4" /> : filterTyp === "lieferschein" ? <Truck className="w-4 h-4" /> : <Receipt className="w-4 h-4" />}
+                        {filterTyp === "angebot" ? "Neues Angebot" : filterTyp === "lieferschein" ? "Neuer Lieferschein" : "Neue Rechnung"}
                       </Button>
                       {/* Chevron: öffnet Dropdown mit allen weiteren Belegtypen */}
                       <DropdownMenuTrigger asChild>
@@ -625,6 +674,10 @@ export default function Invoices() {
                             <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
                           </DropdownMenuItem>
                         </>
+                      ) : filterTyp === "lieferschein" ? (
+                        <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=lieferschein")}>
+                          <Truck className="w-4 h-4 mr-2" /> Neuer Lieferschein
+                        </DropdownMenuItem>
                       ) : (
                         <>
                           <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=rechnung")}>
@@ -741,11 +794,11 @@ export default function Invoices() {
                 />
               ) : (
                 <EmptyState
-                  icon={filterTyp === "angebot" ? <FileText className="w-12 h-12" /> : <Receipt className="w-12 h-12" />}
-                  title={filterTyp === "angebot" ? "Noch keine Angebote" : "Noch keine Rechnungen"}
-                  description={filterTyp === "angebot" ? "Erstelle dein erstes Angebot für einen Kunden." : "Erstelle deine erste Rechnung."}
+                  icon={filterTyp === "angebot" ? <FileText className="w-12 h-12" /> : filterTyp === "lieferschein" ? <Truck className="w-12 h-12" /> : <Receipt className="w-12 h-12" />}
+                  title={filterTyp === "angebot" ? "Noch keine Angebote" : filterTyp === "lieferschein" ? "Noch keine Lieferscheine" : "Noch keine Rechnungen"}
+                  description={filterTyp === "angebot" ? "Erstelle dein erstes Angebot für einen Kunden." : filterTyp === "lieferschein" ? "Erstelle deinen ersten Lieferschein — ohne Preise, ideal zur Warenübergabe." : "Erstelle deine erste Rechnung."}
                   action={{
-                    label: filterTyp === "angebot" ? "Erstes Angebot erstellen" : "Erste Rechnung erstellen",
+                    label: filterTyp === "angebot" ? "Erstes Angebot erstellen" : filterTyp === "lieferschein" ? "Ersten Lieferschein erstellen" : "Erste Rechnung erstellen",
                     onClick: () => navigate(`/invoices/new?typ=${filterTyp}`),
                   }}
                 />
@@ -812,14 +865,25 @@ export default function Invoices() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {/* Ampel-Legende (KingBill-Stil): erklärt die Status-Punkte */}
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 pb-2 text-[11px] text-muted-foreground">
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" />offen</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" />teilbezahlt</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" />bezahlt</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" />verrechnet</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#002337]" />angenommen</span>
+                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" />überfällig / storniert</span>
+                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Nummer</TableHead>
                       <TableHead>Kunde</TableHead>
                       <TableHead>Datum</TableHead>
-                      <TableHead className="text-right">Brutto</TableHead>
-                      {filterTyp !== "angebot" && <TableHead className="text-right">Bezahlt</TableHead>}
+                      {/* Lieferscheine sind preislos → statt €-Spalten das Projekt zeigen */}
+                      {filterTyp === "lieferschein" && <TableHead>Projekt</TableHead>}
+                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Brutto</TableHead>}
+                      {filterTyp !== "angebot" && filterTyp !== "lieferschein" && <TableHead className="text-right">Bezahlt</TableHead>}
                       <TableHead>Status</TableHead>
                       <TableHead className="w-12"></TableHead>
                     </TableRow>
@@ -838,6 +902,7 @@ export default function Invoices() {
                       //   - Auftragsbestätigung → offen/verrechnet (AB IST das angenommene Angebot)
                       const availableStatuses =
                         inv.typ === "gutschrift" ? gutschriftStatuses :
+                        inv.typ === "lieferschein" ? lieferscheinStatuses :
                         inv.typ === "auftragsbestaetigung" ? abStatuses :
                         PAYABLE_INVOICE_TYPES.has(inv.typ) ? rechnungStatuses :
                         angebotStatuses;
@@ -890,8 +955,15 @@ export default function Invoices() {
                           </TableCell>
                           <TableCell>{inv.kunde_name}</TableCell>
                           <TableCell>{formatDateShort(inv.datum)}</TableCell>
-                          <TableCell className="text-right font-medium">€ {brutto.toFixed(2)}</TableCell>
-                          {filterTyp !== "angebot" && (
+                          {filterTyp === "lieferschein" && (
+                            <TableCell className="text-sm text-muted-foreground">
+                              {inv.project_id ? (projectNames[inv.project_id] || "—") : "—"}
+                            </TableCell>
+                          )}
+                          {filterTyp !== "lieferschein" && (
+                            <TableCell className="text-right font-medium">€ {brutto.toFixed(2)}</TableCell>
+                          )}
+                          {filterTyp !== "angebot" && filterTyp !== "lieferschein" && (
                             <TableCell className="text-right">
                               {PAYABLE_INVOICE_TYPES.has(inv.typ) ? (
                                 <div>

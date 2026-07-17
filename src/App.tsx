@@ -35,9 +35,8 @@ import Customers from "./pages/Customers";
 import OfferPackages from "./pages/OfferPackages";
 import KalkulationHub from "./pages/KalkulationHub";
 import KalkulationEditor from "./pages/KalkulationEditor";
-import Standardaufbauten from "./pages/Standardaufbauten";
-import Preislisten from "./pages/Preislisten";
-import BueroVorlagen from "./pages/BueroVorlagen";
+import Nachkalkulation from "./pages/Nachkalkulation";
+import Finanzplanung from "./pages/Finanzplanung";
 import ScheduleBoard from "./pages/ScheduleBoard";
 import FreelancerHours from "./pages/FreelancerHours";
 import NotFound from "./pages/NotFound";
@@ -110,11 +109,10 @@ function AppContent() {
           <Route path="/materials" element={<ProtectedRoute feature="materialien"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/auftragskalkulation" element={<ProtectedRoute feature="materialien"><KalkulationHub /></ProtectedRoute>} />
           <Route path="/auftragskalkulation/:id" element={<ProtectedRoute feature="materialien"><KalkulationEditor /></ProtectedRoute>} />
-          <Route path="/standardaufbauten" element={<ProtectedRoute feature="materialien"><Standardaufbauten /></ProtectedRoute>} />
-          <Route path="/preislisten" element={<ProtectedRoute feature="materialien"><Preislisten /></ProtectedRoute>} />
-          <Route path="/buero-vorlagen" element={<ProtectedRoute feature="materialien"><BueroVorlagen /></ProtectedRoute>} />
           <Route path="/customers" element={<ProtectedRoute feature="kunden"><Customers /></ProtectedRoute>} />
           <Route path="/schedule" element={<ProtectedRoute feature="plantafel"><ScheduleBoard /></ProtectedRoute>} />
+          <Route path="/nachkalkulation" element={<ProtectedRoute feature="nachkalkulation"><Nachkalkulation /></ProtectedRoute>} />
+          <Route path="/finanzplanung" element={<ProtectedRoute feature="finanzplanung"><Finanzplanung /></ProtectedRoute>} />
         </Route>
 
         <Route path="*" element={<NotFound />} />

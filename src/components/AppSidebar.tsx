@@ -16,7 +16,8 @@ import {
 import {
   Home, Clock, FolderKanban, LayoutGrid,
   Receipt, FileText,
-  BookUser, Package, BarChart3, Shield, LogOut, FileDown, Calculator, Layers, Tag, FolderOpen,
+  BookUser, Package, BarChart3, Shield, LogOut, FileDown, Calculator,
+  TrendingUp, Wallet,
 } from "lucide-react";
 import { usePermissions, type FeatureKey } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
@@ -53,14 +54,18 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   {
+    label: "Auswertung",
+    items: [
+      { title: "Nachkalkulation & Firmenzahlen", path: "/nachkalkulation", icon: TrendingUp, feature: "nachkalkulation" },
+      { title: "Finanzplanung", path: "/finanzplanung", icon: Wallet, feature: "finanzplanung" },
+    ],
+  },
+  {
     label: "Verwaltung",
     items: [
       { title: "Kunden", path: "/customers", icon: BookUser, feature: "kunden" },
       { title: "Materialien & Kalkulation", path: "/materials", icon: Package, feature: "materialien" },
       { title: "Auftragskalkulation", path: "/auftragskalkulation", icon: Calculator, feature: "materialien" },
-      { title: "Standardaufbauten", path: "/standardaufbauten", icon: Layers, feature: "materialien" },
-      { title: "Preislisten", path: "/preislisten", icon: Tag, feature: "materialien" },
-      { title: "Büro-Vorlagen", path: "/buero-vorlagen", icon: FolderOpen, feature: "materialien" },
       { title: "Meine Stunden", path: "/my-hours", icon: BarChart3, feature: null },
       { title: "Stundenauswertung", path: "/hours-report", icon: BarChart3, feature: "stundenauswertung" },
     ],

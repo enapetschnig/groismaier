@@ -11,8 +11,9 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2 } from "lucide-react";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
+import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
@@ -209,6 +210,118 @@ function nettofristToDropdown(nettofrist: number): string {
   return "individuell";
 }
 
+/**
+ * KingBill-Wizard: Der Beleg-Editor ist in drei nummerierte Schritte
+ * gegliedert (1. Allgemein / 2. Kunde / 3. Positionen). Die Schritt-Leiste
+ * oben springt per Klick zum jeweiligen Abschnitt; auf Mobile stehen alle
+ * Schritte untereinander und die Navigation scrollt.
+ */
+const WIZARD_STEPS = [
+  { id: "step-allgemein", num: 1, label: "Allgemein" },
+  { id: "step-kunde", num: 2, label: "Kunde" },
+  { id: "step-positionen", num: 3, label: "Artikel" },
+] as const;
+
+function StepSectionHeader({ num, label, id }: { num: number; label: string; id: string }) {
+  return (
+    <div id={id} className="scroll-mt-32 flex items-center gap-2.5 pt-1">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary text-sm font-bold text-primary-foreground">
+        {num}
+      </span>
+      <h2 className="text-lg font-semibold">{num}. {label}</h2>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+/**
+ * Sticky KingBill-Schrittleiste: drei klickbare, nummerierte Schritte, die
+ * per Klick zum Abschnitt springen; der aktive Schritt folgt der Scroll-Position.
+ */
+function StepNav({
+  activeStep,
+  onStepClick,
+  onSave,
+  onSaveAndClose,
+  saving,
+  showSave,
+}: {
+  activeStep: number;
+  onStepClick: (step: (typeof WIZARD_STEPS)[number]) => void;
+  onSave?: () => void;
+  onSaveAndClose?: () => void;
+  saving?: boolean;
+  showSave?: boolean;
+}) {
+  return (
+    <div className="sticky top-2 z-20 -mx-1 mb-1 rounded-lg border bg-card/95 px-1.5 py-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80">
+      <div className="flex items-center gap-1">
+        {/* Speichern-Aktionen rechts in der Leiste — wie bei KingBill immer erreichbar */}
+        {showSave && (
+          <div className="order-last flex shrink-0 items-center gap-1 pl-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1.5 px-2"
+              onClick={onSave}
+              disabled={saving}
+              title="Speichern (bleibt geöffnet)"
+            >
+              <Save className="h-4 w-4" />
+              <span className="hidden lg:inline">Speichern</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className="h-8 gap-1.5 px-2"
+              onClick={onSaveAndClose}
+              disabled={saving}
+              title="Speichern & Schließen"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              <span className="hidden sm:inline">Speichern & Schließen</span>
+            </Button>
+          </div>
+        )}
+        {WIZARD_STEPS.map((s, i) => {
+          const active = activeStep === s.num;
+          const done = activeStep > s.num;
+          return (
+            <div key={s.id} className="flex flex-1 items-center gap-1">
+              <button
+                type="button"
+                onClick={() => onStepClick(s)}
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
+                  active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted"
+                }`}
+              >
+                <span
+                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                    active
+                      ? "bg-primary-foreground text-primary"
+                      : done
+                      ? "bg-primary/20 text-primary"
+                      : "bg-muted-foreground/20 text-muted-foreground"
+                  }`}
+                >
+                  {s.num}
+                </span>
+                <span className="truncate">{s.label}</span>
+              </button>
+              {i < WIZARD_STEPS.length - 1 && (
+                <div className="hidden h-px w-3 shrink-0 bg-border sm:block" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function InvoiceDetail() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -228,6 +341,29 @@ export default function InvoiceDetail() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
+
+  // KingBill-Schrittleiste: aktiver Schritt folgt der Scroll-Position
+  // (leichter Scroll-Spy — der oberste Abschnitt über der Marke gewinnt).
+  const [activeStep, setActiveStep] = useState(1);
+  useEffect(() => {
+    if (loading) return;
+    const onScroll = () => {
+      let current = 1;
+      WIZARD_STEPS.forEach((s, i) => {
+        const el = document.getElementById(s.id);
+        if (el && el.getBoundingClientRect().top <= 140) current = i + 1;
+      });
+      setActiveStep(current);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener("scroll", onScroll);
+  }, [loading]);
+
+  const scrollToStep = (step: (typeof WIZARD_STEPS)[number]) => {
+    setActiveStep(step.num);
+    document.getElementById(step.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
   const [invoiceId, setInvoiceId] = useState<string | null>(isNew ? null : id || null);
   const [items, setItems] = useState<InvoiceItem[]>([
     { position: 1, beschreibung: "", menge: 1, einheit: "Stk.", einzelpreis: 0, gesamtpreis: 0 },
@@ -1348,7 +1484,8 @@ export default function InvoiceDetail() {
     // (z.B. Anzahlungs-Abzüge) bekommen KEINE MwSt und der Global-Rabatt ist
     // berücksichtigt — daher dieselbe Größe für die Validierung verwenden.
     const saveBrutto = bruttoSumme;
-    if (saveBrutto <= 0 && form.status !== "entwurf") {
+    // Lieferscheine (hidePrices) sind preislos — € 0,00 ist dort gültig.
+    if (saveBrutto <= 0 && form.status !== "entwurf" && !getDocConfig(form.typ).hidePrices) {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnungsbetrag muss größer als €0,00 sein" });
       return false;
     }
@@ -1677,12 +1814,13 @@ export default function InvoiceDetail() {
 
       // Mark original Angebot as "verrechnet" when saving the converted Rechnung
       // Wenn eine rechnungs-artige Konvertierung gespeichert wurde
-      // (Rechnung / AR / SR), alle Angebot-/AB-Vorfahren in der Kette
-      // auf "verrechnet" setzen. Wir wandern per parent_invoice_id hoch
-      // (max. 5 Hops als Safety-Net gegen Datenfehler) und markieren
-      // jeden Angebot-/AB-Knoten. Zwischenknoten vom Typ Rechnung oder
-      // AR werden dabei einfach übersprungen (ihr Status behält seine
-      // eigene Bedeutung: offen/teilbezahlt/bezahlt).
+      // (Rechnung / AR / SR), alle Angebot-/AB-/Lieferschein-Vorfahren
+      // in der Kette auf "verrechnet" setzen. Wir wandern per
+      // parent_invoice_id hoch (max. 5 Hops als Safety-Net gegen
+      // Datenfehler) und markieren jeden Angebot-/AB-/LS-Knoten.
+      // Zwischenknoten vom Typ Rechnung oder AR werden dabei einfach
+      // übersprungen (ihr Status behält seine eigene Bedeutung:
+      // offen/teilbezahlt/bezahlt).
       const _invoiceLikeTypesForVerrechnet = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
       if (fromAngebotId && _invoiceLikeTypesForVerrechnet.has(form.typ)) {
         let hopCursor: string | null = fromAngebotId;
@@ -1693,7 +1831,7 @@ export default function InvoiceDetail() {
             .eq("id", hopCursor)
             .maybeSingle();
           const hopTyp = (hop as any)?.typ;
-          if (hopTyp === "angebot" || hopTyp === "auftragsbestaetigung") {
+          if (hopTyp === "angebot" || hopTyp === "auftragsbestaetigung" || hopTyp === "lieferschein") {
             if ((hop as any)?.status !== "verrechnet" && (hop as any)?.status !== "storniert") {
               await supabase.from("invoices").update({ status: "verrechnet" }).eq("id", hopCursor);
             }
@@ -1704,7 +1842,7 @@ export default function InvoiceDetail() {
       }
 
       setIsDirty(false);
-      toast({ title: "Gespeichert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde gespeichert` });
+      toast({ title: "Gespeichert", description: `${getDocConfig(form.typ).label} wurde gespeichert` });
 
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
       if (savedId && form.project_id) {
@@ -2522,6 +2660,10 @@ export default function InvoiceDetail() {
   if (loading) return <div className="text-center py-8">Lädt...</div>;
 
   const typLabel = getDocConfig(form.typ).label;
+  // Lieferschein: Preisdaten bleiben im State/DB vollständig erhalten
+  // (verlustfreie Kette AB→LS→Rechnung), nur die UI blendet Preis-/
+  // Rabatt-Spalten, Summenfuß und MwSt-/Rabatt-Felder aus.
+  const hidePrices = getDocConfig(form.typ).hidePrices;
   // Grammatik-Artikel für "Neue/Neuer/Neues X erstellen":
   //   Neues Angebot | Neuer Lieferschein | sonst: Neue <typ>
   const typArticle = form.typ === "angebot" ? "Neues" : form.typ === "lieferschein" ? "Neuer" : "Neue";
@@ -2530,6 +2672,81 @@ export default function InvoiceDetail() {
     (acc[t.kategorie] = acc[t.kategorie] || []).push(t);
     return acc;
   }, {});
+
+  // Gemeinsame Vorschau-Daten: der Vorschau-Dialog (mobil / kleine Screens)
+  // und die angedockte Live-Vorschau (xl+) erhalten exakt dieselben Daten.
+  const previewFormData = {
+    typ: form.typ,
+    nummer: form.nummer,
+    status: form.status,
+    kunde_name: form.kunde_name,
+    kunde_adresse: form.kunde_adresse,
+    kunde_plz: form.kunde_plz,
+    kunde_ort: form.kunde_ort,
+    kunde_land: form.kunde_land,
+    kunde_email: form.kunde_email,
+    kunde_telefon: form.kunde_telefon,
+    kunde_uid: form.kunde_uid,
+    kunde_anrede: (form as any).kunde_anrede || "",
+    kunde_titel: (form as any).kunde_titel || "",
+    reverse_charge: (form as any).reverse_charge || false,
+    datum: form.datum,
+    faellig_am: form.faellig_am,
+    leistungsdatum: form.leistungsdatum,
+    leistungsdatum_bis: (form as any).leistungsdatum_bis || "",
+    gueltig_bis: form.gueltig_bis,
+    zahlungsbedingungen: form.zahlungsbedingungen,
+    notizen: form.notizen,
+    betreff: form.betreff,
+    netto_summe: nettoSumme,
+    mwst_satz: form.mwst_satz,
+    mwst_betrag: mwstBetrag,
+    brutto_summe: bruttoSumme,
+    bezahlt_betrag: form.bezahlt_betrag,
+    rabatt_prozent: form.rabatt_prozent,
+    rabatt_betrag: form.rabatt_betrag,
+    mahnstufe: form.mahnstufe,
+    skonto_prozent: form.skonto_prozent,
+    skonto_tage: form.skonto_tage,
+    // Ohne diese Felder sieht die PDF-Vorschau weder den eingegebenen
+    // Kunden-Ansprechpartner noch die Kundennummer / Anzahlungs-Prozent.
+    // Eigene Typdeklaration von InvoiceHtmlData kennt sie nicht; wir
+    // reichen sie als loose Props durch (pdfGenerator liest sie via
+    // (invoice as any).ansprechpartner_*).
+    kundennummer: (form as any).kundennummer || "",
+    ansprechpartner_employee_id: (form as any).ansprechpartner_employee_id || null,
+    ansprechpartner_name: (form as any).ansprechpartner_name || "",
+    ansprechpartner_telefon: (form as any).ansprechpartner_telefon || "",
+    ansprechpartner_email: (form as any).ansprechpartner_email || "",
+    anzahlung_prozent: (form as any).anzahlung_prozent ?? null,
+    anzahlung_betrag: (form as any).anzahlung_betrag ?? null,
+    // Allgemeine Angaben (Angebot + AB) — Toggle + Felder müssen
+    // an die Vorschau durchgereicht werden, sonst rendert die
+    // Tabelle dort nicht (Renderer prüft auf allgemeine_angaben_aktiv).
+    allgemeine_angaben_aktiv: !!(form as any).allgemeine_angaben_aktiv,
+    leistungsbeschreibung: (form as any).leistungsbeschreibung || "",
+    ausfuehrungsort: (form as any).ausfuehrungsort || "",
+    ausfuehrungs_kw: (form as any).ausfuehrungs_kw || "",
+    ausfuehrende_firma: (form as any).ausfuehrende_firma || "",
+    ausfuehrende_firma_freitext: (form as any).ausfuehrende_firma_freitext || "",
+    // Bezugs-Block bei verknüpften Gutschriften — wird sonst
+    // in der Vorschau nicht gerendert (Renderer prüft auf
+    // _parent_nummer/_parent_datum).
+    _parent_nummer: parentRefInfo?.nummer || "",
+    _parent_datum: parentRefInfo?.datum || "",
+  } as any;
+
+  const previewItems = items.map((item, idx) => ({
+    position: idx + 1,
+    beschreibung: item.beschreibung,
+    kurztext: item.kurztext || item.beschreibung,
+    langtext: item.langtext || "",
+    menge: item.menge,
+    einheit: item.einheit,
+    einzelpreis: item.einzelpreis,
+    gesamtpreis: item.gesamtpreis,
+    mwst_exempt: !!(item as any).mwst_exempt,
+  }));
 
   // Stornierte Rechnung: Nur Stornobeleg anzeigen
   if (form.status === "storniert" && !isNew && invoiceId) {
@@ -2603,7 +2820,18 @@ export default function InvoiceDetail() {
           backPath="/invoices"
         />
 
-        <div className="space-y-6">
+        {/* KingBill-Layout: Editor links, permanente Beleg-Live-Vorschau rechts (xl+) */}
+        <div className="xl:flex xl:items-start xl:gap-6">
+        <div className="space-y-6 min-w-0 xl:flex-1">
+          {/* Sticky Schrittleiste (KingBill-Wizard) */}
+          <StepNav
+            activeStep={activeStep}
+            onStepClick={scrollToStep}
+            showSave={!isLocked}
+            saving={saving}
+            onSave={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
+            onSaveAndClose={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); navigate("/invoices"); } }}
+          />
           {/* Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente */}
           {!isNew && chainRoot && (chainRoot.id !== invoiceId || chainChildren.length > 0) && (
             <Card className="border-blue-200 bg-blue-50/40">
@@ -2730,7 +2958,11 @@ export default function InvoiceDetail() {
                       // umwandeln — der Umweg über AB ist optional, nicht Pflicht.
                       const allow = {
                         auftragsbestaetigung: t === "angebot",
-                        rechnung: t === "angebot" || t === "auftragsbestaetigung",
+                        // Lieferschein (preislos) aus Angebot/AB. Die Positionen werden
+                        // MIT Preisen kopiert (nur Anzeige/PDF blenden sie aus), damit
+                        // die Kette LS→Rechnung verlustfrei bleibt.
+                        lieferschein: t === "angebot" || t === "auftragsbestaetigung",
+                        rechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "lieferschein",
                         anzahlungsrechnung: t === "angebot" || t === "auftragsbestaetigung",
                         schlussrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
                         // Gutschrift kann zu jeder rechnungs-artigen Doku angelegt
@@ -2751,6 +2983,11 @@ export default function InvoiceDetail() {
                             {allow.auftragsbestaetigung && (
                               <DropdownMenuItem onClick={() => handleConvertTo("auftragsbestaetigung")}>
                                 Auftragsbestätigung
+                              </DropdownMenuItem>
+                            )}
+                            {allow.lieferschein && (
+                              <DropdownMenuItem onClick={() => handleConvertTo("lieferschein")}>
+                                Lieferschein
                               </DropdownMenuItem>
                             )}
                             {allow.rechnung && (
@@ -3146,10 +3383,430 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
-          {/* Projekt-Auswahl: bei Rechnung + Angebot/AB, vor den Kundendaten.
-              Bei Angebot/AB nötig, damit der "Aus Projekt übernehmen"-Button
-              in den Allgemeinen Angaben den Ausführungsort ziehen kann. */}
-          {!isLocked && (form.typ === "rechnung" || getDocConfig(form.typ).isAngebotLike) && (
+          {/* ===== Schritt 1: Allgemein — Betreff, Details, Angaben (KingBill-Wizard) ===== */}
+          <StepSectionHeader num={1} label="Allgemein" id="step-allgemein" />
+
+          {/* Betreff */}
+          <Card className={isLocked ? "opacity-80" : ""}>
+            <fieldset disabled={isLocked}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">Betreff</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Textarea
+                value={form.betreff}
+                onChange={(e) => updateField("betreff", e.target.value)}
+                placeholder="z.B. Badezimmer-Sanierung EG — Angebot gemäß Besprechung vom..."
+                rows={2}
+                className="resize-none"
+              />
+            </CardContent>
+            </fieldset>
+          </Card>
+
+          {/* Rechnungsdetails */}
+          <Card className={isLocked ? "opacity-80" : ""}>
+            <fieldset disabled={isLocked}>
+            <CardHeader>
+              <CardTitle>Details</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label>Datum</Label>
+                  <Input type="date" value={form.datum} onChange={(e) => updateField("datum", e.target.value)} />
+                </div>
+                {getDocConfig(form.typ).showLeistungsdatum && (
+                  <div className="md:col-span-2">
+                    <Label>Leistungszeitraum</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <Input
+                        type="date"
+                        value={form.leistungsdatum || form.datum}
+                        onChange={(e) => updateField("leistungsdatum", e.target.value)}
+                        placeholder="von"
+                      />
+                      <Input
+                        type="date"
+                        value={(form as any).leistungsdatum_bis || ""}
+                        onChange={(e) => updateField("leistungsdatum_bis" as any, e.target.value)}
+                        placeholder="bis (optional)"
+                        min={form.leistungsdatum || form.datum || undefined}
+                      />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">
+                      Beginnt automatisch am Rechnungsdatum. Enddatum nur ausfüllen, wenn die Leistung über mehrere Tage erbracht wurde.
+                    </p>
+                  </div>
+                )}
+                {form.typ === "rechnung" && (
+                  <div>
+                    <Label>Fällig am</Label>
+                    <Input
+                      type="date"
+                      value={form.faellig_am}
+                      onChange={(e) => updateField("faellig_am", e.target.value)}
+                      disabled={form.zahlungsbedingungen !== "individuell"}
+                    />
+                    {form.zahlungsbedingungen !== "individuell" && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        Automatisch aus Rechnungsdatum + Zahlungsfrist berechnet.
+                      </p>
+                    )}
+                  </div>
+                )}
+                {form.typ === "angebot" && (
+                  <div>
+                    <Label>Gültig bis</Label>
+                    <Input type="date" value={form.gueltig_bis} onChange={(e) => updateField("gueltig_bis", e.target.value)} />
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {form.typ === "rechnung" && (
+                  <div>
+                    <Label>Zahlungsfrist</Label>
+                    <Select
+                      value={form.zahlungsbedingungen || "14 Tage"}
+                      onValueChange={(v) => {
+                        // Dropdown ist Single Source of Truth. "individuell"
+                        // schaltet das faellig_am-Feld frei; alle anderen Werte
+                        // rechnen faellig_am automatisch über den useEffect-
+                        // Sync weiter unten aus.
+                        updateField("zahlungsbedingungen", v);
+                      }}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="sofort">Sofort fällig</SelectItem>
+                        <SelectItem value="7 Tage">7 Tage</SelectItem>
+                        <SelectItem value="14 Tage">14 Tage</SelectItem>
+                        <SelectItem value="30 Tage">30 Tage</SelectItem>
+                        <SelectItem value="60 Tage">60 Tage</SelectItem>
+                        <SelectItem value="individuell">Individuelles Datum…</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+                {form.typ === "rechnung" && (
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Label>Skonto %</Label>
+                      <Input
+                        type="number"
+                        value={form.skonto_prozent || ""}
+                        onChange={(e) => updateField("skonto_prozent", Math.min(100, Math.max(0, Number(e.target.value))))}
+                        placeholder="z.B. 2"
+                        min={0}
+                        max={100}
+                        step={0.5}
+                      />
+                    </div>
+                    <div>
+                      <Label>Skonto Tage</Label>
+                      <Input
+                        type="number"
+                        value={form.skonto_tage || ""}
+                        onChange={(e) => updateField("skonto_tage", Number(e.target.value))}
+                        placeholder="z.B. 10"
+                        min={0}
+                      />
+                    </div>
+                    {form.skonto_prozent > 0 && form.skonto_tage > 0 && (
+                      <p className="col-span-2 text-xs text-muted-foreground">
+                        Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
+                        {" "}€ {(bruttoSumme * (1 - form.skonto_prozent / 100)).toFixed(2)} ({form.skonto_prozent}% Skonto)
+                      </p>
+                    )}
+                  </div>
+                )}
+                {/* Projekt-Auswahl ist jetzt oben als eigene Card */}
+              </div>
+              {form.typ === "rechnung" && (
+                <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
+                  <input
+                    type="checkbox"
+                    id="reverse_charge"
+                    checked={(form as any).reverse_charge || false}
+                    onChange={(e) => {
+                      updateField("reverse_charge" as any, e.target.checked);
+                      if (e.target.checked) {
+                        updateField("mwst_satz", 0);
+                      } else {
+                        updateField("mwst_satz", 20);
+                      }
+                    }}
+                    className="rounded"
+                  />
+                  <div>
+                    <Label htmlFor="reverse_charge" className="cursor-pointer font-medium">Reverse Charge – Bauleistungen (§ 19 Abs. 1a UStG)</Label>
+                    <p className="text-xs text-muted-foreground">Steuerschuld geht auf den Leistungsempfänger über – MwSt auf der Rechnung entfällt. UID des Kunden ist Pflicht.</p>
+                  </div>
+                </div>
+              )}
+              {(form as any).reverse_charge && !form.kunde_uid && (
+                <p className="text-xs text-red-600 font-medium">UID-Nummer des Kunden ist bei Reverse Charge Pflicht!</p>
+              )}
+              {/* MwSt/Rabatt sind Preis-Felder → beim Lieferschein ausgeblendet
+                  (Werte bleiben im State erhalten und werden mitgespeichert). */}
+              {!hidePrices && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <Label>MwSt-Satz (%)</Label>
+                  <Select value={String(form.mwst_satz)} onValueChange={(v) => updateField("mwst_satz", Number(v))} disabled={(form as any).reverse_charge}>
+                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="20">20% (Normalsteuersatz)</SelectItem>
+                      <SelectItem value="13">13% (ermäßigt)</SelectItem>
+                      <SelectItem value="10">10% (ermäßigt)</SelectItem>
+                      <SelectItem value="0">0% (steuerfrei)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Rabatt (%)</Label>
+                  <Input
+                    type="number"
+                    value={form.rabatt_prozent}
+                    onChange={(e) => {
+                      const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                      updateField("rabatt_prozent", val);
+                      if (val > 0) updateField("rabatt_betrag", 0);
+                    }}
+                    min={0}
+                    max={100}
+                    step={0.5}
+                    className="w-32"
+                  />
+                </div>
+                <div>
+                  <Label>Rabatt (€)</Label>
+                  <Input
+                    type="number"
+                    value={form.rabatt_betrag}
+                    onChange={(e) => {
+                      updateField("rabatt_betrag", Number(e.target.value));
+                      if (Number(e.target.value) > 0) updateField("rabatt_prozent", 0);
+                    }}
+                    min={0}
+                    step={0.01}
+                    className="w-32"
+                    disabled={form.rabatt_prozent > 0}
+                  />
+                </div>
+                {items.some(it => it.ist_kalkuliert) && (
+                  <div>
+                    <Label className="flex items-center gap-1">
+                      <Calculator className="w-3.5 h-3.5" /> Aufschlag-Override (%)
+                    </Label>
+                    <Input
+                      type="number"
+                      value={form.kalkulation_aufschlag_override ?? ""}
+                      placeholder="je Position"
+                      onChange={(e) => setDocAufschlagOverride(e.target.value)}
+                      min={0}
+                      step={0.5}
+                      className="w-32"
+                    />
+                    <p className="text-[11px] text-muted-foreground mt-1 max-w-[16rem]">
+                      Überschreibt den Material-Aufschlag aller kalkulierten Positionen — leer = jede Position nutzt ihren eigenen.
+                    </p>
+                  </div>
+                )}
+              </div>
+              )}
+            </CardContent>
+            </fieldset>
+          </Card>
+
+          {/* Allgemeine Angaben — nur bei Angebot + Auftragsbestätigung.
+              Toggle steuert, ob die Tabelle im PDF/HTML überhaupt
+              erscheint. Felder bleiben in der DB persistiert auch wenn
+              Toggle off — beim Wieder-Aktivieren sind die Werte da. */}
+          {getDocConfig(form.typ).isAngebotLike && (
+            <Card className={isLocked ? "opacity-80" : ""}>
+              <fieldset disabled={isLocked}>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Allgemeine Angaben</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-start gap-3">
+                  <Switch
+                    id="allgemeine-angaben-aktiv"
+                    checked={form.allgemeine_angaben_aktiv}
+                    onCheckedChange={(v) => updateField("allgemeine_angaben_aktiv", v)}
+                  />
+                  <div className="space-y-0.5">
+                    <Label htmlFor="allgemeine-angaben-aktiv" className="cursor-pointer">
+                      Allgemeine Angaben auf PDF anzeigen
+                    </Label>
+                    <p className="text-[11px] text-muted-foreground">
+                      Wenn aktiv, erscheint zwischen Betreff und Positionen eine Tabelle
+                      mit Leistungsbeschreibung, Ausführungsort, Ausführungszeitraum und
+                      ausführender Firma.
+                    </p>
+                  </div>
+                </div>
+
+                {form.allgemeine_angaben_aktiv && (
+                  <div className="space-y-3 pt-3 border-t">
+                    <div>
+                      <Label>Leistungsbeschreibung</Label>
+                      <Textarea
+                        rows={2}
+                        value={form.leistungsbeschreibung}
+                        onChange={(e) => updateField("leistungsbeschreibung", e.target.value)}
+                        placeholder="z. B. Stiegenrenovierung lt. Besprechung"
+                        className="resize-none"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <Label>Ausführungsort</Label>
+                        <div className="flex items-center gap-1 flex-wrap justify-end">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={!(form.kunde_adresse || form.kunde_plz || form.kunde_ort)}
+                          title="Adresse des Kunden als Ausführungsort einfügen (überschreibt aktuellen Wert)"
+                          onClick={() => {
+                            const adr = [
+                              form.kunde_adresse,
+                              [form.kunde_plz, form.kunde_ort].filter(Boolean).join(" "),
+                            ].filter(Boolean).join("\n");
+                            if (!adr.trim()) { toast({ title: "Kunde hat keine Adresse hinterlegt" }); return; }
+                            updateField("ausfuehrungsort", adr);
+                            toast({ title: "Kundenadresse übernommen" });
+                          }}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          Kundenadresse übernehmen
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 text-xs"
+                          disabled={!form.project_id}
+                          title={form.project_id
+                            ? "Adresse aus zugeordnetem Projekt einfügen (überschreibt aktuellen Wert)"
+                            : "Kein Projekt zugeordnet"}
+                          onClick={async () => {
+                            if (!form.project_id) return;
+                            const { data: projFull } = await (supabase.from("projects" as never) as any)
+                              .select("adresse, plz, ort")
+                              .eq("id", form.project_id)
+                              .maybeSingle();
+                            if (!projFull) {
+                              toast({ variant: "destructive", title: "Projekt nicht gefunden" });
+                              return;
+                            }
+                            const projAdresse = [
+                              (projFull as any).adresse,
+                              [(projFull as any).plz, (projFull as any).ort].filter(Boolean).join(" "),
+                            ].filter(Boolean).join("\n");
+                            if (!projAdresse.trim()) {
+                              toast({ title: "Projekt hat keine Adresse hinterlegt" });
+                              return;
+                            }
+                            updateField("ausfuehrungsort", projAdresse);
+                            toast({ title: "Adresse aus Projekt übernommen" });
+                          }}
+                        >
+                          <MapPin className="h-3 w-3 mr-1" />
+                          Aus Projekt übernehmen
+                        </Button>
+                        </div>
+                      </div>
+                      <Textarea
+                        rows={2}
+                        value={form.ausfuehrungsort}
+                        onChange={(e) => updateField("ausfuehrungsort", e.target.value)}
+                        placeholder="Adresse aus Projekt übernehmen oder manuell eintragen"
+                        className="resize-none"
+                      />
+                    </div>
+                    <div>
+                      <Label>Ausführungszeitraum</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-1">Datumsbereich (von – bis)</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <Input
+                              type="date"
+                              value={form.leistungsdatum}
+                              onChange={(e) => {
+                                updateField("leistungsdatum", e.target.value);
+                                if (e.target.value) updateField("ausfuehrungs_kw", "");
+                              }}
+                              placeholder="von"
+                              disabled={!!form.ausfuehrungs_kw}
+                            />
+                            <Input
+                              type="date"
+                              value={form.leistungsdatum_bis || ""}
+                              onChange={(e) => updateField("leistungsdatum_bis", e.target.value)}
+                              placeholder="bis (optional)"
+                              min={form.leistungsdatum || undefined}
+                              disabled={!!form.ausfuehrungs_kw}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-muted-foreground mb-1">oder Kalenderwoche</p>
+                          <Input
+                            value={form.ausfuehrungs_kw}
+                            onChange={(e) => updateField("ausfuehrungs_kw", e.target.value)}
+                            placeholder="z. B. KW 19/2026"
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-muted-foreground mt-1">
+                        Kalenderwoche hat Vorrang im PDF, sobald sie befüllt ist.
+                      </p>
+                    </div>
+                    <div>
+                      <Label>Ausführende Firma</Label>
+                      <Select
+                        value={form.ausfuehrende_firma || "_none"}
+                        onValueChange={(v) => updateField("ausfuehrende_firma", v === "_none" ? "" : v)}
+                      >
+                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="_none">— keine Angabe —</SelectItem>
+                          {EXECUTING_COMPANIES.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
+                          ))}
+                          <SelectItem value="freitext">Andere Firma (Freitext)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {form.ausfuehrende_firma === "freitext" && (
+                        <Textarea
+                          rows={3}
+                          className="mt-2 resize-none"
+                          value={form.ausfuehrende_firma_freitext}
+                          onChange={(e) => updateField("ausfuehrende_firma_freitext", e.target.value)}
+                          placeholder="Firmenname und Adresse mehrzeilig"
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+              </fieldset>
+            </Card>
+          )}
+
+          {/* ===== Schritt 2: Kunde — Projekt-Übernahme, Kundensuche & -daten ===== */}
+          <StepSectionHeader num={2} label="Kunde" id="step-kunde" />
+
+          {/* Projekt-Auswahl: bei Rechnung + Angebot/AB + Lieferschein, vor den
+              Kundendaten. Bei Angebot/AB nötig, damit der "Aus Projekt
+              übernehmen"-Button in den Allgemeinen Angaben den Ausführungsort
+              ziehen kann. Beim Lieferschein für die Projekt-Spalte der Liste. */}
+          {!isLocked && (form.typ === "rechnung" || form.typ === "lieferschein" || getDocConfig(form.typ).isAngebotLike) && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Projekt (optional)</CardTitle>
@@ -3586,414 +4243,8 @@ export default function InvoiceDetail() {
             </fieldset>
           </Card>
 
-          {/* Rechnungsdetails */}
-          <Card className={isLocked ? "opacity-80" : ""}>
-            <fieldset disabled={isLocked}>
-            <CardHeader>
-              <CardTitle>Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <Label>Datum</Label>
-                  <Input type="date" value={form.datum} onChange={(e) => updateField("datum", e.target.value)} />
-                </div>
-                {getDocConfig(form.typ).showLeistungsdatum && (
-                  <div className="md:col-span-2">
-                    <Label>Leistungszeitraum</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input
-                        type="date"
-                        value={form.leistungsdatum || form.datum}
-                        onChange={(e) => updateField("leistungsdatum", e.target.value)}
-                        placeholder="von"
-                      />
-                      <Input
-                        type="date"
-                        value={(form as any).leistungsdatum_bis || ""}
-                        onChange={(e) => updateField("leistungsdatum_bis" as any, e.target.value)}
-                        placeholder="bis (optional)"
-                        min={form.leistungsdatum || form.datum || undefined}
-                      />
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Beginnt automatisch am Rechnungsdatum. Enddatum nur ausfüllen, wenn die Leistung über mehrere Tage erbracht wurde.
-                    </p>
-                  </div>
-                )}
-                {form.typ === "rechnung" && (
-                  <div>
-                    <Label>Fällig am</Label>
-                    <Input
-                      type="date"
-                      value={form.faellig_am}
-                      onChange={(e) => updateField("faellig_am", e.target.value)}
-                      disabled={form.zahlungsbedingungen !== "individuell"}
-                    />
-                    {form.zahlungsbedingungen !== "individuell" && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Automatisch aus Rechnungsdatum + Zahlungsfrist berechnet.
-                      </p>
-                    )}
-                  </div>
-                )}
-                {form.typ === "angebot" && (
-                  <div>
-                    <Label>Gültig bis</Label>
-                    <Input type="date" value={form.gueltig_bis} onChange={(e) => updateField("gueltig_bis", e.target.value)} />
-                  </div>
-                )}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {form.typ === "rechnung" && (
-                  <div>
-                    <Label>Zahlungsfrist</Label>
-                    <Select
-                      value={form.zahlungsbedingungen || "14 Tage"}
-                      onValueChange={(v) => {
-                        // Dropdown ist Single Source of Truth. "individuell"
-                        // schaltet das faellig_am-Feld frei; alle anderen Werte
-                        // rechnen faellig_am automatisch über den useEffect-
-                        // Sync weiter unten aus.
-                        updateField("zahlungsbedingungen", v);
-                      }}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sofort">Sofort fällig</SelectItem>
-                        <SelectItem value="7 Tage">7 Tage</SelectItem>
-                        <SelectItem value="14 Tage">14 Tage</SelectItem>
-                        <SelectItem value="30 Tage">30 Tage</SelectItem>
-                        <SelectItem value="60 Tage">60 Tage</SelectItem>
-                        <SelectItem value="individuell">Individuelles Datum…</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {form.typ === "rechnung" && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label>Skonto %</Label>
-                      <Input
-                        type="number"
-                        value={form.skonto_prozent || ""}
-                        onChange={(e) => updateField("skonto_prozent", Math.min(100, Math.max(0, Number(e.target.value))))}
-                        placeholder="z.B. 2"
-                        min={0}
-                        max={100}
-                        step={0.5}
-                      />
-                    </div>
-                    <div>
-                      <Label>Skonto Tage</Label>
-                      <Input
-                        type="number"
-                        value={form.skonto_tage || ""}
-                        onChange={(e) => updateField("skonto_tage", Number(e.target.value))}
-                        placeholder="z.B. 10"
-                        min={0}
-                      />
-                    </div>
-                    {form.skonto_prozent > 0 && form.skonto_tage > 0 && (
-                      <p className="col-span-2 text-xs text-muted-foreground">
-                        Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
-                        {" "}€ {(bruttoSumme * (1 - form.skonto_prozent / 100)).toFixed(2)} ({form.skonto_prozent}% Skonto)
-                      </p>
-                    )}
-                  </div>
-                )}
-                {/* Projekt-Auswahl ist jetzt oben als eigene Card */}
-              </div>
-              {form.typ === "rechnung" && (
-                <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
-                  <input
-                    type="checkbox"
-                    id="reverse_charge"
-                    checked={(form as any).reverse_charge || false}
-                    onChange={(e) => {
-                      updateField("reverse_charge" as any, e.target.checked);
-                      if (e.target.checked) {
-                        updateField("mwst_satz", 0);
-                      } else {
-                        updateField("mwst_satz", 20);
-                      }
-                    }}
-                    className="rounded"
-                  />
-                  <div>
-                    <Label htmlFor="reverse_charge" className="cursor-pointer font-medium">Reverse Charge – Bauleistungen (§ 19 Abs. 1a UStG)</Label>
-                    <p className="text-xs text-muted-foreground">Steuerschuld geht auf den Leistungsempfänger über – MwSt auf der Rechnung entfällt. UID des Kunden ist Pflicht.</p>
-                  </div>
-                </div>
-              )}
-              {(form as any).reverse_charge && !form.kunde_uid && (
-                <p className="text-xs text-red-600 font-medium">UID-Nummer des Kunden ist bei Reverse Charge Pflicht!</p>
-              )}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <Label>MwSt-Satz (%)</Label>
-                  <Select value={String(form.mwst_satz)} onValueChange={(v) => updateField("mwst_satz", Number(v))} disabled={(form as any).reverse_charge}>
-                    <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="20">20% (Normalsteuersatz)</SelectItem>
-                      <SelectItem value="13">13% (ermäßigt)</SelectItem>
-                      <SelectItem value="10">10% (ermäßigt)</SelectItem>
-                      <SelectItem value="0">0% (steuerfrei)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label>Rabatt (%)</Label>
-                  <Input
-                    type="number"
-                    value={form.rabatt_prozent}
-                    onChange={(e) => {
-                      const val = Math.min(100, Math.max(0, Number(e.target.value)));
-                      updateField("rabatt_prozent", val);
-                      if (val > 0) updateField("rabatt_betrag", 0);
-                    }}
-                    min={0}
-                    max={100}
-                    step={0.5}
-                    className="w-32"
-                  />
-                </div>
-                <div>
-                  <Label>Rabatt (€)</Label>
-                  <Input
-                    type="number"
-                    value={form.rabatt_betrag}
-                    onChange={(e) => {
-                      updateField("rabatt_betrag", Number(e.target.value));
-                      if (Number(e.target.value) > 0) updateField("rabatt_prozent", 0);
-                    }}
-                    min={0}
-                    step={0.01}
-                    className="w-32"
-                    disabled={form.rabatt_prozent > 0}
-                  />
-                </div>
-                {items.some(it => it.ist_kalkuliert) && (
-                  <div>
-                    <Label className="flex items-center gap-1">
-                      <Calculator className="w-3.5 h-3.5" /> Aufschlag-Override (%)
-                    </Label>
-                    <Input
-                      type="number"
-                      value={form.kalkulation_aufschlag_override ?? ""}
-                      placeholder="je Position"
-                      onChange={(e) => setDocAufschlagOverride(e.target.value)}
-                      min={0}
-                      step={0.5}
-                      className="w-32"
-                    />
-                    <p className="text-[11px] text-muted-foreground mt-1 max-w-[16rem]">
-                      Überschreibt den Material-Aufschlag aller kalkulierten Positionen — leer = jede Position nutzt ihren eigenen.
-                    </p>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-            </fieldset>
-          </Card>
-
-          {/* Betreff */}
-          <Card className={isLocked ? "opacity-80" : ""}>
-            <fieldset disabled={isLocked}>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Betreff</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                value={form.betreff}
-                onChange={(e) => updateField("betreff", e.target.value)}
-                placeholder="z.B. Badezimmer-Sanierung EG — Angebot gemäß Besprechung vom..."
-                rows={2}
-                className="resize-none"
-              />
-            </CardContent>
-            </fieldset>
-          </Card>
-
-          {/* Allgemeine Angaben — nur bei Angebot + Auftragsbestätigung.
-              Toggle steuert, ob die Tabelle im PDF/HTML überhaupt
-              erscheint. Felder bleiben in der DB persistiert auch wenn
-              Toggle off — beim Wieder-Aktivieren sind die Werte da. */}
-          {getDocConfig(form.typ).isAngebotLike && (
-            <Card className={isLocked ? "opacity-80" : ""}>
-              <fieldset disabled={isLocked}>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Allgemeine Angaben</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-start gap-3">
-                  <Switch
-                    id="allgemeine-angaben-aktiv"
-                    checked={form.allgemeine_angaben_aktiv}
-                    onCheckedChange={(v) => updateField("allgemeine_angaben_aktiv", v)}
-                  />
-                  <div className="space-y-0.5">
-                    <Label htmlFor="allgemeine-angaben-aktiv" className="cursor-pointer">
-                      Allgemeine Angaben auf PDF anzeigen
-                    </Label>
-                    <p className="text-[11px] text-muted-foreground">
-                      Wenn aktiv, erscheint zwischen Betreff und Positionen eine Tabelle
-                      mit Leistungsbeschreibung, Ausführungsort, Ausführungszeitraum und
-                      ausführender Firma.
-                    </p>
-                  </div>
-                </div>
-
-                {form.allgemeine_angaben_aktiv && (
-                  <div className="space-y-3 pt-3 border-t">
-                    <div>
-                      <Label>Leistungsbeschreibung</Label>
-                      <Textarea
-                        rows={2}
-                        value={form.leistungsbeschreibung}
-                        onChange={(e) => updateField("leistungsbeschreibung", e.target.value)}
-                        placeholder="z. B. Stiegenrenovierung lt. Besprechung"
-                        className="resize-none"
-                      />
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between mb-1.5">
-                        <Label>Ausführungsort</Label>
-                        <div className="flex items-center gap-1 flex-wrap justify-end">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs"
-                          disabled={!(form.kunde_adresse || form.kunde_plz || form.kunde_ort)}
-                          title="Adresse des Kunden als Ausführungsort einfügen (überschreibt aktuellen Wert)"
-                          onClick={() => {
-                            const adr = [
-                              form.kunde_adresse,
-                              [form.kunde_plz, form.kunde_ort].filter(Boolean).join(" "),
-                            ].filter(Boolean).join("\n");
-                            if (!adr.trim()) { toast({ title: "Kunde hat keine Adresse hinterlegt" }); return; }
-                            updateField("ausfuehrungsort", adr);
-                            toast({ title: "Kundenadresse übernommen" });
-                          }}
-                        >
-                          <MapPin className="h-3 w-3 mr-1" />
-                          Kundenadresse übernehmen
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 text-xs"
-                          disabled={!form.project_id}
-                          title={form.project_id
-                            ? "Adresse aus zugeordnetem Projekt einfügen (überschreibt aktuellen Wert)"
-                            : "Kein Projekt zugeordnet"}
-                          onClick={async () => {
-                            if (!form.project_id) return;
-                            const { data: projFull } = await (supabase.from("projects" as never) as any)
-                              .select("adresse, plz, ort")
-                              .eq("id", form.project_id)
-                              .maybeSingle();
-                            if (!projFull) {
-                              toast({ variant: "destructive", title: "Projekt nicht gefunden" });
-                              return;
-                            }
-                            const projAdresse = [
-                              (projFull as any).adresse,
-                              [(projFull as any).plz, (projFull as any).ort].filter(Boolean).join(" "),
-                            ].filter(Boolean).join("\n");
-                            if (!projAdresse.trim()) {
-                              toast({ title: "Projekt hat keine Adresse hinterlegt" });
-                              return;
-                            }
-                            updateField("ausfuehrungsort", projAdresse);
-                            toast({ title: "Adresse aus Projekt übernommen" });
-                          }}
-                        >
-                          <MapPin className="h-3 w-3 mr-1" />
-                          Aus Projekt übernehmen
-                        </Button>
-                        </div>
-                      </div>
-                      <Textarea
-                        rows={2}
-                        value={form.ausfuehrungsort}
-                        onChange={(e) => updateField("ausfuehrungsort", e.target.value)}
-                        placeholder="Adresse aus Projekt übernehmen oder manuell eintragen"
-                        className="resize-none"
-                      />
-                    </div>
-                    <div>
-                      <Label>Ausführungszeitraum</Label>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <p className="text-[10px] text-muted-foreground mb-1">Datumsbereich (von – bis)</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <Input
-                              type="date"
-                              value={form.leistungsdatum}
-                              onChange={(e) => {
-                                updateField("leistungsdatum", e.target.value);
-                                if (e.target.value) updateField("ausfuehrungs_kw", "");
-                              }}
-                              placeholder="von"
-                              disabled={!!form.ausfuehrungs_kw}
-                            />
-                            <Input
-                              type="date"
-                              value={form.leistungsdatum_bis || ""}
-                              onChange={(e) => updateField("leistungsdatum_bis", e.target.value)}
-                              placeholder="bis (optional)"
-                              min={form.leistungsdatum || undefined}
-                              disabled={!!form.ausfuehrungs_kw}
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-muted-foreground mb-1">oder Kalenderwoche</p>
-                          <Input
-                            value={form.ausfuehrungs_kw}
-                            onChange={(e) => updateField("ausfuehrungs_kw", e.target.value)}
-                            placeholder="z. B. KW 19/2026"
-                          />
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-muted-foreground mt-1">
-                        Kalenderwoche hat Vorrang im PDF, sobald sie befüllt ist.
-                      </p>
-                    </div>
-                    <div>
-                      <Label>Ausführende Firma</Label>
-                      <Select
-                        value={form.ausfuehrende_firma || "_none"}
-                        onValueChange={(v) => updateField("ausfuehrende_firma", v === "_none" ? "" : v)}
-                      >
-                        <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_none">— keine Angabe —</SelectItem>
-                          {EXECUTING_COMPANIES.map((c) => (
-                            <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>
-                          ))}
-                          <SelectItem value="freitext">Andere Firma (Freitext)</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {form.ausfuehrende_firma === "freitext" && (
-                        <Textarea
-                          rows={3}
-                          className="mt-2 resize-none"
-                          value={form.ausfuehrende_firma_freitext}
-                          onChange={(e) => updateField("ausfuehrende_firma_freitext", e.target.value)}
-                          placeholder="Firmenname und Adresse mehrzeilig"
-                        />
-                      )}
-                    </div>
-                  </div>
-                )}
-              </CardContent>
-              </fieldset>
-            </Card>
-          )}
+          {/* ===== Schritt 3: Positionen — Artikel, Mengen, Summen ===== */}
+          <StepSectionHeader num={3} label="Artikel" id="step-positionen" />
 
           {/* Positionen */}
           <Card className={isLocked ? "opacity-80" : ""}>
@@ -4061,9 +4312,13 @@ export default function InvoiceDetail() {
                       <TableHead>Beschreibung</TableHead>
                       <TableHead className="w-28">Menge</TableHead>
                       <TableHead className="w-24">Einheit</TableHead>
-                      <TableHead className="w-32">Preis (netto) €</TableHead>
-                      <TableHead className="w-20">Rabatt %</TableHead>
-                      <TableHead className="w-28 text-right">Gesamt (netto) €</TableHead>
+                      {!hidePrices && (
+                        <>
+                          <TableHead className="w-32">Preis (netto) €</TableHead>
+                          <TableHead className="w-20">Rabatt %</TableHead>
+                          <TableHead className="w-28 text-right">Gesamt (netto) €</TableHead>
+                        </>
+                      )}
                       <TableHead className="w-24"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -4171,18 +4426,22 @@ export default function InvoiceDetail() {
                             </SelectContent>
                           </Select>
                         </TableCell>
-                        <TableCell>
-                          <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
-                        </TableCell>
-                        <TableCell>
-                          <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={isExempt} />
-                        </TableCell>
-                        <TableCell className="text-right font-medium">
-                          € {item.gesamtpreis.toFixed(2)}
-                        </TableCell>
+                        {!hidePrices && (
+                          <>
+                            <TableCell>
+                              <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
+                            </TableCell>
+                            <TableCell>
+                              <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={isExempt} />
+                            </TableCell>
+                            <TableCell className="text-right font-medium">
+                              € {item.gesamtpreis.toFixed(2)}
+                            </TableCell>
+                          </>
+                        )}
                         <TableCell>
                           <div className="flex items-center gap-0.5">
-                            {!isLocked && (
+                            {!isLocked && !hidePrices && (
                               <Popover>
                                 <PopoverTrigger asChild>
                                   <Button variant="ghost" size="icon" className={`h-10 w-10 md:h-8 md:w-8 ${item.ist_kalkuliert ? "text-primary" : "text-muted-foreground"}`} title="Kalkulation (EK, Verschnitt, Aufschlag, Lohn)">
@@ -4241,7 +4500,7 @@ export default function InvoiceDetail() {
                     })}
                     {!isLocked && (
                       <TableRow>
-                        <TableCell colSpan={8} className="py-1">
+                        <TableCell colSpan={hidePrices ? 5 : 8} className="py-1">
                           <Button onClick={addItem} variant="ghost" size="sm" className="gap-1 text-muted-foreground">
                             <Plus className="w-3.5 h-3.5" />
                             Position hinzufügen
@@ -4250,6 +4509,8 @@ export default function InvoiceDetail() {
                       </TableRow>
                     )}
                   </TableBody>
+                  {/* Summenfuß entfällt beim preislosen Lieferschein komplett */}
+                  {!hidePrices && (
                   <TableFooter>
                     <TableRow>
                       <TableCell colSpan={6} className="text-right">Positionen Netto</TableCell>
@@ -4294,6 +4555,7 @@ export default function InvoiceDetail() {
                       <TableCell />
                     </TableRow>
                   </TableFooter>
+                  )}
                 </Table>
               </div>
               </fieldset>
@@ -4417,6 +4679,15 @@ export default function InvoiceDetail() {
               </>
             )}
           </div>
+        </div>
+        {/* Permanente Live-Vorschau (KingBill-Stil) — nur xl+, sonst Vorschau-Dialog */}
+        <InvoiceLivePreview
+          formData={previewFormData}
+          items={previewItems}
+          netto={hidePrices ? undefined : nettoSumme}
+          brutto={hidePrices ? undefined : bruttoSumme}
+          fileName={form.nummer || typLabel}
+        />
         </div>
 
         {/* Template Picker Dialog — Suche + Filter + Multi-Select */}
@@ -4600,78 +4871,9 @@ export default function InvoiceDetail() {
           onSavedClose={() => navigate("/invoices")}
           saving={saving}
           saved={previewSaved}
-          fileName={form.nummer || (form.typ === "angebot" ? "Angebot" : "Rechnung")}
-          formData={{
-            typ: form.typ,
-            nummer: form.nummer,
-            status: form.status,
-            kunde_name: form.kunde_name,
-            kunde_adresse: form.kunde_adresse,
-            kunde_plz: form.kunde_plz,
-            kunde_ort: form.kunde_ort,
-            kunde_land: form.kunde_land,
-            kunde_email: form.kunde_email,
-            kunde_telefon: form.kunde_telefon,
-            kunde_uid: form.kunde_uid,
-            kunde_anrede: (form as any).kunde_anrede || "",
-            kunde_titel: (form as any).kunde_titel || "",
-            reverse_charge: (form as any).reverse_charge || false,
-            datum: form.datum,
-            faellig_am: form.faellig_am,
-            leistungsdatum: form.leistungsdatum,
-            leistungsdatum_bis: (form as any).leistungsdatum_bis || "",
-            gueltig_bis: form.gueltig_bis,
-            zahlungsbedingungen: form.zahlungsbedingungen,
-            notizen: form.notizen,
-            betreff: form.betreff,
-            netto_summe: nettoSumme,
-            mwst_satz: form.mwst_satz,
-            mwst_betrag: mwstBetrag,
-            brutto_summe: bruttoSumme,
-            bezahlt_betrag: form.bezahlt_betrag,
-            rabatt_prozent: form.rabatt_prozent,
-            rabatt_betrag: form.rabatt_betrag,
-            mahnstufe: form.mahnstufe,
-            skonto_prozent: form.skonto_prozent,
-            skonto_tage: form.skonto_tage,
-            // Ohne diese Felder sieht die PDF-Vorschau weder den eingegebenen
-            // Kunden-Ansprechpartner noch die Kundennummer / Anzahlungs-Prozent.
-            // Eigene Typdeklaration von InvoiceHtmlData kennt sie nicht; wir
-            // reichen sie als loose Props durch (pdfGenerator liest sie via
-            // (invoice as any).ansprechpartner_*).
-            kundennummer: (form as any).kundennummer || "",
-            ansprechpartner_employee_id: (form as any).ansprechpartner_employee_id || null,
-            ansprechpartner_name: (form as any).ansprechpartner_name || "",
-            ansprechpartner_telefon: (form as any).ansprechpartner_telefon || "",
-            ansprechpartner_email: (form as any).ansprechpartner_email || "",
-            anzahlung_prozent: (form as any).anzahlung_prozent ?? null,
-            anzahlung_betrag: (form as any).anzahlung_betrag ?? null,
-            // Allgemeine Angaben (Angebot + AB) — Toggle + Felder müssen
-            // an die Vorschau durchgereicht werden, sonst rendert die
-            // Tabelle dort nicht (Renderer prüft auf allgemeine_angaben_aktiv).
-            allgemeine_angaben_aktiv: !!(form as any).allgemeine_angaben_aktiv,
-            leistungsbeschreibung: (form as any).leistungsbeschreibung || "",
-            ausfuehrungsort: (form as any).ausfuehrungsort || "",
-            ausfuehrungs_kw: (form as any).ausfuehrungs_kw || "",
-            ausfuehrende_firma: (form as any).ausfuehrende_firma || "",
-            ausfuehrende_firma_freitext: (form as any).ausfuehrende_firma_freitext || "",
-            // Bezugs-Block bei verknüpften Gutschriften — wird sonst
-            // in der Vorschau nicht gerendert (Renderer prüft auf
-            // _parent_nummer/_parent_datum).
-            _parent_nummer: parentRefInfo?.nummer || "",
-            _parent_datum: parentRefInfo?.datum || "",
-          } as any}
-          items={items.map((item, idx) => ({
-            position: idx + 1,
-            beschreibung: item.beschreibung,
-            kurztext: item.kurztext || item.beschreibung,
-            langtext: item.langtext || "",
-            menge: item.menge,
-            einheit: item.einheit,
-            einzelpreis: item.einzelpreis,
-            gesamtpreis: item.gesamtpreis,
-            mwst_exempt: !!(item as any).mwst_exempt,
-          }))}
+          fileName={form.nummer || typLabel}
+          formData={previewFormData}
+          items={previewItems}
         />
 
         {/* Gutschrift-Verrechnungs-Dialog: setzt Status auf "verrechnet"

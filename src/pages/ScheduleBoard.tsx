@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { ArrowLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
@@ -33,7 +33,24 @@ export default function ScheduleBoard() {
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const [mode, setMode] = useState<ScheduleMode>("month");
+  // URL-Param ?view=week|month|year — /schedule?view=year öffnet direkt
+  // die Jahresansicht; Umschalten hält den Param synchron.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [mode, setMode] = useState<ScheduleMode>(() => {
+    const v = searchParams.get("view");
+    return v === "week" || v === "month" || v === "year" ? v : "month";
+  });
+  const handleModeChange = (m: ScheduleMode) => {
+    setMode(m);
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("view", m);
+        return next;
+      },
+      { replace: true },
+    );
+  };
   const [weekStart, setWeekStart] = useState(() => startOfISOWeek(new Date()));
 
   const {
@@ -404,7 +421,7 @@ export default function ScheduleBoard() {
           weekStart={weekStart}
           onWeekChange={setWeekStart}
           mode={mode}
-          onModeChange={setMode}
+          onModeChange={handleModeChange}
           title="Plantafel"
         />
 
@@ -474,8 +491,10 @@ export default function ScheduleBoard() {
         ) : (
           <YearPlanningView
             year={weekStart.getFullYear()}
+            boardProjects={boardProjects}
             projects={projects}
-            assignments={[]}
+            einsaetze={einsaetze}
+            profiles={profiles}
             holidays={companyHolidays}
             leaveRequests={leaveRequests}
           />
