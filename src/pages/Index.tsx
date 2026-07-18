@@ -210,9 +210,19 @@ export default function Index() {
       {/* Erzwungener Passwortwechsel beim ersten Login (vom Admin angelegte Konten) */}
       {mustChangePw && <ChangePasswordDialog forced onSuccess={() => setMustChangePw(false)} />}
 
-      {/* Header — blaue KingBill-Titelleiste */}
+      {/* Header — blaue KingBill-Titelleiste mit Systemleisten-Buttons wie im Original */}
       <header className="kb-toolbar sticky top-0 z-50">
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <button type="button" className="kb-btn shrink-0" onClick={handleLogout} title="Abmelden">
+          <LogOut className="h-4 w-4 text-kb-blue-dark" />
+          <span className="hidden md:inline">Beenden</span>
+        </button>
+        {isAdmin && (
+          <button type="button" className="kb-btn shrink-0 hidden sm:inline-flex" onClick={() => navigate("/admin")}>
+            <Shield className="h-4 w-4 text-kb-blue-dark" />
+            <span className="hidden md:inline">Einstellungen ändern</span>
+          </button>
+        )}
+        <div className="flex items-center gap-2 sm:gap-3 min-w-0 sm:mx-auto">
           <div className="shrink-0 rounded bg-white/95 px-1.5 py-1 shadow-sm">
             <img
               src="/groismaier-logo-transparent.png"

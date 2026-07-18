@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -9,8 +8,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { PageHeader } from "@/components/PageHeader";
-import { Plus, Trash2, Save, Package, Search, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Boxes } from "lucide-react";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
+import { Plus, Pencil, Trash2, Save, Package, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Boxes, Printer, ChevronDown, ChevronUp } from "lucide-react";
 import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
@@ -100,7 +99,12 @@ export default function InvoiceTemplates() {
   const [originalComponentIds, setOriginalComponentIds] = useState<string[]>([]);
   const [fotoUploading, setFotoUploading] = useState(false);
   const [editFotoUrl, setEditFotoUrl] = useState<string | null>(null);
+  // KingBill-Listenmaske: markierte Zeile (Toolbar-Bearbeiten/-Löschen wirken darauf)
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Mobile: linke Filterspalte auf-/zuklappbar (auf lg+ immer sichtbar)
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const { toast } = useToast();
+  const navigate = useNavigate();
   const einheiten = useEinheiten();
 
   useEffect(() => { fetchTemplates(); }, []);
@@ -195,10 +199,8 @@ export default function InvoiceTemplates() {
     return matchesSearch && matchesKategorie;
   });
 
-  const grouped = filtered.reduce<Record<string, Template[]>>((acc, t) => {
-    (acc[t.kategorie] = acc[t.kategorie] || []).push(t);
-    return acc;
-  }, {});
+  // Markierte Zeile (für Toolbar-Bearbeiten/-Löschen)
+  const selectedRow = templates.find(t => t.id === selectedId) || null;
 
   const openNew = () => {
     setEditId(null);
@@ -429,152 +431,203 @@ export default function InvoiceTemplates() {
   const handleDelete = async (id: string) => {
     const { error } = await supabase.from("invoice_templates").delete().eq("id", id);
     if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
+    if (selectedId === id) setSelectedId(null);
     toast({ title: "Gelöscht" });
     fetchTemplates();
   };
 
+  // Toolbar-Aktionen wirken auf die markierte Zeile
+  const editSelected = () => {
+    if (selectedRow) openEdit(selectedRow);
+  };
+
+  const deleteSelected = () => {
+    if (!selectedRow) return;
+    if (!confirm(`Artikel „${selectedRow.kurzbezeichnung || selectedRow.name}" wirklich löschen?`)) return;
+    handleDelete(selectedRow.id);
+  };
+
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-[1400px]">
-        <PageHeader title="Materialien & Preise" backPath="/" />
+    <div className="kb-page min-h-screen">
+      {/* Print-CSS: „Liste drucken" druckt nur das Artikel-Grid */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #kb-print-area, #kb-print-area * { visibility: visible; }
+          #kb-print-area { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; border-radius: 0; }
+          #kb-print-area .overflow-x-auto { overflow: visible !important; }
+        }
+      `}</style>
 
-        {/* Search & Filter Bar */}
-        <div className="flex flex-wrap gap-3 mb-4 items-center">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input
-              placeholder="Suche nach Name, Beschreibung, Artikelnummer..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-10"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <Filter className="w-4 h-4 text-muted-foreground" />
-            <Select value={filterKategorie} onValueChange={setFilterKategorie}>
-              <SelectTrigger className="w-[160px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="alle">Alle Kategorien</SelectItem>
-                {kategorien.map(k => (
-                  <SelectItem key={k} value={k}>{k}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setBulkPriceOpen(true)} className="gap-2">
-              <TrendingUp className="w-4 h-4" />
-              Preise anpassen
-            </Button>
-            <Button variant="outline" onClick={() => setImportOpen(true)} className="gap-2">
-              <Upload className="w-4 h-4" />
-              Importieren
-            </Button>
-            <Button onClick={openNew} className="gap-2">
-              <Plus className="w-4 h-4" />
-              Neues Material
-            </Button>
-          </div>
-        </div>
+      {/* KingBill-Toolbar: [Zurück] [+ Neuer Artikel] [Bearbeiten] [Löschen] [Import] [Preise] [Liste drucken] */}
+      <KBToolbar onBack={() => navigate("/")} title="Artikel">
+        <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neuer Artikel" onClick={openNew} />
+        <KBToolbarButton
+          icon={Pencil}
+          label="Bearbeiten"
+          onClick={editSelected}
+          disabled={!selectedRow}
+          title={selectedRow ? `${selectedRow.kurzbezeichnung || selectedRow.name} bearbeiten` : "Zuerst eine Zeile markieren"}
+        />
+        <KBToolbarButton
+          icon={Trash2}
+          label="Löschen"
+          onClick={deleteSelected}
+          disabled={!selectedRow}
+          title={selectedRow ? `${selectedRow.kurzbezeichnung || selectedRow.name} löschen` : "Zuerst eine Zeile markieren"}
+        />
+        <KBToolbarButton icon={Upload} label="Import" onClick={() => setImportOpen(true)} />
+        <KBToolbarButton icon={TrendingUp} label="Preise anpassen" onClick={() => setBulkPriceOpen(true)} />
+        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+      </KBToolbar>
 
-        {loading ? (
-          <p className="text-center py-8 text-muted-foreground">Lädt...</p>
-        ) : Object.keys(grouped).length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center text-muted-foreground">
-              <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p>{search || filterKategorie !== "alle" ? "Keine Materialien gefunden" : "Noch keine Materialien angelegt"}</p>
-              {!search && filterKategorie === "alle" && (
-                <Button className="mt-4" onClick={openNew}>Erstes Material anlegen</Button>
-              )}
-            </CardContent>
-          </Card>
-        ) : (
-          Object.entries(grouped).sort(([a], [b]) => a.localeCompare(b)).map(([kategorie, items]) => (
-            <Card key={kategorie} className="mb-4">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base flex items-center gap-2">
-                  <Badge variant="secondary">{kategorie}</Badge>
-                  <span className="text-muted-foreground text-sm">({items.length})</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead className="w-10"></TableHead>
-                      <TableHead className="w-14">Foto</TableHead>
-                      <TableHead>Prod.-Nr.</TableHead>
-                      <TableHead>Kurzbezeichnung</TableHead>
-                      <TableHead>Langbezeichnung</TableHead>
-                      <TableHead>Einheit</TableHead>
-                      <TableHead>USt</TableHead>
-                      <TableHead className="text-right">Netto (€)</TableHead>
-                      <TableHead className="text-right">Brutto (€)</TableHead>
-                      <TableHead>Lager</TableHead>
-                      <TableHead className="w-16"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {items.map(t => (
-                      <TableRow key={t.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openEdit(t)}>
-                        <TableCell>
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={async (e) => {
-                            e.stopPropagation();
-                            const newVal = !t.ist_favorit;
-                            await supabase.from("invoice_templates").update({ ist_favorit: newVal } as any).eq("id", t.id);
-                            setTemplates(prev => prev.map(item => item.id === t.id ? { ...item, ist_favorit: newVal } : item));
-                          }}>
-                            <Star className={`w-4 h-4 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
-                          </Button>
-                        </TableCell>
-                        <TableCell>
-                          {t.foto_path && fotoUrls[t.id] ? (
-                            <img
-                              src={fotoUrls[t.id]}
-                              alt=""
-                              className="w-10 h-10 object-cover rounded border"
-                              loading="lazy"
-                            />
-                          ) : (
-                            <div className="w-10 h-10 rounded border bg-muted flex items-center justify-center">
-                              <Package className="w-4 h-4 text-muted-foreground/40" />
-                            </div>
-                          )}
-                        </TableCell>
-                        <TableCell className="font-mono text-xs text-muted-foreground">{t.produktnummer || t.artikelnummer || "–"}</TableCell>
-                        <TableCell className="font-medium max-w-[200px] truncate">
-                          <div className="flex items-center gap-1.5">
-                            <span>{t.kurzbezeichnung || t.name}</span>
-                            {t.ist_set && (
-                              <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 gap-1 border-primary/40 text-primary">
-                                <Boxes className="w-3 h-3" />
-                                Set
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-muted-foreground max-w-[250px] truncate text-xs">{t.langbezeichnung || t.beschreibung}</TableCell>
-                        <TableCell className="text-xs">{t.einheit}</TableCell>
-                        <TableCell className="text-xs">{t.ust_satz}%</TableCell>
-                        <TableCell className="text-right font-mono text-sm">{t.netto_preis > 0 ? `€ ${t.netto_preis.toFixed(2)}` : "–"}</TableCell>
-                        <TableCell className="text-right font-mono text-sm text-muted-foreground">{t.brutto_preis > 0 ? `€ ${t.brutto_preis.toFixed(2)}` : "–"}</TableCell>
-                        <TableCell>{t.ist_lagerartikel ? <Badge variant="outline" className="text-xs">Lager</Badge> : ""}</TableCell>
-                        <TableCell>
-                          <Button variant="ghost" size="icon" onClick={(e) => { e.stopPropagation(); handleDelete(t.id); }}>
-                            <Trash2 className="w-4 h-4 text-destructive" />
-                          </Button>
-                        </TableCell>
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+        <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">
+
+          {/* ── Linke KingBill-Filterspalte ── */}
+          <aside className="kb-panel w-full lg:w-64 shrink-0 p-3 print:hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+            {/* Mobile: Filterspalte auf-/zuklappen */}
+            <button
+              type="button"
+              className="kb-btn w-full justify-between lg:hidden"
+              onClick={() => setFiltersOpen(o => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-kb-blue-dark" />
+                Filter & Suche
+              </span>
+              {filtersOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+
+            <div className={`${filtersOpen ? "flex" : "hidden"} lg:flex flex-col gap-3 mt-3 lg:mt-0`}>
+              {/* Suche */}
+              <input
+                type="search"
+                className="kb-input"
+                placeholder="Suche… (Name, Nummer, Lieferant)"
+                aria-label="Artikel durchsuchen"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+
+              {/* Kategorie filtern */}
+              <Select value={filterKategorie} onValueChange={setFilterKategorie}>
+                <SelectTrigger className="w-full h-9" aria-label="Kategorie filtern">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alle">Alle Kategorien</SelectItem>
+                  {kategorien.map(k => (
+                    <SelectItem key={k} value={k}>{k}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {/* Anzahl-Zähler wie im KingBill-Original */}
+              <div className="border-t border-border pt-2 text-sm font-bold">
+                Anzahl Artikel: {loading ? "…" : filtered.length}
+              </div>
+
+              <p className="text-[11px] text-muted-foreground">
+                Zeile anklicken = markieren, Doppelklick = bearbeiten.
+              </p>
+            </div>
+          </aside>
+
+          {/* ── Artikel-Grid rechts (zugleich Druckbereich) ── */}
+          <section id="kb-print-area" className="kb-panel flex-1 min-w-0 overflow-hidden">
+            {/* Druck-Kopf: nur beim „Liste drucken" sichtbar */}
+            <div className="hidden print:block px-4 pt-4">
+              <h2 className="text-lg font-bold">Artikelliste</h2>
+              <p className="text-xs text-muted-foreground">Anzahl Artikel: {filtered.length}</p>
+            </div>
+            <div className="p-2 sm:p-3">
+              {loading ? (
+                <p className="text-center py-8 text-muted-foreground">Lädt...</p>
+              ) : filtered.length === 0 ? (
+                <div className="py-12 text-center text-muted-foreground">
+                  <Package className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>{search || filterKategorie !== "alle" ? "Keine Artikel gefunden" : "Noch keine Artikel angelegt"}</p>
+                  {!search && filterKategorie === "alle" && (
+                    <button type="button" className="kb-btn mx-auto mt-4" onClick={openNew}>
+                      <Plus className="w-4 h-4 text-kb-green" /> Ersten Artikel anlegen
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="w-10 print:hidden"><span className="sr-only">Favorit</span></TableHead>
+                        <TableHead>Gruppe</TableHead>
+                        <TableHead>Nummer</TableHead>
+                        <TableHead>Produkt</TableHead>
+                        <TableHead className="text-right">Verkaufspreis</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          ))
-        )}
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map(t => {
+                        const isSelected = selectedId === t.id;
+                        const vk = t.vk_netto || t.einzelpreis;
+                        return (
+                          <TableRow
+                            key={t.id}
+                            aria-selected={isSelected}
+                            className={`cursor-pointer ${isSelected ? "bg-kb-blue/15 hover:bg-kb-blue/20" : "hover:bg-muted/50"}`}
+                            onClick={() => setSelectedId(t.id)}
+                            onDoubleClick={() => openEdit(t)}
+                          >
+                            <TableCell className="print:hidden">
+                              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={async (e) => {
+                                e.stopPropagation();
+                                const newVal = !t.ist_favorit;
+                                await supabase.from("invoice_templates").update({ ist_favorit: newVal } as any).eq("id", t.id);
+                                setTemplates(prev => prev.map(item => item.id === t.id ? { ...item, ist_favorit: newVal } : item));
+                              }}>
+                                <Star className={`w-4 h-4 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
+                              </Button>
+                            </TableCell>
+                            <TableCell className="whitespace-nowrap">{t.kategorie}</TableCell>
+                            <TableCell className="font-mono text-xs whitespace-nowrap">{t.produktnummer || t.artikelnummer || "–"}</TableCell>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                {t.foto_path && fotoUrls[t.id] ? (
+                                  <img
+                                    src={fotoUrls[t.id]}
+                                    alt=""
+                                    className="w-8 h-8 object-cover rounded border shrink-0 print:hidden"
+                                    loading="lazy"
+                                  />
+                                ) : null}
+                                <span className="truncate max-w-[340px]" title={t.langbezeichnung || t.beschreibung || undefined}>
+                                  {t.kurzbezeichnung || t.name}
+                                </span>
+                                {t.ist_set && (
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 gap-1 border-primary/40 text-primary shrink-0">
+                                    <Boxes className="w-3 h-3" />
+                                    Set
+                                  </Badge>
+                                )}
+                                {t.ist_lagerartikel && (
+                                  <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 shrink-0">Lager</Badge>
+                                )}
+                              </div>
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm whitespace-nowrap">
+                              {vk > 0 ? `€ ${vk.toFixed(2)}` : "–"}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
 
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">

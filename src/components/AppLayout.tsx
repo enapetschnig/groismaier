@@ -1,23 +1,16 @@
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/AppSidebar";
-import { useIsMobile } from "@/hooks/use-mobile";
 import { Outlet } from "react-router-dom";
 
+/**
+ * KingBill-Menüführung: KEINE ständige Seitenleiste.
+ * Navigation läuft wie im Original über die Startmaske (Hub) und die
+ * Zurück-Buttons der einzelnen Masken (KBToolbar bzw. PageHeader).
+ * Die Systemleiste (Beenden / Einstellungen) sitzt im Kopf der Startmaske.
+ * Mobile verhält sich identisch (Seiten sind mobile-first eigenständig).
+ */
 export function AppLayout() {
-  const isMobile = useIsMobile();
-
-  // Mobile: no sidebar, render pages directly as before
-  if (isMobile) {
-    return <Outlet />;
-  }
-
-  // Desktop: sidebar + content area (Inhalt sitzt auf dem KingBill-Blauverlauf)
   return (
-    <SidebarProvider>
-      <AppSidebar />
-      <SidebarInset className="kb-page">
-        <Outlet />
-      </SidebarInset>
-    </SidebarProvider>
+    <div className="kb-page min-h-screen">
+      <Outlet />
+    </div>
   );
 }

@@ -1,22 +1,17 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
-import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import { matchesSearch } from "@/lib/searchUtils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Pencil, Trash2, Search, Users, X, Receipt, ArrowLeft } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Receipt, Printer, Filter, ChevronDown, ChevronUp, Check, IdCard } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { CustomerForm, EMPTY_CUSTOMER_FORM, composeCustomerName, type CustomerFormData } from "@/components/CustomerForm";
-import { PageHeader } from "@/components/PageHeader";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import {
@@ -34,7 +29,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
 interface Customer {
@@ -84,39 +78,6 @@ interface CustomerInvoice {
   brutto_summe: number;
 }
 
-const emptyForm = {
-  name: "",
-  kundennummer: "",
-  anrede: "",
-  titel: "",
-  vorname: "",
-  nachname: "",
-  ansprechpartner: "",
-  uid_nummer: "",
-  adresse: "",
-  plz: "",
-  ort: "",
-  land: "Österreich",
-  email: "",
-  telefon: "",
-  telefon2: "",
-  notizen: "",
-  zahlungsbedingungen: "",
-  skonto_prozent: 0,
-  skonto_tage: 0,
-  nettofrist: 0,
-  kundentyp: "geschaeftskunde",
-  firmenname: "",
-  branche: "",
-  website: "",
-  rechnungs_adresse: "",
-  rechnungs_plz: "",
-  rechnungs_ort: "",
-  rechnungs_land: "",
-  herkunft: "",
-  wichtige_daten: [] as any[],
-};
-
 const statusLabels: Record<string, string> = {
   entwurf: "Entwurf",
   gesendet: "Gesendet",
@@ -133,13 +94,18 @@ export default function Customers() {
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
-  const [form, setForm] = useState(emptyForm);
+  const [form, setForm] = useState<CustomerFormData>({ ...EMPTY_CUSTOMER_FORM });
   const [saving, setSaving] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [customerInvoices, setCustomerInvoices] = useState<CustomerInvoice[]>([]);
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [typFilter, setTypFilter] = useState<"alle" | "privatkunde" | "geschaeftskunde">("alle");
   const [customerColors, setCustomerColors] = useState<Record<string, { bg: string; text: string }>>({});
+  // KingBill-Listenmaske: markierte Zeile (Toolbar-Bearbeiten/-Löschen wirken darauf)
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  // Mobile: linke Filterspalte auf-/zuklappbar (auf lg+ immer sichtbar)
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -151,7 +117,7 @@ export default function Customers() {
     if (q) setSearch(q);
     if (searchParams.get("neu") === "1") {
       setEditId(null);
-      setForm(emptyForm);
+      setForm({ ...EMPTY_CUSTOMER_FORM });
       setDialogOpen(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -219,7 +185,7 @@ export default function Customers() {
     // beim Speichern aus number_ranges fortlaufend vergeben — Frontend
     // lässt das Feld leer. Vorab-Generierung im Frontend war race-anfällig
     // und nicht synchron mit dem number_ranges-Counter.
-    setForm({ ...emptyForm });
+    setForm({ ...EMPTY_CUSTOMER_FORM });
     setDialogOpen(true);
   };
 
@@ -246,7 +212,7 @@ export default function Customers() {
       skonto_prozent: Number((c as any).skonto_prozent) || 0,
       skonto_tage: Number((c as any).skonto_tage) || 0,
       nettofrist: Number((c as any).nettofrist) || 0,
-      kundentyp: (c as any).kundentyp || "geschaeftskunde",
+      kundentyp: (c as any).kundentyp === "privatkunde" ? "privatkunde" : "geschaeftskunde",
       firmenname: (c as any).firmenname || "",
       branche: (c as any).branche || "",
       website: (c as any).website || "",
@@ -264,7 +230,7 @@ export default function Customers() {
     // Name automatisch aus Kundentyp-Feldern komponieren (firmenname bzw.
     // titel/vorname/nachname). Damit muss der User keinen separaten "Name"
     // eintragen — das Feld bleibt für DB-Backwards-Compat erhalten.
-    const composedName = composeCustomerName(form as CustomerFormData);
+    const composedName = composeCustomerName(form);
     if (!composedName) {
       toast({
         variant: "destructive",
@@ -390,13 +356,64 @@ export default function Customers() {
       if (error) throw error;
       toast({ title: "Gelöscht", description: "Kunde wurde gelöscht" });
       if (selectedCustomer?.id === id) setSelectedCustomer(null);
+      if (selectedId === id) setSelectedId(null);
       fetchCustomers();
     } catch (err: any) {
       toast({ variant: "destructive", title: "Fehler", description: err.message });
     }
   };
 
-  // Customer detail view
+  // Toolbar-Aktionen wirken auf die markierte Zeile
+  const selectedRow = customers.find(c => c.id === selectedId) || null;
+
+  const editSelected = () => {
+    if (selectedRow) openEdit(selectedRow);
+  };
+
+  const detailSelected = () => {
+    if (selectedRow) openCustomerDetail(selectedRow);
+  };
+
+  // Anlege-/Bearbeiten-Dialog im KingBill-Editor-Look („Kunden bearbeiten"):
+  // blaue Toolbar mit Zurück + grünem „Speichern & Schließen", darunter das
+  // zweispaltige KingBill-Formular mit Tab-Leiste (CustomerForm variant="full").
+  const editorDialog = (
+    <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <DialogContent className="max-w-4xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
+        <DialogHeader className="sr-only">
+          <DialogTitle>{editId ? "Kunden bearbeiten" : "Neuer Kunde"}</DialogTitle>
+        </DialogHeader>
+        <KBToolbar
+          sticky={false}
+          className="rounded-t-md pr-12"
+          onBack={() => setDialogOpen(false)}
+          backLabel="Schließen ohne Speichern"
+          title={editId ? "Kunden bearbeiten" : "Neuer Kunde"}
+          rightActions={
+            <KBToolbarButton
+              icon={Check}
+              label={saving ? "Speichert…" : "Speichern & Schließen"}
+              variant="green"
+              onClick={handleSave}
+              disabled={saving}
+            />
+          }
+        />
+        <div className="p-4 sm:p-5">
+          <CustomerForm
+            value={form}
+            onChange={setForm}
+            onSave={handleSave}
+            saving={saving}
+            editId={editId}
+            hideSaveButton
+          />
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+
+  // ── Kunden-Detailansicht (Umsatz / Belege / Kontakt-Historie) ──
   if (selectedCustomer) {
     // Alle zahlbaren Rechnungstypen (auch Anzahlungs-/Schlussrechnung) zählen zum Umsatz.
     // Gutschriften (typ=gutschrift, status=verrechnet) werden abgezogen,
@@ -413,44 +430,42 @@ export default function Customers() {
     const umsatz = umsatzPositiv - umsatzGutschriften;
 
     return (
-      <div className="min-h-screen bg-background">
-        <div className="container mx-auto px-4 py-8 max-w-6xl">
-          <div className="flex items-center gap-3 mb-6">
-            <Button variant="ghost" size="icon" onClick={() => setSelectedCustomer(null)}>
-              <ArrowLeft className="w-5 h-5" />
-            </Button>
-            <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-2xl font-bold">{selectedCustomer.name}</h1>
-                {(selectedCustomer as any).kundentyp === "privatkunde" && (
-                  <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Privat</span>
-                )}
-                {(selectedCustomer as any).kundentyp === "geschaeftskunde" && (
-                  <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Gewerbe</span>
-                )}
-              </div>
-            </div>
-            <div className="ml-auto flex gap-2">
-              <Button variant="outline" size="sm" onClick={() => openEdit(selectedCustomer)}>
-                <Pencil className="w-4 h-4 mr-1" /> Bearbeiten
-              </Button>
-            </div>
+      <div className="kb-page min-h-screen">
+        <KBToolbar
+          onBack={() => setSelectedCustomer(null)}
+          backLabel="Zurück zur Kundenliste"
+          title={selectedCustomer.name}
+        >
+          <KBToolbarButton icon={Pencil} label="Bearbeiten" onClick={() => openEdit(selectedCustomer)} />
+        </KBToolbar>
+
+        <div className="container mx-auto px-4 py-6 max-w-6xl">
+          <div className="flex items-center gap-2 flex-wrap mb-4">
+            {(selectedCustomer as any).kundennummer && (
+              <span className="text-sm font-mono font-bold">{(selectedCustomer as any).kundennummer}</span>
+            )}
+            {(selectedCustomer as any).kundentyp === "privatkunde" && (
+              <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Privat</span>
+            )}
+            {(selectedCustomer as any).kundentyp === "geschaeftskunde" && (
+              <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Gewerbe</span>
+            )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardDescription>Umsatz (bezahlt)</CardDescription>
                 <CardTitle className="text-2xl text-green-600">€ {umsatz.toFixed(2)}</CardTitle>
               </CardHeader>
             </Card>
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardDescription>Rechnungen</CardDescription>
                 <CardTitle className="text-2xl">{customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ)).length}</CardTitle>
               </CardHeader>
             </Card>
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardDescription>Angebote</CardDescription>
                 <CardTitle className="text-2xl">{customerInvoices.filter(i => _angebotLikeTypes.has(i.typ)).length}</CardTitle>
@@ -459,7 +474,7 @@ export default function Customers() {
           </div>
 
           {/* Contact info */}
-          <Card className="mb-6">
+          <Card className="kb-panel mb-6">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Kontaktdaten</CardTitle>
             </CardHeader>
@@ -489,7 +504,7 @@ export default function Customers() {
           </Card>
 
           {/* Invoice history */}
-          <Card>
+          <Card className="kb-panel">
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <Receipt className="w-4 h-4" /> Rechnungen & Angebote
@@ -539,189 +554,225 @@ export default function Customers() {
           )}
         </div>
 
-        {/* Reuse dialog */}
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>Kunde bearbeiten</DialogTitle>
-            </DialogHeader>
-            <CustomerForm
-              value={form}
-              onChange={setForm}
-              onSave={handleSave}
-              saving={saving}
-              editId={editId}
-            />
-          </DialogContent>
-        </Dialog>
+        {editorDialog}
       </div>
     );
   }
 
+  // ── KingBill-Listenmaske: Toolbar + linke Filterspalte + Kunden-Grid ──
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-6xl">
-        <PageHeader title="Kundenverwaltung" backPath="/" />
+    <div className="kb-page min-h-screen">
+      {/* Print-CSS: „Liste drucken" druckt nur das Kunden-Grid */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #kb-print-area, #kb-print-area * { visibility: visible; }
+          #kb-print-area { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; border-radius: 0; }
+          #kb-print-area .overflow-x-auto { overflow: visible !important; }
+        }
+      `}</style>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Gesamt</CardDescription>
-              <CardTitle className="text-2xl">{customers.length} Kunden</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
+      {/* KingBill-Toolbar: [Zurück] [+ Neu] [Bearbeiten] [Löschen] [Detailblatt] [Liste drucken] */}
+      <KBToolbar onBack={() => navigate("/")} title="Kunden">
+        <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neu" onClick={openNew} />
+        <KBToolbarButton
+          icon={Pencil}
+          label="Bearbeiten"
+          onClick={editSelected}
+          disabled={!selectedRow}
+          title={selectedRow ? `${selectedRow.name} bearbeiten` : "Zuerst eine Zeile markieren"}
+        />
+        <KBToolbarButton
+          icon={Trash2}
+          label="Löschen"
+          onClick={() => selectedRow && setDeleteDialogOpen(true)}
+          disabled={!selectedRow}
+          title={selectedRow ? `${selectedRow.name} löschen` : "Zuerst eine Zeile markieren"}
+        />
+        <KBToolbarButton
+          icon={IdCard}
+          label="Detailblatt"
+          onClick={detailSelected}
+          disabled={!selectedRow}
+          title={selectedRow ? `Umsatz & Belege von ${selectedRow.name}` : "Zuerst eine Zeile markieren"}
+        />
+        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+      </KBToolbar>
 
-        <Card>
-          <CardHeader>
-            <div className="flex justify-between items-center flex-wrap gap-4">
-              <div className="flex gap-2 flex-1 flex-wrap items-center">
-                <div className="relative flex-1 min-w-[200px] max-w-sm">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Kunde suchen..."
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                    className="pl-10"
-                  />
-                </div>
-                <div className="flex gap-1">
-                  <Button
-                    type="button"
-                    variant={typFilter === "alle" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setTypFilter("alle")}
-                  >Alle</Button>
-                  <Button
-                    type="button"
-                    variant={typFilter === "privatkunde" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setTypFilter("privatkunde")}
-                  >Privat</Button>
-                  <Button
-                    type="button"
-                    variant={typFilter === "geschaeftskunde" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setTypFilter("geschaeftskunde")}
-                  >Gewerbe</Button>
-                </div>
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+        <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">
+
+          {/* ── Linke KingBill-Filterspalte ── */}
+          <aside className="kb-panel w-full lg:w-64 shrink-0 p-3 print:hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+            {/* Mobile: Filterspalte auf-/zuklappen */}
+            <button
+              type="button"
+              className="kb-btn w-full justify-between lg:hidden"
+              onClick={() => setFiltersOpen(o => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-kb-blue-dark" />
+                Filter & Suche
+              </span>
+              {filtersOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+
+            <div className={`${filtersOpen ? "flex" : "hidden"} lg:flex flex-col gap-3 mt-3 lg:mt-0`}>
+              {/* Suche */}
+              <input
+                type="search"
+                className="kb-input"
+                placeholder="Suche… (Name, Nummer, Ort, UID)"
+                aria-label="Kunden durchsuchen"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+
+              {/* Gruppe filtern (Kundentyp) */}
+              <Select value={typFilter} onValueChange={(v) => setTypFilter(v as typeof typFilter)}>
+                <SelectTrigger className="w-full h-9" aria-label="Gruppe filtern">
+                  <SelectValue placeholder="Gruppe filtern…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alle">Alle Gruppen</SelectItem>
+                  <SelectItem value="privatkunde">Privatkunden</SelectItem>
+                  <SelectItem value="geschaeftskunde">Geschäftskunden</SelectItem>
+                </SelectContent>
+              </Select>
+
+              {/* Anzahl-Zähler wie im KingBill-Original */}
+              <div className="border-t border-border pt-2 text-sm font-bold">
+                Anzahl Kunden: {loading ? "…" : filtered.length}
               </div>
-              <Button onClick={openNew} className="gap-2">
-                <Plus className="w-4 h-4" />
-                Neuer Kunde
-              </Button>
+
+              <p className="text-[11px] text-muted-foreground">
+                Zeile anklicken = markieren, Doppelklick = bearbeiten.
+              </p>
             </div>
-          </CardHeader>
-          <CardContent>
-            {loading ? (
-              <p className="text-center py-8 text-muted-foreground">Lädt...</p>
-            ) : filtered.length === 0 ? (
-              <div className="text-center py-12">
-                <Users className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
-                <p className="text-lg font-semibold mb-1">
-                  {search ? "Keine Kunden gefunden" : "Noch keine Kunden"}
-                </p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  {search
-                    ? "Passe deine Suche an oder lege einen neuen Kunden an."
-                    : "Lege deinen ersten Kunden an um Rechnungen und Angebote zu erstellen."}
-                </p>
-                {!search && (
-                  <Button onClick={openNew} className="gap-2">
-                    <Plus className="w-4 h-4" /> Ersten Kunden anlegen
-                  </Button>
-                )}
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Name</TableHead>
-                      <TableHead>Ansprechpartner</TableHead>
-                      <TableHead>Ort</TableHead>
-                      <TableHead>E-Mail</TableHead>
-                      <TableHead>Telefon</TableHead>
-                      <TableHead className="w-[100px]"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {filtered.map((c) => {
-                      const color = customerColors[c.id];
-                      const typ = (c as any).kundentyp;
-                      return (
-                      <TableRow key={c.id} className="cursor-pointer hover:bg-muted/50" onClick={() => openCustomerDetail(c)}>
-                        <TableCell className="font-medium">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            {color && (
-                              <span
-                                className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
-                                style={{ backgroundColor: color.bg }}
-                                title="Kundenfarbe"
-                              />
-                            )}
-                            <span>{c.name}</span>
-                            {typ === "privatkunde" && (
-                              <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Privat</span>
-                            )}
-                            {typ === "geschaeftskunde" && (
-                              <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Gewerbe</span>
-                            )}
-                            {c.uid_nummer && <span className="text-xs text-muted-foreground">({c.uid_nummer})</span>}
-                          </div>
-                        </TableCell>
-                        <TableCell>{c.ansprechpartner || "–"}</TableCell>
-                        <TableCell>{c.ort ? `${c.plz || ""} ${c.ort}`.trim() : "–"}</TableCell>
-                        <TableCell>{c.email || "–"}</TableCell>
-                        <TableCell>{c.telefon || "–"}</TableCell>
-                        <TableCell>
-                          <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                            <Button variant="ghost" size="icon" onClick={() => openEdit(c)}>
-                              <Pencil className="w-4 h-4" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="ghost" size="icon">
-                                  <Trash2 className="w-4 h-4 text-destructive" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>Kunde löschen?</AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    {c.name} wird dauerhaft gelöscht.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                  <AlertDialogAction onClick={() => handleDelete(c.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                    Löschen
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
-                          </div>
-                        </TableCell>
+          </aside>
+
+          {/* ── Kunden-Grid rechts (zugleich Druckbereich) ── */}
+          <section id="kb-print-area" className="kb-panel flex-1 min-w-0 overflow-hidden">
+            {/* Druck-Kopf: nur beim „Liste drucken" sichtbar */}
+            <div className="hidden print:block px-4 pt-4">
+              <h2 className="text-lg font-bold">Kundenliste</h2>
+              <p className="text-xs text-muted-foreground">Anzahl Kunden: {filtered.length}</p>
+            </div>
+            <div className="p-2 sm:p-3">
+              {loading ? (
+                <p className="text-center py-8 text-muted-foreground">Lädt...</p>
+              ) : filtered.length === 0 ? (
+                <div className="text-center py-12">
+                  <Users className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
+                  <p className="text-lg font-semibold mb-1">
+                    {search ? "Keine Kunden gefunden" : "Noch keine Kunden"}
+                  </p>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {search
+                      ? "Passe deine Suche an oder lege einen neuen Kunden an."
+                      : "Lege deinen ersten Kunden an um Rechnungen und Angebote zu erstellen."}
+                  </p>
+                  {!search && (
+                    <button type="button" className="kb-btn mx-auto" onClick={openNew}>
+                      <Plus className="w-4 h-4 text-kb-green" /> Ersten Kunden anlegen
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        {/* Status-Punkt (KingBill-Grid) — neutral grau, es gibt keinen Kundenstatus */}
+                        <TableHead className="w-8"><span className="sr-only">Status</span></TableHead>
+                        <TableHead>Kundennummer</TableHead>
+                        <TableHead>Kunde</TableHead>
+                        <TableHead>Adresse</TableHead>
+                        <TableHead>Plz</TableHead>
+                        <TableHead>Ort</TableHead>
+                        <TableHead>Telefon</TableHead>
+                        <TableHead>E-Mail</TableHead>
+                        <TableHead>Gruppe</TableHead>
                       </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((c) => {
+                        const color = customerColors[c.id];
+                        const typ = (c as any).kundentyp;
+                        const isSelected = selectedId === c.id;
+                        return (
+                          <TableRow
+                            key={c.id}
+                            aria-selected={isSelected}
+                            className={`cursor-pointer ${isSelected ? "bg-kb-blue/15 hover:bg-kb-blue/20" : "hover:bg-muted/50"}`}
+                            onClick={() => setSelectedId(c.id)}
+                            onDoubleClick={() => openEdit(c)}
+                          >
+                            <TableCell className="w-8">
+                              <span className="block h-2.5 w-2.5 rounded-full bg-gray-400" title="Kunde" />
+                            </TableCell>
+                            <TableCell className="font-mono font-medium whitespace-nowrap">{(c as any).kundennummer || "–"}</TableCell>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {color && (
+                                  <span
+                                    className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                                    style={{ backgroundColor: color.bg }}
+                                    title="Kundenfarbe"
+                                  />
+                                )}
+                                <span>{c.name}</span>
+                                {c.uid_nummer && <span className="text-xs text-muted-foreground">({c.uid_nummer})</span>}
+                              </div>
+                            </TableCell>
+                            <TableCell className="max-w-[220px] truncate">{c.adresse || "–"}</TableCell>
+                            <TableCell className="whitespace-nowrap">{c.plz || "–"}</TableCell>
+                            <TableCell>{c.ort || "–"}</TableCell>
+                            <TableCell className="whitespace-nowrap">{c.telefon || "–"}</TableCell>
+                            <TableCell className="max-w-[200px] truncate">{c.email || "–"}</TableCell>
+                            <TableCell>
+                              {typ === "privatkunde" && (
+                                <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-blue-100 text-blue-800">Privat</span>
+                              )}
+                              {typ === "geschaeftskunde" && (
+                                <span className="text-[10px] uppercase px-1.5 py-0.5 rounded bg-purple-100 text-purple-800">Gewerbe</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
       </div>
 
-      {/* Edit/Create Dialog */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{editId ? "Kunde bearbeiten" : "Neuer Kunde"}</DialogTitle>
-          </DialogHeader>
-          <CustomerForm value={form} onChange={setForm} onSave={handleSave} saving={saving} editId={editId} />
-        </DialogContent>
-      </Dialog>
+      {/* Löschen-Bestätigung für die markierte Zeile */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Kunde löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {selectedRow ? `${selectedRow.name} wird dauerhaft gelöscht.` : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => { if (selectedRow) handleDelete(selectedRow.id); setDeleteDialogOpen(false); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Löschen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {editorDialog}
     </div>
   );
 }
