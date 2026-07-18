@@ -49,8 +49,14 @@ GIB NUR JSON ZURÜCK (kein Markdown, keine Erklärung), genau in diesem Schema:
   "ust_betrag": number | null,      // ausgewiesene USt in Euro
   "ust_satz": 0 | 10 | 13 | 20,
   "kategorie": ${kategorieEnum},
-  "notizen": string | null
-}
+  "notizen": string | null,
+  "positionen": [                   // einzelne Rechnungspositionen (Zeilen), max. 40
+    {
+      "beschreibung": string,       // kurze Positionsbezeichnung (z.B. "KVH 60x120 Fichte")
+      "betrag_netto": number | null, // Zeilensumme NETTO (Menge × Einzelpreis)
+      "betrag_brutto": number | null // Zeilensumme BRUTTO, falls nur brutto ausgewiesen
+    }
+  ] | null
 
 ══════════════════════════════════════════════════════════════
 KRITISCHE REGELN FÜR BRUTTO-BETRAG (absolut wichtig):
@@ -89,6 +95,16 @@ PLAUSIBILITÄT:
   * 10% = ermäßigt (Lebensmittel, Bücher, Wohnung)
   * 13% = ermäßigt (Blumen, Kultur)
   * 0% = steuerfrei (Reverse Charge, innergem. Lieferung)
+
+POSITIONEN (Rechnungszeilen):
+- Extrahiere die einzelnen Rechnungspositionen mit ihrer ZEILENSUMME
+  (Menge × Einzelpreis), bevorzugt netto. Wenn nur Brutto-Zeilenpreise
+  ausgewiesen sind, fülle betrag_brutto und lasse betrag_netto null.
+- KEINE Zwischensummen, USt-Zeilen, Rabatt-/Skonto-Zeilen oder die
+  Gesamtsumme als Position aufnehmen. Versand-/Zustellkosten sind eine
+  eigene Position, wenn ausgewiesen.
+- Maximal 40 Positionen. Wenn die Positionen nicht sicher lesbar sind
+  (z.B. Kassabon ohne klare Zeilen), setze "positionen": null.
 
 DATUMSFORMAT:
 - Deutsches Format erkennen: "24.03.2026" → "2026-03-24"
@@ -148,6 +164,7 @@ function validateInvoice(raw: any): {
   ust_satz: number;
   kategorie: string;
   notizen: string | null;
+  positionen: Array<{ beschreibung: string; betrag_netto: number | null; betrag_brutto: number | null }>;
   warnings: string[];
 } {
   const warnings: string[] = [];
@@ -205,6 +222,21 @@ function validateInvoice(raw: any): {
     ? raw.notizen.trim()
     : null;
 
+  // Positionen: lenient validieren — ungültige Zeilen still verwerfen.
+  const positionen = (Array.isArray(raw?.positionen) ? raw.positionen : [])
+    .map((p: any) => {
+      const beschreibung = typeof p?.beschreibung === "string" ? p.beschreibung.trim() : "";
+      const pNetto = parseEuroAmount(p?.betrag_netto);
+      const pBrutto = parseEuroAmount(p?.betrag_brutto);
+      return {
+        beschreibung,
+        betrag_netto: pNetto != null ? Math.abs(pNetto) : null,
+        betrag_brutto: pBrutto != null ? Math.abs(pBrutto) : null,
+      };
+    })
+    .filter((p: any) => p.beschreibung || p.betrag_netto != null || p.betrag_brutto != null)
+    .slice(0, 40);
+
   return {
     lieferant,
     rechnungsnummer,
@@ -215,6 +247,7 @@ function validateInvoice(raw: any): {
     ust_satz: ustSatz,
     kategorie,
     notizen,
+    positionen,
     warnings,
   };
 }
@@ -287,7 +320,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           { role: "user", content: userContent },
         ],
         temperature: 0,
-        max_tokens: 1500,
+        // Positionslisten können lang sein (bis 40 Zeilen) → mehr Tokens.
+        max_tokens: 4000,
         response_format: { type: "json_object" },
       }),
     });
@@ -370,7 +404,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
               },
             ],
             temperature: 0,
-            max_tokens: 1500,
+            // Positionslisten können lang sein (bis 40 Zeilen) → mehr Tokens.
+        max_tokens: 4000,
             response_format: { type: "json_object" },
           }),
         });

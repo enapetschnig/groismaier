@@ -1,13 +1,11 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, Undo2, Truck } from "lucide-react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
@@ -17,7 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { format, parseISO, isBefore } from "date-fns";
 import { de } from "date-fns/locale";
-import { PageHeader } from "@/components/PageHeader";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { ExportInvoicesDialog } from "@/components/ExportInvoicesDialog";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import {
@@ -83,16 +81,37 @@ const PAYABLE_INVOICE_TYPES = new Set(["rechnung", "anzahlungsrechnung", "schlus
 const INVOICE_LIKE_TYPES = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
 const ANGEBOT_LIKE_TYPES = new Set(["angebot", "auftragsbestaetigung"]);
 
+// Gültige ?tab=-Werte (die Hauptmaske verlinkt mit ?tab=angebot|rechnung|lieferschein).
+const VALID_TABS = ["rechnung", "angebot", "lieferschein", "storno"];
+
+/** Kompakte Kennzahl-Zeile für die linke KingBill-Filterspalte. */
+function KBStat({ label, value, valueClass = "" }: { label: string; value: string | number; valueClass?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-border bg-muted/40 px-2.5 py-1.5">
+      <span className="text-xs text-muted-foreground">{label}</span>
+      <span className={`text-sm font-bold ${valueClass}`}>{value}</span>
+    </div>
+  );
+}
+
 export default function Invoices() {
+  // Query-Params: ?tab= wählt die Belegart, ?q= füllt die Suche,
+  // ?status= setzt den Status-Filter (Verlinkung von der Hauptmaske).
+  const [searchParams] = useSearchParams();
+  const initialTab = searchParams.get("tab");
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filterTyp, setFilterTyp] = useState<string>("rechnung");
-  const [filterStatus, setFilterStatus] = useState<string>("alle");
+  const [filterTyp, setFilterTyp] = useState<string>(
+    initialTab && VALID_TABS.includes(initialTab) ? initialTab : "rechnung"
+  );
+  const [filterStatus, setFilterStatus] = useState<string>(searchParams.get("status") || "alle");
+  // Mobile: linke Filterspalte auf-/zuklappbar (auf lg+ immer sichtbar)
+  const [filtersOpen, setFiltersOpen] = useState(false);
   // Sub-Typ-Filter innerhalb der Rechnungen- bzw. Angebote-Tabs.
   //   "alle" = keine weitere Einschränkung
   //   sonst = exakter invoices.typ-Wert
   const [filterSubTyp, setFilterSubTyp] = useState<string>("alle");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [showArchive, setShowArchive] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
@@ -142,10 +161,26 @@ export default function Invoices() {
     }
   };
 
-  // Reset status filter when typ changes
-  useEffect(() => {
+  // Tab-Wechsel per Klick: Sub-Typ + Status-Filter zurücksetzen.
+  // (Bewusst kein Effekt auf filterTyp — sonst würde ein per ?status=
+  // gesetzter Filter beim Mount sofort wieder überschrieben.)
+  const selectTab = (tab: string) => {
+    setFilterTyp(tab);
+    setFilterSubTyp("alle");
     setFilterStatus("alle");
-  }, [filterTyp]);
+  };
+
+  // Späte Query-Param-Änderungen (z. B. erneute Navigation auf /invoices?…)
+  // weiter auf die Filter anwenden.
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab && VALID_TABS.includes(tab)) setFilterTyp(tab);
+    const q = searchParams.get("q");
+    if (q !== null) setSearchQuery(q);
+    const status = searchParams.get("status");
+    if (status) setFilterStatus(status);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const fetchInvoices = async () => {
     const { data, error } = await supabase
@@ -506,271 +541,183 @@ export default function Invoices() {
         : [...new Set([...rechnungStatuses, ...angebotStatuses])];
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-[1600px]">
-        <PageHeader title="Rechnungen & Angebote" backPath="/" />
+    <div className="kb-page min-h-screen">
+      {/* Print-CSS: „Liste drucken" druckt nur das Dokumenten-Grid */}
+      <style>{`
+        @media print {
+          body * { visibility: hidden; }
+          #kb-print-area, #kb-print-area * { visibility: visible; }
+          #kb-print-area { position: absolute; left: 0; top: 0; width: 100%; border: none; box-shadow: none; border-radius: 0; }
+          #kb-print-area .overflow-x-auto { overflow: visible !important; }
+        }
+      `}</style>
 
-        {/* Kompakte Stats — kontextuell gefiltert */}
-        {(() => {
-          if (filterTyp === "storno") {
-            const stornoDocs = invoices.filter(i => i.status === "storniert");
-            const summe = stornoDocs.reduce((s, i) => s + Number(i.brutto_summe), 0);
-            return (
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Storno-Belege</p>
-                    <p className="text-xl font-bold">{stornoDocs.length}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Stornierte Summe</p>
-                    <p className="text-xl font-bold text-red-600">€ {summe.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-              </div>
-            );
-          }
-          if (filterTyp === "lieferschein") {
-            // Lieferscheine sind preislos → Zähler statt €-Summen.
-            const lsDocs = invoices.filter(i => i.typ === "lieferschein" && i.status !== "storniert");
-            return (
-              <div className="grid grid-cols-3 gap-3 mb-4">
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Lieferscheine</p>
-                    <p className="text-xl font-bold">{lsDocs.length}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Offen</p>
-                    <p className="text-xl font-bold text-orange-600">{lsDocs.filter(i => i.status === "offen").length}</p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Verrechnet</p>
-                    <p className="text-xl font-bold text-purple-700">{lsDocs.filter(i => i.status === "verrechnet").length}</p>
-                  </CardContent>
-                </Card>
-              </div>
-            );
-          }
-          const visibleInvoices = invoices.filter(i => i.typ === filterTyp && i.status !== "storniert");
-          const count = visibleInvoices.length;
-          const openBrutto = visibleInvoices.filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt")).reduce((s, i) => s + (Number(i.brutto_summe) - Number(i.bezahlt_betrag || 0)), 0);
-          const overdue = visibleInvoices.filter(i => isOverdue(i)).length;
-          return (
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <Card>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">{filterTyp === "rechnung" ? "Rechnungen" : "Angebote"}</p>
-                  <p className="text-xl font-bold">{count}</p>
-                </CardContent>
-              </Card>
-              {filterTyp === "rechnung" ? (
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Offener Betrag</p>
-                    <p className="text-xl font-bold text-orange-600">€ {openBrutto.toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card>
-                  <CardContent className="p-3">
-                    <p className="text-xs text-muted-foreground">Summe</p>
-                    <p className="text-xl font-bold">€ {visibleInvoices.reduce((s, i) => s + Number(i.brutto_summe), 0).toFixed(2)}</p>
-                  </CardContent>
-                </Card>
-              )}
-              <Card className={overdue > 0 ? "border-red-300" : ""}>
-                <CardContent className="p-3">
-                  <p className="text-xs text-muted-foreground">Überfällig</p>
-                  <p className={`text-xl font-bold ${overdue > 0 ? "text-red-600" : ""}`}>{overdue}</p>
-                </CardContent>
-              </Card>
-            </div>
-          );
-        })()}
+      {/* KingBill-Toolbar: [Zurück] links, neue Belege + Liste drucken Mitte, Export rechts */}
+      <KBToolbar
+        onBack={() => navigate("/")}
+        title="Dokumente"
+        rightActions={
+          <>
+            <KBToolbarButton icon={FileDown} label="Export" onClick={() => setExportDialogOpen(true)} />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button type="button" className="kb-btn kb-btn-lg px-3" title="Mehr Aktionen" aria-label="Mehr Aktionen">
+                  <MoreHorizontal className="h-5 w-5 text-kb-blue-dark" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => setShowArchive(!showArchive)}>
+                  <Archive className="h-4 w-4 mr-2" />
+                  {showArchive ? "Archiv ausblenden" : "Archiv anzeigen"}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => navigate("/admin?tab=einstellungen#nummernkreise")}>
+                  <Settings className="h-4 w-4 mr-2" /> Nummernkreise
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </>
+        }
+      >
+        <KBToolbarButton
+          icon={Plus}
+          iconClassName="text-kb-green"
+          label="Neues Angebot"
+          onClick={() => navigate("/invoices/new?typ=angebot")}
+        />
+        <KBToolbarButton
+          icon={Plus}
+          iconClassName="text-kb-green"
+          label="Neue Rechnung"
+          onClick={() => navigate("/invoices/new?typ=rechnung")}
+        />
+        <KBToolbarButton
+          icon={Plus}
+          iconClassName="text-kb-green"
+          label="Neuer Lieferschein"
+          onClick={() => navigate("/invoices/new?typ=lieferschein")}
+        />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <KBToolbarButton icon={ChevronDown} label="Weitere Belegart" title="Weitere Belegart wählen" />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64">
+            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
+              <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
+              <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
+              <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
+              <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+      </KBToolbar>
 
-        <Card>
-          <CardHeader className="pb-3 space-y-3">
-            {/* Titel + Tabs + primäre Aktion */}
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="flex rounded-md border overflow-hidden">
-                <button
-                  onClick={() => { setFilterTyp("rechnung"); setFilterSubTyp("alle"); }}
-                  className={`px-4 py-2 text-sm font-medium transition-colors ${filterTyp === "rechnung" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
-                >
-                  Rechnungen
-                </button>
-                <button
-                  onClick={() => { setFilterTyp("angebot"); setFilterSubTyp("alle"); }}
-                  className={`px-4 py-2 text-sm font-medium transition-colors border-l ${filterTyp === "angebot" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
-                  title="Angebote + Auftragsbestätigungen"
-                >
-                  Angebote
-                </button>
-                <button
-                  onClick={() => { setFilterTyp("lieferschein"); setFilterSubTyp("alle"); }}
-                  className={`px-4 py-2 text-sm font-medium transition-colors border-l ${filterTyp === "lieferschein" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
-                  title="Lieferscheine (ohne Preise)"
-                >
-                  Lieferscheine
-                </button>
-                <button
-                  onClick={() => { setFilterTyp("storno"); setFilterSubTyp("alle"); }}
-                  className={`px-4 py-2 text-sm font-medium transition-colors border-l ${filterTyp === "storno" ? "bg-primary text-primary-foreground" : "bg-background hover:bg-muted"}`}
-                  title="Stornierte Rechnungen / Storno-Belege"
-                >
-                  Storno-Belege
-                  {storniertCount > 0 && (
-                    <span className={`ml-1.5 px-1.5 py-0.5 rounded text-[10px] ${filterTyp === "storno" ? "bg-primary-foreground/20" : "bg-muted"}`}>
-                      {storniertCount}
-                    </span>
-                  )}
-                </button>
-              </div>
-              <div className="flex gap-2">
-                {filterTyp !== "storno" && (
-                  <DropdownMenu>
-                    <div className="flex">
-                      {/* Haupt-Button: Default-Aktion je nach aktuellem Tab */}
-                      <Button
-                        onClick={() =>
-                          navigate(
-                            filterTyp === "angebot" ? "/invoices/new?typ=angebot"
-                              : filterTyp === "lieferschein" ? "/invoices/new?typ=lieferschein"
-                              : "/invoices/new?typ=rechnung"
-                          )
-                        }
-                        variant="default"
-                        className="gap-2 rounded-r-none"
-                      >
-                        {filterTyp === "angebot" ? <FileText className="w-4 h-4" /> : filterTyp === "lieferschein" ? <Truck className="w-4 h-4" /> : <Receipt className="w-4 h-4" />}
-                        {filterTyp === "angebot" ? "Neues Angebot" : filterTyp === "lieferschein" ? "Neuer Lieferschein" : "Neue Rechnung"}
-                      </Button>
-                      {/* Chevron: öffnet Dropdown mit allen weiteren Belegtypen */}
-                      <DropdownMenuTrigger asChild>
-                        <Button
-                          variant="default"
-                          className="rounded-l-none border-l border-primary-foreground/20 px-2"
-                          title="Weitere Belegart wählen"
-                          aria-label="Weitere Belegart wählen"
-                        >
-                          <ChevronDown className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                    </div>
-                    <DropdownMenuContent align="end" className="w-56">
-                      {filterTyp === "angebot" ? (
-                        <>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=angebot")}>
-                            <FileText className="w-4 h-4 mr-2" /> Neues Angebot
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
-                            <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
-                          </DropdownMenuItem>
-                        </>
-                      ) : filterTyp === "lieferschein" ? (
-                        <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=lieferschein")}>
-                          <Truck className="w-4 h-4 mr-2" /> Neuer Lieferschein
-                        </DropdownMenuItem>
-                      ) : (
-                        <>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=rechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Rechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
-                            <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
-                            <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
-                          </DropdownMenuItem>
-                        </>
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+        <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">
+
+          {/* ── Linke KingBill-Filterspalte ── */}
+          <aside className="kb-panel w-full lg:w-64 shrink-0 p-3 print:hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
+            {/* Mobile: Filterspalte auf-/zuklappen */}
+            <button
+              type="button"
+              className="kb-btn w-full justify-between lg:hidden"
+              onClick={() => setFiltersOpen(o => !o)}
+              aria-expanded={filtersOpen}
+            >
+              <span className="flex items-center gap-2">
+                <Filter className="h-4 w-4 text-kb-blue-dark" />
+                Filter & Suche
+              </span>
+              {filtersOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+
+            <div className={`${filtersOpen ? "flex" : "hidden"} lg:flex flex-col gap-3 mt-3 lg:mt-0`}>
+              {/* Suche */}
+              <input
+                type="search"
+                className="kb-input"
+                placeholder={filterTyp === "storno" ? "Storno-Nr., Rechnungsnr., Kunde…" : "Suche… (Nummer, Kunde, Betrag)"}
+                aria-label="Dokumente durchsuchen"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+
+              {/* Belegart — vertikale Tab-Liste, aktiver Tab gelb-orange umrandet */}
+              <div className="flex flex-col gap-1.5">
+                {([
+                  { val: "rechnung", label: "Rechnungen", icon: Receipt, hint: "Rechnungen, Anzahlungs-/Schlussrechnungen + Gutschriften" },
+                  { val: "angebot", label: "Angebote", icon: FileText, hint: "Angebote + Auftragsbestätigungen" },
+                  { val: "lieferschein", label: "Lieferscheine", icon: Truck, hint: "Lieferscheine (ohne Preise)" },
+                  { val: "storno", label: "Storno-Belege", icon: Undo2, hint: "Stornierte Rechnungen / Storno-Belege" },
+                ] as const).map(t => {
+                  const TabIcon = t.icon;
+                  const active = filterTyp === t.val;
+                  return (
+                    <button
+                      key={t.val}
+                      type="button"
+                      onClick={() => selectTab(t.val)}
+                      className={`${active ? "kb-tab-active" : "kb-tab"} w-full`}
+                      title={t.hint}
+                    >
+                      <TabIcon className="h-4 w-4 shrink-0 text-kb-blue-dark" />
+                      <span className="truncate">{t.label}</span>
+                      {t.val === "storno" && storniertCount > 0 && (
+                        <span className="kb-badge ml-auto shrink-0">{storniertCount}</span>
                       )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                )}
-                <Button onClick={() => setExportDialogOpen(true)} variant="outline" className="gap-2">
-                  <FileDown className="w-4 h-4" />
-                  Export
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="icon" title="Mehr Aktionen">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem onClick={() => setShowArchive(!showArchive)}>
-                      <Archive className="h-4 w-4 mr-2" />
-                      {showArchive ? "Archiv ausblenden" : "Archiv anzeigen"}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => navigate("/admin?tab=einstellungen#nummernkreise")}>
-                      <Settings className="h-4 w-4 mr-2" /> Nummernkreise
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                    </button>
+                  );
+                })}
               </div>
-            </div>
 
-            {/* Sub-Filter pro Typ — nur sichtbar bei Rechnungen + Angebote */}
-            {(filterTyp === "rechnung" || filterTyp === "angebot") && (() => {
-              const chips: { val: string; label: string; cls: string }[] = filterTyp === "rechnung"
-                ? [
-                    { val: "alle",                label: "Alle",               cls: "bg-muted text-foreground" },
-                    { val: "rechnung",            label: "Rechnung",           cls: "bg-green-100 text-green-800 border-green-300" },
-                    { val: "anzahlungsrechnung",  label: "Anzahlungsrechnung", cls: "bg-orange-100 text-orange-800 border-orange-300" },
-                    { val: "schlussrechnung",    label: "Schlussrechnung",    cls: "bg-emerald-100 text-emerald-900 border-emerald-400" },
-                  ]
-                : [
-                    { val: "alle",                label: "Alle",               cls: "bg-muted text-foreground" },
-                    { val: "angebot",             label: "Angebot",            cls: "bg-blue-100 text-blue-800 border-blue-300" },
-                    { val: "auftragsbestaetigung", label: "Auftragsbestätigung", cls: "bg-indigo-100 text-indigo-800 border-indigo-300" },
-                  ];
-              return (
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {chips.map(chip => {
-                    const active = filterSubTyp === chip.val;
-                    return (
-                      <button
-                        key={chip.val}
-                        onClick={() => setFilterSubTyp(chip.val)}
-                        className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
-                          active
-                            ? `${chip.cls} ring-2 ring-offset-1 ring-primary/50`
-                            : `${chip.cls} opacity-60 hover:opacity-100`
-                        }`}
-                      >
-                        {chip.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            })()}
+              {/* Sub-Filter pro Typ — nur sichtbar bei Rechnungen + Angebote */}
+              {(filterTyp === "rechnung" || filterTyp === "angebot") && (() => {
+                const chips: { val: string; label: string; cls: string }[] = filterTyp === "rechnung"
+                  ? [
+                      { val: "alle",                label: "Alle",               cls: "bg-muted text-foreground" },
+                      { val: "rechnung",            label: "Rechnung",           cls: "bg-green-100 text-green-800 border-green-300" },
+                      { val: "anzahlungsrechnung",  label: "Anzahlungsrechnung", cls: "bg-orange-100 text-orange-800 border-orange-300" },
+                      { val: "schlussrechnung",    label: "Schlussrechnung",    cls: "bg-emerald-100 text-emerald-900 border-emerald-400" },
+                    ]
+                  : [
+                      { val: "alle",                label: "Alle",               cls: "bg-muted text-foreground" },
+                      { val: "angebot",             label: "Angebot",            cls: "bg-blue-100 text-blue-800 border-blue-300" },
+                      { val: "auftragsbestaetigung", label: "Auftragsbestätigung", cls: "bg-indigo-100 text-indigo-800 border-indigo-300" },
+                    ];
+                return (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {chips.map(chip => {
+                      const active = filterSubTyp === chip.val;
+                      return (
+                        <button
+                          key={chip.val}
+                          onClick={() => setFilterSubTyp(chip.val)}
+                          className={`px-2.5 py-1 text-xs font-medium rounded-full border transition-colors ${
+                            active
+                              ? `${chip.cls} ring-2 ring-offset-1 ring-primary/50`
+                              : `${chip.cls} opacity-60 hover:opacity-100`
+                          }`}
+                        >
+                          {chip.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
 
-            {/* Schlanke Filter-Zeile */}
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="relative flex-1 min-w-[200px]">
-                <Input
-                  placeholder={filterTyp === "storno" ? "Storno-Nr., Rechnungsnr., Kunde..." : "Nummer, Kunde oder Betrag suchen..."}
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="h-9"
-                />
-              </div>
+              {/* Status filtern */}
               {filterTyp !== "storno" && (
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
-                  <SelectTrigger className="w-[150px] h-9">
-                    <SelectValue />
+                  <SelectTrigger className="w-full h-9" aria-label="Status filtern">
+                    <SelectValue placeholder="Status filtern…" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="alle">Alle Status</SelectItem>
@@ -780,9 +727,74 @@ export default function Invoices() {
                   </SelectContent>
                 </Select>
               )}
+
+              {/* Anzahl-Zähler wie im KingBill-Original */}
+              <div className="border-t border-border pt-2 text-sm font-bold">
+                Anzahl: {loading ? "…" : filtered.length}
+              </div>
+
+        {/* Kompakte Stats — kontextuell gefiltert */}
+        {(() => {
+          if (filterTyp === "storno") {
+            const stornoDocs = invoices.filter(i => i.status === "storniert");
+            const summe = stornoDocs.reduce((s, i) => s + Number(i.brutto_summe), 0);
+            return (
+              <div className="flex flex-col gap-1.5">
+                <KBStat label="Storno-Belege" value={stornoDocs.length} />
+                <KBStat label="Stornierte Summe" value={`€ ${summe.toFixed(2)}`} valueClass="text-red-600" />
+              </div>
+            );
+          }
+          if (filterTyp === "lieferschein") {
+            // Lieferscheine sind preislos → Zähler statt €-Summen.
+            const lsDocs = invoices.filter(i => i.typ === "lieferschein" && i.status !== "storniert");
+            return (
+              <div className="flex flex-col gap-1.5">
+                <KBStat label="Lieferscheine" value={lsDocs.length} />
+                <KBStat label="Offen" value={lsDocs.filter(i => i.status === "offen").length} valueClass="text-orange-600" />
+                <KBStat label="Verrechnet" value={lsDocs.filter(i => i.status === "verrechnet").length} valueClass="text-purple-700" />
+              </div>
+            );
+          }
+          const visibleInvoices = invoices.filter(i => i.typ === filterTyp && i.status !== "storniert");
+          const count = visibleInvoices.length;
+          const openBrutto = visibleInvoices.filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt")).reduce((s, i) => s + (Number(i.brutto_summe) - Number(i.bezahlt_betrag || 0)), 0);
+          const overdue = visibleInvoices.filter(i => isOverdue(i)).length;
+          return (
+            <div className="flex flex-col gap-1.5">
+              <KBStat label={filterTyp === "rechnung" ? "Rechnungen" : "Angebote"} value={count} />
+              {filterTyp === "rechnung" ? (
+                <KBStat label="Offener Betrag" value={`€ ${openBrutto.toFixed(2)}`} valueClass="text-orange-600" />
+              ) : (
+                <KBStat label="Summe" value={`€ ${visibleInvoices.reduce((s, i) => s + Number(i.brutto_summe), 0).toFixed(2)}`} />
+              )}
+              <KBStat label="Überfällig" value={overdue} valueClass={overdue > 0 ? "text-red-600" : ""} />
             </div>
-          </CardHeader>
-          <CardContent>
+          );
+        })()}
+
+              {/* Ampel-Legende (KingBill-Stil): erklärt die Status-Punkte */}
+              <div className="flex flex-col gap-1 border-t border-border pt-2 text-[11px] text-muted-foreground">
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" />offen</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" />teilbezahlt</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" />bezahlt</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" />verrechnet</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#002337]" />angenommen</span>
+                <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" />überfällig / storniert</span>
+              </div>
+            </div>
+          </aside>
+
+          {/* ── Dokumenten-Grid rechts (zugleich Druckbereich) ── */}
+          <section id="kb-print-area" className="kb-panel flex-1 min-w-0 overflow-hidden">
+            {/* Druck-Kopf: nur beim „Liste drucken" sichtbar */}
+            <div className="hidden print:block px-4 pt-4">
+              <h2 className="text-lg font-bold">
+                {filterTyp === "storno" ? "Storno-Belege" : filterTyp === "angebot" ? "Angebote" : filterTyp === "lieferschein" ? "Lieferscheine" : "Rechnungen"}
+              </h2>
+              <p className="text-xs text-muted-foreground">Anzahl: {filtered.length}</p>
+            </div>
+            <div className="p-2 sm:p-3">
             {loading ? (
               <p className="text-center py-8 text-muted-foreground">Lädt...</p>
             ) : filtered.length === 0 ? (
@@ -808,25 +820,30 @@ export default function Invoices() {
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {/* Status-Ampel-Punkt in der ersten Spalte (KingBill-Grid) */}
+                      <TableHead className="w-8"><span className="sr-only">Status-Ampel</span></TableHead>
                       <TableHead>Storno-Nr.</TableHead>
                       <TableHead>Original Rechnung</TableHead>
                       <TableHead>Kunde</TableHead>
                       <TableHead>Storno-Datum</TableHead>
                       <TableHead>Grund</TableHead>
                       <TableHead className="text-right">Betrag</TableHead>
-                      <TableHead className="w-12"></TableHead>
+                      <TableHead className="w-12 print:hidden"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map((inv) => (
                       <TableRow key={inv.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/invoices/${inv.id}`)}>
+                        <TableCell className="w-8">
+                          <span className="block h-2.5 w-2.5 rounded-full bg-red-500" title="Storniert" />
+                        </TableCell>
                         <TableCell className="font-mono font-medium">{(inv as any).storno_nummer || "—"}</TableCell>
                         <TableCell className="font-mono text-muted-foreground">{inv.nummer}</TableCell>
                         <TableCell>{inv.kunde_name}</TableCell>
                         <TableCell>{formatDateShort((inv as any).storno_datum)}</TableCell>
                         <TableCell className="max-w-xs truncate text-sm text-muted-foreground">{(inv as any).storno_grund || "—"}</TableCell>
                         <TableCell className="text-right font-medium">€ {Number(inv.brutto_summe).toFixed(2)}</TableCell>
-                        <TableCell onClick={(e) => e.stopPropagation()}>
+                        <TableCell className="print:hidden" onClick={(e) => e.stopPropagation()}>
                           <Button
                             variant="ghost"
                             size="icon"
@@ -865,18 +882,11 @@ export default function Invoices() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                {/* Ampel-Legende (KingBill-Stil): erklärt die Status-Punkte */}
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 pb-2 text-[11px] text-muted-foreground">
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-orange-500" />offen</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-yellow-500" />teilbezahlt</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500" />bezahlt</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-blue-500" />verrechnet</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-[#002337]" />angenommen</span>
-                  <span className="flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-red-500" />überfällig / storniert</span>
-                </div>
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      {/* Status-Ampel-Punkt in der ersten Spalte (KingBill-Grid) */}
+                      <TableHead className="w-8"><span className="sr-only">Status-Ampel</span></TableHead>
                       <TableHead>Nummer</TableHead>
                       <TableHead>Kunde</TableHead>
                       <TableHead>Datum</TableHead>
@@ -885,7 +895,7 @@ export default function Invoices() {
                       {filterTyp !== "lieferschein" && <TableHead className="text-right">Brutto</TableHead>}
                       {filterTyp !== "angebot" && filterTyp !== "lieferschein" && <TableHead className="text-right">Bezahlt</TableHead>}
                       <TableHead>Status</TableHead>
-                      <TableHead className="w-12"></TableHead>
+                      <TableHead className="w-12 print:hidden"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -906,12 +916,28 @@ export default function Invoices() {
                         inv.typ === "auftragsbestaetigung" ? abStatuses :
                         PAYABLE_INVOICE_TYPES.has(inv.typ) ? rechnungStatuses :
                         angebotStatuses;
+                      // Status-Ampel (erste Spalte) + Warnhinweis
+                      const dotColor =
+                        inv.status === "bezahlt" ? "bg-green-500" :
+                        inv.status === "angenommen" ? "bg-[#002337]" :
+                        inv.status === "storniert" || inv.status === "abgelehnt" ? "bg-red-500" :
+                        overdue ? "bg-red-500" :
+                        inv.status === "teilbezahlt" ? "bg-yellow-500" :
+                        inv.status === "verrechnet" ? "bg-blue-500" :
+                        "bg-orange-500";
+                      const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
                       return (
                         <TableRow
                           key={inv.id}
                           className={`cursor-pointer hover:bg-muted/50 ${overdue ? "bg-red-50" : ""}`}
                           onClick={() => navigate(`/invoices/${inv.id}`)}
                         >
+                          <TableCell className="w-8">
+                            <span
+                              className={`block h-2.5 w-2.5 rounded-full ${dotColor}`}
+                              title={statusLabels[inv.status] || inv.status}
+                            />
+                          </TableCell>
                           <TableCell className="font-mono font-medium">
                             <div className="flex items-center gap-2">
                               {(() => {
@@ -984,51 +1010,35 @@ export default function Invoices() {
                             </TableCell>
                           )}
                           <TableCell onClick={(e) => e.stopPropagation()}>
-                            {(() => {
-                              // Status-Dot Farbe
-                              const dotColor =
-                                inv.status === "bezahlt" ? "bg-green-500" :
-                                inv.status === "angenommen" ? "bg-[#002337]" :
-                                inv.status === "storniert" || inv.status === "abgelehnt" ? "bg-red-500" :
-                                overdue ? "bg-red-500" :
-                                inv.status === "teilbezahlt" ? "bg-yellow-500" :
-                                inv.status === "verrechnet" ? "bg-blue-500" :
-                                "bg-orange-500";
-                              // Warnungen als subtiler Sub-Text
-                              const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
-                              return (
-                                <div className="flex items-center gap-2">
-                                  <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor}`} />
-                                  {inv.status === "storniert" ? (
-                                    <span className="text-xs font-medium text-red-700">
-                                      Storniert{(inv as any).storno_nummer ? ` (${(inv as any).storno_nummer})` : ""}
-                                    </span>
-                                  ) : (
-                                    <Select
-                                      value={inv.status}
-                                      onValueChange={(val) => {
-                                        const fakeEvent = { stopPropagation: () => {} } as React.MouseEvent;
-                                        handleStatusChange(inv.id, val, fakeEvent);
-                                      }}
-                                    >
-                                      <SelectTrigger className="h-7 text-xs font-medium border-0 shadow-none bg-transparent px-1 hover:bg-muted w-auto min-w-[90px]">
-                                        <SelectValue />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        {availableStatuses.map(s => (
-                                          <SelectItem key={s} value={s}>{statusLabels[s]}</SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  )}
-                                  {warn && (
-                                    <span className="text-[10px] text-red-600 font-medium">{warn}</span>
-                                  )}
-                                </div>
-                              );
-                            })()}
+                            <div className="flex items-center gap-2">
+                              {inv.status === "storniert" ? (
+                                <span className="text-xs font-medium text-red-700">
+                                  Storniert{(inv as any).storno_nummer ? ` (${(inv as any).storno_nummer})` : ""}
+                                </span>
+                              ) : (
+                                <Select
+                                  value={inv.status}
+                                  onValueChange={(val) => {
+                                    const fakeEvent = { stopPropagation: () => {} } as React.MouseEvent;
+                                    handleStatusChange(inv.id, val, fakeEvent);
+                                  }}
+                                >
+                                  <SelectTrigger className="h-7 text-xs font-medium border-0 shadow-none bg-transparent px-1 hover:bg-muted w-auto min-w-[90px]">
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {availableStatuses.map(s => (
+                                      <SelectItem key={s} value={s}>{statusLabels[s]}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              )}
+                              {warn && (
+                                <span className="text-[10px] text-red-600 font-medium">{warn}</span>
+                              )}
+                            </div>
                           </TableCell>
-                          <TableCell onClick={(e) => e.stopPropagation()}>
+                          <TableCell className="print:hidden" onClick={(e) => e.stopPropagation()}>
                             <DropdownMenu>
                               <DropdownMenuTrigger asChild>
                                 <Button variant="ghost" size="icon" className="h-8 w-8" title="Aktionen">
@@ -1094,9 +1104,9 @@ export default function Invoices() {
                 </Table>
               </div>
             )}
-          </CardContent>
-        </Card>
-
+            </div>
+          </section>
+        </div>
 
         {/* Export Dialog */}
         <ExportInvoicesDialog

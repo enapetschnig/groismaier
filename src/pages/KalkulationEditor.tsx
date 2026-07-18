@@ -1,196 +1,470 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+// ============================================================================
+// KalkulationEditor — NATIVES Kalkulationsmodul (ersetzt das frühere
+// iframe-Tool public/auftragskalkulation-tool.html samt DOM-Scraping).
+//
+// Drei Tabs wie das Original: "Aufbau Kalkulation" (Projektübersicht,
+// Auswertung, bis 20 Aufbau-Karten), "Oberflächenbeschichtung"
+// (Lohnlackierung), "Einstellungen" (Betriebsdaten + Katalog-CRUD).
+//
+// Rechenlogik: src/lib/kalkulationEngine.ts (Excel-Letztstand gewinnt).
+// Persistenz: kalkulationen.data (JSON-State) + summe, Autosave debounced.
+// Alte data-Blobs (localStorage-Shape des iframe-Tools) werden per
+// normalizeKalkulationState() konvertiert.
+//
+// "Als Angebot übernehmen": Payload-Vertrag EXAKT wie bisher —
+// sessionStorage["kalkulation_to_angebot"] = { betreff, customer_id, items }
+// → /invoices/new?typ=angebot&from_kalkulation=1 (InvoiceDetail unverändert).
+// ============================================================================
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Save, FileText, ExternalLink, Loader2 } from "lucide-react";
+import { FileText, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
+import { KBToolbar, KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import {
+  KalkulationState, KalkModule, MaterialRow, PaintModule,
+  normalizeKalkulationState, newModule, newPaintModule, newMaterialRow, nextId,
+  resolveBetriebsdaten, resolveLackSaetze, calcProjekt, calcPaintProjekt,
+  buildAngebotItems, globalFaktor,
+  LackPreisResolver, AufpreisResolver,
+  AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
+  fmt, fmtEuro, round2, num,
+} from "@/lib/kalkulationEngine";
+import { useKalkKatalog } from "@/components/kalkulation/useKalkKatalog";
+import { NumInput } from "@/components/kalkulation/NumInput";
+import { ProjektUebersicht } from "@/components/kalkulation/ProjektUebersicht";
+import { AufbauKarte } from "@/components/kalkulation/AufbauKarte";
+import { LackierungTab } from "@/components/kalkulation/LackierungTab";
+import { EinstellungenTab } from "@/components/kalkulation/EinstellungenTab";
 
-const LS_KEY = "auftragskalkulation";
+const kalkTable = () => (supabase.from("kalkulationen" as never) as any);
 
-/** Parst einen deutschen Euro-String ("10.200,00 €") in eine Zahl. */
-function parseEuro(s: string | null | undefined): number {
-  if (!s) return 0;
-  const cleaned = s.replace(/[^\d.,-]/g, "").replace(/\./g, "").replace(",", ".");
-  const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : n;
-}
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
-/** Findet die Projektübersicht-Tabelle im Tool-DOM. */
-function findUebersicht(doc: Document): HTMLTableElement | null {
-  let table: HTMLTableElement | null = null;
-  doc.querySelectorAll("table").forEach((t) => {
-    const heads = Array.from(t.querySelectorAll("th")).map((th) => (th.textContent || "").trim().toLowerCase());
-    if (heads.includes("aufbau") && heads.some((h) => h.includes("pro qm"))) table = t as HTMLTableElement;
-  });
-  return table;
-}
-
-interface KalkPosition { beschreibung: string; menge: number; einheit: string; einzelpreis: number; gesamtpreis: number; }
-
-/** Liest Positionen + Projekt-Gesamtsumme aus der Tool-Tabelle. */
-function scrapePositionen(doc: Document): { positions: KalkPosition[]; projektGesamt: number } {
-  const table = findUebersicht(doc);
-  const positions: KalkPosition[] = [];
-  let projektGesamt = 0;
-  if (!table) return { positions, projektGesamt };
-  table.querySelectorAll("tr").forEach((tr) => {
-    const cells = Array.from(tr.querySelectorAll("td")).map((td) => (td.textContent || "").trim());
-    if (cells.length < 6) return;
-    const name = cells[0];
-    const gesamt = parseEuro(cells[4]);
-    const proQm = parseEuro(cells[5]);
-    if (/gesamt\s*\(projekt\)/i.test(name)) { projektGesamt = gesamt; return; }
-    if (gesamt <= 0) return;
-    const beschreibung = cells[1] ? `${name}\n${cells[1]}` : name;
-    if (proQm > 0) positions.push({ beschreibung, menge: round2(gesamt / proQm), einheit: "m²", einzelpreis: round2(proQm), gesamtpreis: round2(gesamt) });
-    else positions.push({ beschreibung, menge: 1, einheit: "Pauschale", einzelpreis: round2(gesamt), gesamtpreis: round2(gesamt) });
-  });
-  return { positions, projektGesamt };
-}
+type TabId = "aufbau" | "lack" | "einstellungen";
 
 export default function KalkulationEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [ready, setReady] = useState(false);
+  const katalog = useKalkKatalog();
+
+  const [state, setState] = useState<KalkulationState>(() => normalizeKalkulationState(null));
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
-  const lastSaved = useRef<string>("");
+  const [dirty, setDirty] = useState(false);
+  const [tab, setTab] = useState<TabId>("aufbau");
 
-  // Kalkulation laden → in localStorage schreiben → DANN Iframe rendern,
-  // damit das Tool den Zustand beim Init übernimmt (same-origin localStorage).
+  // Vorlage-Dialog
+  const [vorlageOpen, setVorlageOpen] = useState(false);
+  const [vorlageName, setVorlageName] = useState("");
+  const [savingVorlage, setSavingVorlage] = useState(false);
+
+  const dragIndexRef = useRef<number | null>(null);
+
+  // ---------------------------------------------------------------- Laden
   useEffect(() => {
     let cancelled = false;
-    setReady(false);
+    setLoaded(false);
     (async () => {
       if (!id) return;
-      const { data } = await (supabase.from("kalkulationen" as never) as any)
+      const { data } = await kalkTable()
         .select("id, name, customer_id, data").eq("id", id).maybeSingle();
       if (cancelled) return;
-      if (!data) { toast({ variant: "destructive", title: "Nicht gefunden", description: "Kalkulation existiert nicht (mehr)." }); navigate("/auftragskalkulation"); return; }
+      if (!data) {
+        toast({ variant: "destructive", title: "Nicht gefunden", description: "Kalkulation existiert nicht (mehr)." });
+        navigate("/auftragskalkulation");
+        return;
+      }
       setName((data as any).name || "");
       setCustomerId((data as any).customer_id || null);
-      try {
-        if ((data as any).data) {
-          localStorage.setItem(LS_KEY, JSON.stringify((data as any).data));
-          lastSaved.current = JSON.stringify((data as any).data);
-        } else {
-          localStorage.removeItem(LS_KEY); // neue Kalkulation → Tool startet leer
-          lastSaved.current = "";
-        }
-      } catch { /* ignore */ }
-      setReady(true);
+      // Konverter: alter iframe-localStorage-Shape ODER neuer nativer State.
+      const st = normalizeKalkulationState((data as any).data);
+      // Neue, leere Kalkulation: direkt mit einem Aufbau starten.
+      if (!(data as any).data && st.modules.length === 0) st.modules.push(newModule(1));
+      setState(st);
+      setLoaded(true);
+      setDirty(false);
     })();
     return () => { cancelled = true; };
   }, [id, navigate, toast]);
 
-  // Aktuellen Zustand aus localStorage + Summe aus dem Tool-DOM lesen.
-  const readState = useCallback(() => {
-    let raw: string | null = null;
-    try { raw = localStorage.getItem(LS_KEY); } catch { /* ignore */ }
-    let summe = 0;
-    const doc = iframeRef.current?.contentDocument;
-    if (doc) summe = scrapePositionen(doc).projektGesamt;
-    return { raw, summe };
-  }, []);
+  // ---------------------------------------------------------- Berechnungen
+  const bd = useMemo(
+    () => resolveBetriebsdaten(state.settings.businessData, katalog.settings),
+    [state.settings.businessData, katalog.settings],
+  );
+  const saetze = useMemo(() => resolveLackSaetze(katalog.settings), [katalog.settings]);
+  const projekt = useMemo(() => calcProjekt(state, bd), [state, bd]);
+
+  // Lack-Preise: DB-Katalog zuerst, Fallback auf Legacy-Preise aus Alt-Blobs.
+  const resolveLackPreis = useCallback<LackPreisResolver>((cat, prod) => {
+    const art = katalog.lackKategorien.find((k) => k.name === cat)?.artikel.find((a) => a.name === prod);
+    if (art) return { p3: art.ek, p4: art.vk };
+    const legacy = state.settings.paintPrices?.[cat]?.find((r) => r[0] === prod);
+    if (legacy) return { p3: legacy[1] ?? null, p4: legacy[2] ?? null };
+    return null;
+  }, [katalog.lackKategorien, state.settings.paintPrices]);
+
+  const resolveAufpreis = useCallback<AufpreisResolver>((aufpreisName) => {
+    const art = katalog.aufpreise.find((a) => a.name === aufpreisName);
+    if (art) return Number(art.vk) || 0;
+    const legacy = state.settings.paintSurcharges?.[aufpreisName];
+    return legacy !== undefined ? legacy : null;
+  }, [katalog.aufpreise, state.settings.paintSurcharges]);
+
+  const paintProjekt = useMemo(
+    () => calcPaintProjekt(state, resolveLackPreis, resolveAufpreis, saetze),
+    [state, resolveLackPreis, resolveAufpreis, saetze],
+  );
+
+  // ------------------------------------------------------------ Persistenz
+  const stateRef = useRef(state); stateRef.current = state;
+  const nameRef = useRef(name); nameRef.current = name;
+  const summeRef = useRef(0); summeRef.current = round2(projekt.totalGesamt);
+  const loadedRef = useRef(loaded); loadedRef.current = loaded;
+  const lastSavedRef = useRef<string>("");
 
   const persist = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!id) return;
-    const { raw, summe } = readState();
-    if (!raw) return;
-    if (raw === lastSaved.current && !opts?.silent) {
-      toast({ title: "Gespeichert", description: "Kalkulation ist aktuell." });
+    if (!id || !loadedRef.current) return;
+    // projectName im Blob mitführen (Kompatibilität zum alten Shape; Name
+    // führt weiterhin die Supabase-Spalte `name`).
+    const data = { ...stateRef.current, projectName: nameRef.current };
+    const fingerprint = JSON.stringify({ data, name: nameRef.current });
+    if (fingerprint === lastSavedRef.current) {
+      if (!opts?.silent) toast({ title: "Gespeichert", description: "Kalkulation ist aktuell." });
+      setDirty(false);
       return;
     }
-    if (raw === lastSaved.current) return;
     if (!opts?.silent) setSaving(true);
-    const { error } = await (supabase.from("kalkulationen" as never) as any)
-      .update({ data: JSON.parse(raw), summe }).eq("id", id);
+    const { error } = await kalkTable()
+      .update({ name: nameRef.current || "Kalkulation", data, summe: summeRef.current })
+      .eq("id", id);
     if (!opts?.silent) setSaving(false);
-    if (error) { if (!opts?.silent) toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
-    lastSaved.current = raw;
+    if (error) {
+      if (!opts?.silent) toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    lastSavedRef.current = fingerprint;
+    setDirty(false);
     if (!opts?.silent) toast({ title: "Gespeichert", description: "Kalkulation gespeichert." });
-  }, [id, readState, toast]);
+  }, [id, toast]);
+  const persistRef = useRef(persist); persistRef.current = persist;
 
-  // Autosave alle 15s (still) + beim Verlassen.
+  // Autosave: debounced nach jeder Änderung + beim Verlassen.
   useEffect(() => {
-    if (!ready) return;
-    const t = setInterval(() => { persist({ silent: true }); }, 15000);
-    const onHide = () => { persist({ silent: true }); };
-    window.addEventListener("beforeunload", onHide);
-    return () => { clearInterval(t); window.removeEventListener("beforeunload", onHide); persist({ silent: true }); };
-  }, [ready, persist]);
+    if (!loaded) return;
+    setDirty(true);
+    const t = setTimeout(() => { persistRef.current({ silent: true }); }, 1200);
+    return () => clearTimeout(t);
+  }, [state, name, loaded]);
 
-  // Projektname im Tool best-effort vorbefüllen (kosmetisch).
-  const handleIframeLoad = () => {
-    try {
-      const doc = iframeRef.current?.contentDocument;
-      const input = doc?.querySelector('input[placeholder*="Projektname"]') as HTMLInputElement | null;
-      if (input && !input.value && name) {
-        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
-        setter?.call(input, name);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-    } catch { /* ignore */ }
+  useEffect(() => {
+    if (!loaded) return;
+    const onHide = () => { persistRef.current({ silent: true }); };
+    window.addEventListener("beforeunload", onHide);
+    return () => {
+      window.removeEventListener("beforeunload", onHide);
+      persistRef.current({ silent: true });
+    };
+  }, [loaded]);
+
+  // ------------------------------------------------------- State-Mutationen
+  const update = useCallback((fn: (s: KalkulationState) => void) => {
+    setState((prev) => {
+      const next = structuredClone(prev);
+      fn(next);
+      return next;
+    });
+  }, []);
+
+  const patchModule = (moduleId: number, patch: Partial<KalkModule>) =>
+    update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m) Object.assign(m, patch); });
+
+  const patchRow = (moduleId: number, idx: number, patch: Partial<MaterialRow>) =>
+    update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m?.materialRows[idx]) Object.assign(m.materialRows[idx], patch); });
+
+  const replaceRow = (moduleId: number, idx: number, row: MaterialRow) =>
+    update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m && m.materialRows[idx]) m.materialRows[idx] = row; });
+
+  const addRow = (moduleId: number) =>
+    update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m) m.materialRows.push(newMaterialRow()); });
+
+  const removeRow = (moduleId: number, idx: number) =>
+    update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m) m.materialRows.splice(idx, 1); });
+
+  const addModule = () => {
+    if (state.modules.length >= MAX_MODULE) {
+      toast({ variant: "destructive", title: "Maximum erreicht", description: `Maximal ${MAX_MODULE} Aufbauten.` });
+      return;
+    }
+    update((s) => { s.modules.push(newModule(nextId(s.modules))); });
   };
 
+  const cloneModule = (moduleId: number) => {
+    if (state.modules.length >= MAX_MODULE) {
+      toast({ variant: "destructive", title: "Maximum erreicht", description: `Maximal ${MAX_MODULE} Aufbauten.` });
+      return;
+    }
+    update((s) => {
+      const i = s.modules.findIndex((x) => x.id === moduleId);
+      if (i < 0) return;
+      const kopie = structuredClone(s.modules[i]);
+      kopie.id = nextId(s.modules);
+      kopie.name = `${s.modules[i].name || "Aufbau"} (Kopie)`;
+      kopie.nachkalk = { actualDays: null };
+      kopie.materialRows.forEach((r) => { r.actualVK = null; });
+      s.modules.splice(i + 1, 0, kopie);
+    });
+  };
+
+  const removeModule = (moduleId: number) => {
+    const m = state.modules.find((x) => x.id === moduleId);
+    if (!window.confirm(`Aufbau „${m?.name || "ohne Namen"}“ entfernen?`)) return;
+    update((s) => { s.modules = s.modules.filter((x) => x.id !== moduleId); });
+  };
+
+  const moveModule = (from: number, to: number) =>
+    update((s) => {
+      if (from === to || from < 0 || to < 0 || from >= s.modules.length || to >= s.modules.length) return;
+      const [m] = s.modules.splice(from, 1);
+      s.modules.splice(to, 0, m);
+    });
+
+  const patchPaint = (paintId: number, patch: Partial<PaintModule>) =>
+    update((s) => { const p = s.paintModules.find((x) => x.id === paintId); if (p) Object.assign(p, patch); });
+
+  const addPaint = () =>
+    update((s) => { s.paintModules.push(newPaintModule(nextId(s.paintModules))); });
+
+  const removePaint = (paintId: number) => {
+    if (!window.confirm("Lackier-Position entfernen?")) return;
+    update((s) => { s.paintModules = s.paintModules.filter((x) => x.id !== paintId); });
+  };
+
+  const patchState = (patch: Partial<KalkulationState>) =>
+    update((s) => { Object.assign(s, patch); });
+
+  const setMittellohn = (n: number | null) =>
+    update((s) => {
+      if (n === null || n <= 0) delete s.settings.businessData["Mittellohn"];
+      else s.settings.businessData["Mittellohn"] = n;
+    });
+
+  // --------------------------------------------------------------- Aktionen
   const handleAngebot = async () => {
-    const doc = iframeRef.current?.contentDocument;
-    if (!doc) { toast({ variant: "destructive", title: "Noch nicht bereit", description: "Bitte kurz warten, bis die Kalkulation geladen ist." }); return; }
-    const { positions, projektGesamt } = scrapePositionen(doc);
-    if (positions.length === 0) { toast({ variant: "destructive", title: "Noch nichts kalkuliert", description: "Es wurden keine Aufbauten mit Betrag gefunden." }); return; }
-    const summe = positions.reduce((s, p) => s + p.gesamtpreis, 0);
-    const nebenkosten = round2(projektGesamt - summe);
-    if (nebenkosten > 0.5) positions.push({ beschreibung: "Transport, Kran & sonstige Nebenkosten (lt. Kalkulation)", menge: 1, einheit: "Pauschale", einzelpreis: nebenkosten, gesamtpreis: nebenkosten });
+    const { items } = buildAngebotItems(projekt);
+    if (items.length === 0) {
+      toast({ variant: "destructive", title: "Noch nichts kalkuliert", description: "Es wurden keine Aufbauten mit Betrag gefunden." });
+      return;
+    }
     await persist({ silent: true });
     sessionStorage.setItem("kalkulation_to_angebot", JSON.stringify({
       betreff: name ? `Angebot – ${name}` : "Angebot lt. Kalkulation",
       customer_id: customerId,
-      items: positions,
+      items,
     }));
     navigate("/invoices/new?typ=angebot&from_kalkulation=1");
   };
 
-  return (
-    <div className="flex flex-col h-[100dvh]">
-      <header className="border-b bg-card flex items-center gap-2 px-3 sm:px-4 lg:px-6 py-2.5 shadow-sm">
-        <Button variant="ghost" size="sm" onClick={() => { persist({ silent: true }); navigate("/auftragskalkulation"); }}>
-          <ArrowLeft className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Zurück</span>
-        </Button>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-base sm:text-lg font-bold truncate">{name || "Kalkulation"}</h1>
-        </div>
-        <Button variant="outline" size="sm" onClick={() => persist()} disabled={saving}>
-          {saving ? <Loader2 className="h-4 w-4 sm:mr-2 animate-spin" /> : <Save className="h-4 w-4 sm:mr-2" />}
-          <span className="hidden sm:inline">Speichern</span>
-        </Button>
-        <Button size="sm" onClick={handleAngebot} title="Aufbauten als Positionen in ein neues Angebot übernehmen">
-          <FileText className="h-4 w-4 sm:mr-2" /><span className="hidden sm:inline">Als Angebot übernehmen</span>
-        </Button>
-        <Button variant="ghost" size="icon" asChild title="Tool in neuem Tab öffnen">
-          <a href="/auftragskalkulation-tool.html" target="_blank" rel="noopener noreferrer"><ExternalLink className="h-4 w-4" /></a>
-        </Button>
-      </header>
+  const handleSaveVorlage = async () => {
+    if (!vorlageName.trim()) {
+      toast({ variant: "destructive", title: "Name fehlt", description: "Bitte einen Namen für die Vorlage angeben." });
+      return;
+    }
+    setSavingVorlage(true);
+    await persist({ silent: true });
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await kalkTable().insert({
+      user_id: user?.id,
+      name: vorlageName.trim(),
+      customer_id: null,
+      project_id: null,
+      data: { ...stateRef.current, projectName: nameRef.current },
+      summe: summeRef.current,
+      ist_vorlage: true,
+    });
+    setSavingVorlage(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    setVorlageOpen(false);
+    toast({ title: "Vorlage gespeichert", description: `Vorlage „${vorlageName.trim()}“ wurde angelegt.` });
+  };
 
-      <div className="flex-1 relative bg-white">
-        {ready ? (
-          <iframe
-            key={id}
-            ref={iframeRef}
-            src="/auftragskalkulation-tool.html"
-            title={`Auftragskalkulation ${name}`}
-            onLoad={handleIframeLoad}
-            className="absolute inset-0 w-full h-full border-0"
-          />
-        ) : (
-          <div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-            <Loader2 className="h-6 w-6 animate-spin mr-2" /> Kalkulation wird geladen …
+  // ----------------------------------------------------------------- Render
+  if (!loaded || katalog.loading) {
+    return (
+      <div className="kb-page flex min-h-screen items-center justify-center text-muted-foreground">
+        <Loader2 className="mr-2 h-6 w-6 animate-spin" /> Kalkulation wird geladen …
+      </div>
+    );
+  }
+
+  const faktor = globalFaktor(state.surchargePercent, state.discontPercent);
+
+  return (
+    <div className="kb-page min-h-screen pb-10">
+      <KBToolbar
+        onBack={() => { persist({ silent: true }); navigate("/auftragskalkulation"); }}
+        title={name || "Kalkulation"}
+        rightActions={
+          <div className="flex items-center gap-2">
+            <span className="hidden text-xs text-white/85 md:block">
+              {saving ? "Speichert …" : dirty ? "Ungespeicherte Änderungen" : "Gespeichert"}
+            </span>
+            <KBButton icon={Save} label="Speichern" variant="green" onClick={() => persist()} disabled={saving} />
+          </div>
+        }
+      >
+        <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
+          onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
+        <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}
+          title="Aufbauten als Positionen in ein neues Angebot übernehmen" />
+      </KBToolbar>
+
+      <div className="mx-auto max-w-[1500px] space-y-4 px-3 py-4 sm:px-4">
+        {/* Global-Settings-Bar */}
+        <div className="kb-panel flex flex-wrap items-end gap-3 px-4 py-3">
+          <label className="block min-w-[220px] flex-1 text-xs">
+            <span className="mb-0.5 block text-muted-foreground">Projektname</span>
+            <input className="kb-input h-9 min-h-0 px-2 py-1 text-sm font-semibold" value={name}
+              placeholder="Projektname" onChange={(e) => setName(e.target.value)} />
+          </label>
+          <label className="block w-32 text-xs">
+            <span className="mb-0.5 block text-muted-foreground">Aufschlag %</span>
+            <select className="kb-input h-9 min-h-0 px-2 py-1 text-sm"
+              value={state.surchargePercent === null ? "" : String(state.surchargePercent)}
+              onChange={(e) => patchState({ surchargePercent: e.target.value === "" ? null : num(e.target.value) })}>
+              <option value="">—</option>
+              {AUFSCHLAG_OPTIONEN.map((p) => <option key={p} value={String(p)}>{p} %</option>)}
+            </select>
+          </label>
+          <label className="block w-32 text-xs">
+            <span className="mb-0.5 block text-muted-foreground">Skonto %</span>
+            <select className="kb-input h-9 min-h-0 px-2 py-1 text-sm"
+              value={state.discontPercent === null ? "" : String(state.discontPercent)}
+              onChange={(e) => patchState({ discontPercent: e.target.value === "" ? null : num(e.target.value) })}>
+              <option value="">—</option>
+              {SKONTO_OPTIONEN.map((p) => <option key={p} value={String(p)}>{p} %</option>)}
+            </select>
+          </label>
+          <label className="block w-36 text-xs">
+            <span className="mb-0.5 block text-muted-foreground">Mittellohn €/h</span>
+            <NumInput value={num(state.settings.businessData["Mittellohn"]) || bd.mittellohn}
+              onCommit={setMittellohn} className="h-9"
+              title="Gilt für diese Kalkulation; Standard aus den Betriebsdaten (Excel: 65 €/h)" />
+          </label>
+          {faktor !== 1 && (
+            <span className="pb-2 text-xs text-muted-foreground">
+              Faktor {fmt(faktor)} (additiv: 1 + Aufschlag − Skonto)
+            </span>
+          )}
+          <span className="flex-1" />
+          <div className="pb-1 text-right">
+            <div className="text-xs text-muted-foreground">Projektsumme (netto)</div>
+            <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.totalGesamt)}</div>
+          </div>
+        </div>
+
+        {/* Tabs */}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" className={tab === "aufbau" ? "kb-tab-active" : "kb-tab"} onClick={() => setTab("aufbau")}>
+            Aufbau Kalkulation
+          </button>
+          <button type="button" className={tab === "lack" ? "kb-tab-active" : "kb-tab"} onClick={() => setTab("lack")}>
+            Oberflächenbeschichtung
+          </button>
+          <button type="button" className={tab === "einstellungen" ? "kb-tab-active" : "kb-tab"} onClick={() => setTab("einstellungen")}>
+            Einstellungen
+          </button>
+        </div>
+
+        {tab === "aufbau" && (
+          <div className="space-y-4">
+            <ProjektUebersicht projekt={projekt} />
+
+            {projekt.zeilen.map((z, index) => (
+              <AufbauKarte
+                key={z.module.id}
+                module={z.module}
+                index={index}
+                ergebnis={z.ergebnis}
+                faktor={projekt.faktor}
+                bd={bd}
+                kategorien={katalog.materialKategorien}
+                onPatch={(patch) => patchModule(z.module.id, patch)}
+                onPatchRow={(idx, patch) => patchRow(z.module.id, idx, patch)}
+                onReplaceRow={(idx, row) => replaceRow(z.module.id, idx, row)}
+                onAddRow={() => addRow(z.module.id)}
+                onRemoveRow={(idx) => removeRow(z.module.id, idx)}
+                onClone={() => cloneModule(z.module.id)}
+                onRemove={() => removeModule(z.module.id)}
+                dragProps={{
+                  draggable: true,
+                  onDragStart: (e) => { dragIndexRef.current = index; e.dataTransfer.effectAllowed = "move"; },
+                  onDragOver: (e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; },
+                  onDrop: (e) => {
+                    e.preventDefault();
+                    if (dragIndexRef.current !== null) moveModule(dragIndexRef.current, index);
+                    dragIndexRef.current = null;
+                  },
+                  onDragEnd: () => { dragIndexRef.current = null; },
+                }}
+              />
+            ))}
+
+            <KBButton icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
+              onClick={addModule} disabled={state.modules.length >= MAX_MODULE} />
           </div>
         )}
+
+        {tab === "lack" && (
+          <LackierungTab
+            state={state}
+            paintProjekt={paintProjekt}
+            lackKategorien={katalog.lackKategorien}
+            aufpreise={katalog.aufpreise}
+            saetze={saetze}
+            onPatchState={patchState}
+            onPatchPaint={patchPaint}
+            onAddPaint={addPaint}
+            onRemovePaint={removePaint}
+          />
+        )}
+
+        {tab === "einstellungen" && <EinstellungenTab katalog={katalog} />}
       </div>
+
+      {/* Als Vorlage speichern */}
+      <Dialog open={vorlageOpen} onOpenChange={setVorlageOpen}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Als Vorlage speichern</DialogTitle></DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Es wird eine Kopie dieser Kalkulation als Vorlage gespeichert. Kunde und Projekt werden dabei nicht übernommen.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="kalk-vorlage-name">Vorlagenname *</Label>
+              <Input id="kalk-vorlage-name" autoFocus value={vorlageName}
+                onChange={(e) => setVorlageName(e.target.value)}
+                placeholder="z.B. Vorlage Carport"
+                onKeyDown={(e) => { if (e.key === "Enter") handleSaveVorlage(); }} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setVorlageOpen(false)}>Abbrechen</Button>
+            <Button onClick={handleSaveVorlage} disabled={savingVorlage}>
+              {savingVorlage ? "Wird gespeichert …" : "Vorlage speichern"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { KBButton } from "@/components/kingbill";
 import { Download, X, Save, Printer, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -170,39 +171,33 @@ export function InvoicePdfPreview({
       <DialogContent className="max-w-5xl h-[90vh] flex flex-col p-0">
         <DialogTitle className="sr-only">Dokumentvorschau</DialogTitle>
 
-        <div className="flex items-center justify-between px-4 py-3 border-b bg-white">
+        {/* KingBill-Kopfleiste: boxige Verlaufs-Buttons auf blauem Grund */}
+        <div className="kb-toolbar flex-wrap justify-between px-3 py-2">
           <div className="flex gap-2 flex-wrap items-center">
             {mustSaveFirst && (
               <>
-                <Button size="sm" onClick={onSave} disabled={saving} className="gap-2 bg-orange-600 hover:bg-orange-700">
-                  <Save className="h-4 w-4" />
-                  {saving ? "Speichert..." : "Speichern"}
-                </Button>
-                <span className="text-sm text-muted-foreground">Zuerst speichern, dann herunterladen</span>
+                <KBButton
+                  icon={Save}
+                  variant="green"
+                  label={saving ? "Speichert..." : "Speichern"}
+                  onClick={onSave}
+                  disabled={saving}
+                />
+                <span className="text-sm text-white/90">Zuerst speichern, dann herunterladen</span>
               </>
             )}
             {!mustSaveFirst && (
               <>
-                <Button size="sm" onClick={handleDownload} disabled={!pdfUrl} className="gap-2">
-                  <Download className="h-4 w-4" />
-                  PDF herunterladen
-                </Button>
-                <Button variant="outline" size="sm" onClick={handlePrint} disabled={!pdfUrl} className="gap-2">
-                  <Printer className="h-4 w-4" />
-                  Drucken
-                </Button>
+                <KBButton icon={Printer} label="Drucken" onClick={handlePrint} disabled={!pdfUrl} />
+                <KBButton icon={Download} label="Export als PDF" onClick={handleDownload} disabled={!pdfUrl} />
               </>
             )}
           </div>
           <div>
             {saved && onSavedClose ? (
-              <Button variant="outline" size="sm" onClick={onSavedClose}>
-                <X className="h-4 w-4 mr-2" /> Zurück zur Übersicht
-              </Button>
+              <KBButton icon={X} label="Zurück zur Übersicht" onClick={onSavedClose} />
             ) : (
-              <Button variant="outline" size="sm" onClick={onClose}>
-                <X className="h-4 w-4 mr-2" /> Schließen
-              </Button>
+              <KBButton icon={X} label="Schließen" onClick={onClose} />
             )}
           </div>
         </div>

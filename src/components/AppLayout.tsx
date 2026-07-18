@@ -11,11 +11,11 @@ export function AppLayout() {
     return <Outlet />;
   }
 
-  // Desktop: sidebar + content area
+  // Desktop: sidebar + content area (Inhalt sitzt auf dem KingBill-Blauverlauf)
   return (
     <SidebarProvider>
       <AppSidebar />
-      <SidebarInset>
+      <SidebarInset className="kb-page">
         <Outlet />
       </SidebarInset>
     </SidebarProvider>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown } from "lucide-react";
+import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -16,8 +16,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
+import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
 
 type DocumentCategory = {
   type: "plans" | "reports" | "photos" | "chef";
@@ -54,11 +56,19 @@ const ProjectOverview = () => {
   const [isAdmin, setIsAdmin] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(0);
   const [regieCount, setRegieCount] = useState(0);
+  // Regiestunden = EIGENER Topf (aus den Regieberichten) — zählt NICHT zu
+  // den Projektstunden aus der Zeiterfassung.
+  const [regieStunden, setRegieStunden] = useState(0);
   const [regiePdfs, setRegiePdfs] = useState<{id: string; datum: string; kunde_name: string; pdf_path: string}[]>([]);
   const [purchaseInvoices, setPurchaseInvoices] = useState<{id: string; lieferant: string; rechnungsdatum: string | null; betrag_brutto: number; status: string; kategorie: string | null}[]>([]);
   const [projectData, setProjectData] = useState<any>(null);
   const [projectHours, setProjectHours] = useState<{user_id: string, name: string, total: number}[]>([]);
-  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string}[]>([]);
+  // Gebuchte Stunden GESAMT (inkl. hidden User) — die sichtbare Personenliste
+  // filtert hidden, die Abgleich-Zahl darf aber keine Stunden unterschlagen.
+  const [gebuchtGesamt, setGebuchtGesamt] = useState(0);
+  const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
+  // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
+  const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -101,18 +111,54 @@ const ProjectOverview = () => {
 
   const fetchAngebotPositionen = async () => {
     if (!projectId) return;
+    // Referenz-Angebot: nicht einfach das neueste per Datum — ein abgelehntes
+    // oder Entwurfs-Angebot darf das angenommene nicht verdrängen. Daher nach
+    // Status priorisieren (angenommen > verrechnet > offen > entwurf),
+    // innerhalb desselben Status das neueste Datum.
     const { data: angebote } = await supabase.from("invoices")
-      .select("id").eq("project_id", projectId).eq("typ", "angebot")
-      .not("status", "eq", "storniert")
-      .order("datum", { ascending: false }).limit(1);
-    if (angebote?.[0]) {
+      .select("id, status, datum").eq("project_id", projectId).eq("typ", "angebot")
+      .not("status", "in", '("storniert","abgelehnt")')
+      // Archivierte Vorgänger-Revisionen (Original nach Preis-Update) ausschließen
+      .or("archiviert.is.null,archiviert.eq.false")
+      .order("datum", { ascending: false });
+    const statusRang: Record<string, number> = { angenommen: 0, verrechnet: 1, offen: 2, entwurf: 3 };
+    const referenz = ((angebote as any[]) || []).slice().sort((a, b) => {
+      const diff = (statusRang[a.status] ?? 4) - (statusRang[b.status] ?? 4);
+      if (diff !== 0) return diff;
+      return String(b.datum || "").localeCompare(String(a.datum || ""));
+    })[0];
+    if (referenz) {
       const { data: items } = await supabase.from("invoice_items")
-        .select("position, beschreibung, kurztext, menge, einheit")
-        .eq("invoice_id", angebote[0].id).order("position");
-      setAngebotPositionen((items || []).map(i => ({
-        position: i.position, beschreibung: (i as any).kurztext || i.beschreibung,
-        menge: Number(i.menge), einheit: i.einheit || "Stk.",
-      })));
+        .select("position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
+        .eq("invoice_id", referenz.id).order("position");
+      // Stunden-Soll = GESAMTE Arbeitszeit des Angebots:
+      //   explizite Stunden-Positionen (Facharbeiterstunde × 44) PLUS die in
+      //   den kalkulierten Positionen steckende Arbeitszeit (z.B. Baukran
+      //   36 h/Pa). Die Aufschlüsselung unten zeigt je Position, woher die
+      //   Stunden kommen.
+      const zeilen = (items || []) as any[];
+      const nameVon = (i: any) => (i.kurztext || i.beschreibung || "");
+      setAngebotPositionen(zeilen.map(i => {
+        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
+        const stunden = istStdZeile
+          ? Math.round((Number(i.menge) || 0) * 10) / 10
+          : Math.round(((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60 * 10) / 10;
+        return {
+          position: i.position, beschreibung: nameVon(i),
+          menge: Number(i.menge), einheit: i.einheit || "Stk.",
+          stunden,
+          stundenQuelle: (istStdZeile ? "stunden" : "kalkulation") as "stunden" | "kalkulation",
+        };
+      }));
+      const gesamt = zeilen.reduce((s, i) => {
+        const istStdZeile = istArbeitszeitZeile(nameVon(i), i.einheit);
+        return s + (istStdZeile
+          ? (Number(i.menge) || 0)
+          : ((Number(i.arbeitszeit_minuten) || 0) * (Number(i.menge) || 0)) / 60);
+      }, 0);
+      setAngeboteneStunden(Math.round(gesamt * 10) / 10);
+    } else {
+      setAngeboteneStunden(null);
     }
   };
 
@@ -141,6 +187,7 @@ const ProjectOverview = () => {
         entries.forEach((e: any) => { grouped[e.user_id] = (grouped[e.user_id] || 0) + Number(e.stunden); });
 
         const userIds = Object.keys(grouped);
+        setGebuchtGesamt(Math.round(Object.values(grouped).reduce((s: number, v: any) => s + Number(v), 0) * 10) / 10);
         if (userIds.length > 0) {
           const { data: profiles } = await (supabase.from("profiles" as never) as any)
             .select("id, vorname, nachname, hidden").in("id", userIds);
@@ -325,11 +372,15 @@ const ProjectOverview = () => {
       }
     }
 
-    // Fetch Regie count (filtered by project)
+    // Fetch Regie count + Regiestunden (filtered by project)
     (supabase.from("disturbances" as never) as any)
-      .select("id", { count: "exact", head: true })
+      .select("id, stunden")
       .eq("project_id", projectId)
-      .then(({ count }: any) => setRegieCount(count || 0));
+      .then(({ data }: any) => {
+        const rows = (data as any[]) || [];
+        setRegieCount(rows.length);
+        setRegieStunden(Math.round(rows.reduce((s: number, d: any) => s + (Number(d.stunden) || 0), 0) * 10) / 10);
+      });
 
     // Fetch Regiebericht PDFs for this project
     (supabase.from("disturbances" as never) as any)
@@ -490,14 +541,20 @@ const ProjectOverview = () => {
           </div>
         </div>
 
-        {/* Quick-Actions: neues Dokument mit vorbelegter project_id */}
+        {/* Quick-Actions: neues Dokument mit vorbelegter project_id.
+            Angebot/Rechnung nur für Admins — die Route /invoices/new ist
+            feature-gated (rechnungen), Mitarbeiter liefen sonst auf "Kein Zugriff". */}
         <div className="flex flex-wrap gap-2 mb-4">
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
-            <FileText className="h-3.5 w-3.5" />Neues Angebot
-          </Button>
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
-            <FileDown className="h-3.5 w-3.5" />Neue Rechnung
-          </Button>
+          {isAdmin && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
+              <FileText className="h-3.5 w-3.5" />Neues Angebot
+            </Button>
+          )}
+          {isAdmin && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
+              <FileDown className="h-3.5 w-3.5" />Neue Rechnung
+            </Button>
+          )}
           <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/disturbances?new=${projectId}`)}>
             <FileText className="h-3.5 w-3.5" />Neuer Regiebericht
           </Button>
@@ -541,27 +598,133 @@ const ProjectOverview = () => {
           </Card>
         )}
 
-        {/* Projektstunden (Admin only) */}
+        {/* Nachkalkulation: Deckungsbeitrag der Baustelle (Admin only) */}
+        {isAdmin && projectId && (
+          <div className="mb-4">
+            <ProjektNachkalkulation projectId={projectId} />
+          </div>
+        )}
+
+        {/* Projektstunden + Stundenabgleich (Admin only) */}
         {isAdmin && (
           <Card className="mb-4">
             <CardHeader>
-              <CardTitle className="text-base">Projektstunden</CardTitle>
+              <CardTitle className="text-base">⏱️ Stundenabgleich — Angebot vs. gebucht</CardTitle>
             </CardHeader>
             <CardContent>
+              {/* Stundenabgleich: Soll kommt AUTOMATISCH aus dem verknüpften
+                  Angebot (Σ kalkulierte Lohnminuten × Menge je Position) —
+                  drei große Zahlen + Ampel-Fortschrittsbalken. */}
+              {(() => {
+                const gebucht = gebuchtGesamt;
+                if (angeboteneStunden === null || angeboteneStunden <= 0) {
+                  return (
+                    <p className="mb-4 text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">
+                      Kein Angebot mit kalkulierten Stunden verknüpft — sobald ein Angebot mit
+                      Katalog-Positionen an diesem Projekt hängt, erscheint hier automatisch der
+                      Soll/Ist-Vergleich.
+                    </p>
+                  );
+                }
+                const pctRaw = Math.round((gebucht / angeboteneStunden) * 100);
+                const pct = Math.min(100, pctRaw);
+                const ueber = gebucht > angeboteneStunden;
+                const knapp = !ueber && pctRaw >= 80;
+                const barFarbe = ueber ? "bg-destructive" : knapp ? "bg-amber-500" : "bg-green-600";
+                const rest = angeboteneStunden - gebucht;
+                return (
+                  <div className="mb-4 space-y-3">
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                        <div className="text-xl font-bold tabular-nums">{angeboteneStunden.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">Std. laut Angebot</div>
+                      </div>
+                      <div className="rounded-lg border bg-muted/30 p-3 text-center">
+                        <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">Std. gebucht</div>
+                      </div>
+                      <div className={`rounded-lg border p-3 text-center ${ueber ? "border-destructive/50 bg-destructive/5" : knapp ? "border-amber-300 bg-amber-50" : "border-green-500/40 bg-green-50"}`}>
+                        <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : knapp ? "text-amber-700" : "text-green-700"}`}>
+                          {ueber ? `+${(gebucht - angeboteneStunden).toFixed(1)}` : rest.toFixed(1)}
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">{ueber ? "Std. ÜBER Angebot" : "Std. verbleibend"}</div>
+                      </div>
+                    </div>
+                    <div className="relative h-3 rounded-full bg-muted overflow-hidden">
+                      <div className={`h-full rounded-full transition-all ${barFarbe}`} style={{ width: `${pct}%` }} />
+                    </div>
+                    <p className={`text-xs ${ueber ? "text-destructive font-medium" : knapp ? "text-amber-700 font-medium" : "text-muted-foreground"}`}>
+                      {ueber
+                        ? `⚠️ Angebotsstunden überschritten (${pctRaw}%) — Mehraufwand als Regie verrechnen oder Nachtrag stellen.`
+                        : knapp
+                          ? `⚠️ ${pctRaw}% der Angebotsstunden verbraucht — Reserve wird knapp.`
+                          : `${pctRaw}% verbraucht.`}
+                    </p>
+                    {/* Aufschlüsselung: WOHER kommen die Angebotsstunden?
+                        Jede Position trägt ihre einkalkulierte Arbeitszeit bei. */}
+                    {angebotPositionen.some(p => (p.stunden || 0) > 0) && (
+                      <details className="text-xs">
+                        <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
+                          Woraus sich die {angeboteneStunden.toFixed(1)} Std. ergeben ▾
+                        </summary>
+                        <ul className="mt-1.5 space-y-0.5 rounded-md border bg-muted/20 p-2">
+                          {angebotPositionen.filter(p => (p.stunden || 0) > 0).map(p => (
+                            <li key={p.position} className="flex justify-between gap-2">
+                              <span className="truncate text-muted-foreground">
+                                {p.beschreibung.length > 55 ? p.beschreibung.slice(0, 55) + "…" : p.beschreibung}
+                                <span className="opacity-70"> · {p.menge} {p.einheit}</span>
+                                {p.stundenQuelle === "kalkulation" && (
+                                  <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5 text-muted-foreground/80"
+                                    title="Arbeitszeit aus der Kalkulation dieser Position (Std/Einheit × Menge)">
+                                    aus Kalkulation
+                                  </span>
+                                )}
+                              </span>
+                              <span className="font-mono tabular-nums shrink-0">{(p.stunden || 0).toFixed(1)} h</span>
+                            </li>
+                          ))}
+                          {(() => {
+                            const std = angebotPositionen.filter(p => p.stundenQuelle === "stunden").reduce((s, p) => s + (p.stunden || 0), 0);
+                            const kalk = angebotPositionen.filter(p => p.stundenQuelle === "kalkulation").reduce((s, p) => s + (p.stunden || 0), 0);
+                            return (std > 0 || kalk > 0) ? (
+                              <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium">
+                                <span className="text-muted-foreground">
+                                  {std > 0 && <>Stunden-Positionen {std.toFixed(1)} h</>}
+                                  {std > 0 && kalk > 0 && " · "}
+                                  {kalk > 0 && <>aus Kalkulationen {kalk.toFixed(1)} h</>}
+                                </span>
+                                <span className="font-mono tabular-nums shrink-0">{(std + kalk).toFixed(1)} h</span>
+                              </li>
+                            ) : null;
+                          })()}
+                        </ul>
+                      </details>
+                    )}
+                  </div>
+                );
+              })()}
               {projectHours.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Keine Stunden gebucht</p>
               ) : (
                 <div className="space-y-2">
-                  {projectHours.map((h) => (
-                    <div key={h.user_id} className="flex justify-between text-sm">
-                      <span>{h.name}</span>
-                      <span className="font-medium">{h.total.toFixed(1)} Std.</span>
-                    </div>
-                  ))}
+                  {(() => {
+                    const max = Math.max(...projectHours.map(h => h.total), 1);
+                    return projectHours.map((h) => (
+                      <div key={h.user_id} className="text-sm">
+                        <div className="flex justify-between mb-0.5">
+                          <span>{h.name}</span>
+                          <span className="font-medium tabular-nums">{h.total.toFixed(1)} Std.</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-primary/60" style={{ width: `${Math.round((h.total / max) * 100)}%` }} />
+                        </div>
+                      </div>
+                    ));
+                  })()}
                   <Separator />
                   <div className="flex justify-between font-medium">
                     <span>Gesamt</span>
-                    <span>{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
+                    <span className="tabular-nums">{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
                   </div>
                 </div>
               )}
@@ -591,6 +754,25 @@ const ProjectOverview = () => {
               </CardContent>
             </Card>
           ))}
+
+          {/* Materialliste: Entnahmen, Verbrauch & Rückgaben je Projekt */}
+          <Card
+            className="cursor-pointer hover:shadow-lg transition-shadow"
+            onClick={() => navigate(`/projects/${projectId}/materials`)}
+          >
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="text-primary"><Package className="h-8 w-8" /></div>
+              </div>
+              <CardTitle className="text-xl">Materialliste</CardTitle>
+              <CardDescription>Entnahmen, Verbrauch & Rückgaben</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button variant="outline" className="w-full">
+                Öffnen
+              </Button>
+            </CardContent>
+          </Card>
 
           {/* Angebotspositionen — ohne Preise, für alle sichtbar */}
           {angebotPositionen.length > 0 && (
@@ -622,7 +804,10 @@ const ProjectOverview = () => {
               <FileText className="h-5 w-5 text-yellow-600" />
               <div className="flex-1">
                 <p className="font-medium">Regieberichte</p>
-                <p className="text-xs text-muted-foreground">{regieCount} Berichte</p>
+                <p className="text-xs text-muted-foreground">
+                  {regieCount} Bericht{regieCount === 1 ? "" : "e"}
+                  {regieStunden > 0 && <> · <b className="text-foreground">{regieStunden.toLocaleString("de-AT")} Regiestunden</b></>}
+                </p>
               </div>
             </CardContent>
           </Card>

@@ -36,7 +36,6 @@ import OfferPackages from "./pages/OfferPackages";
 import KalkulationHub from "./pages/KalkulationHub";
 import KalkulationEditor from "./pages/KalkulationEditor";
 import Nachkalkulation from "./pages/Nachkalkulation";
-import Finanzplanung from "./pages/Finanzplanung";
 import ScheduleBoard from "./pages/ScheduleBoard";
 import FreelancerHours from "./pages/FreelancerHours";
 import NotFound from "./pages/NotFound";
@@ -112,7 +111,6 @@ function AppContent() {
           <Route path="/customers" element={<ProtectedRoute feature="kunden"><Customers /></ProtectedRoute>} />
           <Route path="/schedule" element={<ProtectedRoute feature="plantafel"><ScheduleBoard /></ProtectedRoute>} />
           <Route path="/nachkalkulation" element={<ProtectedRoute feature="nachkalkulation"><Nachkalkulation /></ProtectedRoute>} />
-          <Route path="/finanzplanung" element={<ProtectedRoute feature="finanzplanung"><Finanzplanung /></ProtectedRoute>} />
         </Route>
 
         <Route path="*" element={<NotFound />} />

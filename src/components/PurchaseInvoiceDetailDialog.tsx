@@ -7,7 +7,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
+import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X, Split, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -34,6 +35,18 @@ interface Props {
   onUpdated: () => void;
 }
 
+// Teilbetrag/Position einer Eingangsrechnung, die einem Projekt zugeordnet ist.
+type Allocation = {
+  id: string;
+  purchase_invoice_id: string;
+  project_id: string;
+  beschreibung: string | null;
+  betrag_netto: number;
+  position_index: number | null;
+};
+
+const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: Props) {
   const { toast } = useToast();
   const { isAdmin } = usePermissions();
@@ -48,6 +61,12 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const [verrechnenSearch, setVerrechnenSearch] = useState("");
   const [invoiceOptions, setInvoiceOptions] = useState<Array<{ id: string; nummer: string; datum: string; kunde: string }>>([]);
   const [verrechnetRef, setVerrechnetRef] = useState<{ id: string; nummer: string; datum: string } | null>(null);
+  // Projekt-Aufteilung (Teilbeträge/Positionen → Projekte)
+  const [allocations, setAllocations] = useState<Allocation[]>([]);
+  const [allocSelected, setAllocSelected] = useState<Set<string>>(new Set());
+  const [allocBulkProject, setAllocBulkProject] = useState("");
+  const [newAlloc, setNewAlloc] = useState({ beschreibung: "", betrag: "", project_id: "" });
+  const [allocSaving, setAllocSaving] = useState(false);
 
   useEffect(() => {
     (supabase.from("admin_config_options" as never) as any)
@@ -76,12 +95,23 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
     return () => { cancelled = true; };
   }, [form?.pdf_path]);
 
+  const loadAllocations = async (id: string) => {
+    const { data } = await (supabase.from("purchase_invoice_allocations" as never) as any)
+      .select("*")
+      .eq("purchase_invoice_id", id)
+      .order("position_index", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true });
+    setAllocations((data as Allocation[]) || []);
+    setAllocSelected(new Set());
+  };
+
   const loadData = async () => {
     if (!invoiceId) return;
     setLoading(true);
     const [{ data: inv, error: invError }, { data: projs }] = await Promise.all([
       supabase.from("purchase_invoices").select("*").eq("id", invoiceId).single(),
       supabase.from("projects").select("id, name").order("name"),
+      loadAllocations(invoiceId),
     ]);
     if (invError) {
       toast({ variant: "destructive", title: "Fehler", description: "Eingangsrechnung konnte nicht geladen werden." });
@@ -160,6 +190,105 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
   const update = (field: string, value: any) => setForm((prev: any) => ({ ...prev, [field]: value }));
 
+  // ── Projekt-Aufteilung (Teilbeträge → Projekte) ─────────────────────────
+  // Sobald Teilbeträge existieren, rechnet die Nachkalkulation NUR mit den
+  // Teilbeträgen (der Kopf-Betrag der Rechnung wird ignoriert, um
+  // Doppelzählung zu vermeiden).
+
+  const invoiceNetto = (): number => {
+    const n = parseFloat(form?.betrag_netto);
+    if (Number.isFinite(n) && n > 0) return n;
+    const b = parseFloat(form?.betrag_brutto);
+    const u = parseFloat(form?.ust_satz);
+    if (Number.isFinite(b) && b > 0) return b / (1 + (Number.isFinite(u) ? u : 20) / 100);
+    return 0;
+  };
+
+  const zugeordnetSumme = allocations.reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
+  const restBetrag = Math.round((invoiceNetto() - zugeordnetSumme) * 100) / 100;
+
+  const addAllocation = async () => {
+    if (!form) return;
+    const betrag = parseFloat(newAlloc.betrag);
+    if (!newAlloc.project_id) {
+      toast({ variant: "destructive", title: "Projekt fehlt", description: "Bitte ein Projekt für den Teilbetrag wählen." });
+      return;
+    }
+    if (!Number.isFinite(betrag) || betrag <= 0) {
+      toast({ variant: "destructive", title: "Betrag ungültig", description: "Bitte einen Teilbetrag (netto, > 0) eingeben." });
+      return;
+    }
+    setAllocSaving(true);
+    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).insert({
+      purchase_invoice_id: form.id,
+      project_id: newAlloc.project_id,
+      beschreibung: newAlloc.beschreibung.trim() || null,
+      betrag_netto: Math.round(betrag * 100) / 100,
+    });
+    setAllocSaving(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    setNewAlloc({ beschreibung: "", betrag: "", project_id: newAlloc.project_id });
+    await loadAllocations(form.id);
+    onUpdated();
+  };
+
+  const deleteAllocation = async (id: string) => {
+    if (!form) return;
+    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).delete().eq("id", id);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    await loadAllocations(form.id);
+    onUpdated();
+  };
+
+  const reassignAllocation = async (id: string, projectId: string) => {
+    if (!form) return;
+    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).update({ project_id: projectId }).eq("id", id);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    await loadAllocations(form.id);
+    onUpdated();
+  };
+
+  const assignAllocBulk = async () => {
+    if (!form || !allocBulkProject || allocSelected.size === 0) return;
+    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any)
+      .update({ project_id: allocBulkProject })
+      .in("id", [...allocSelected]);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    toast({ title: "Zugeordnet", description: `${allocSelected.size} Teilbetrag${allocSelected.size === 1 ? "" : "e"} umgehängt.` });
+    setAllocBulkProject("");
+    await loadAllocations(form.id);
+    onUpdated();
+  };
+
+  const toggleAllocSelected = (id: string) => {
+    setAllocSelected(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  // Netto aus Brutto + USt-Satz ableiten (wie im Upload-Dialog) — hält
+  // betrag_netto konsistent, damit die Projekt-Nachkalkulation stimmt.
+  const deriveNetto = (brutto: any, ust: any): string | null => {
+    const b = parseFloat(brutto);
+    const u = parseFloat(ust);
+    if (!Number.isFinite(b) || !Number.isFinite(u)) return null;
+    return (b / (1 + u / 100)).toFixed(2);
+  };
+
   const handleSave = async () => {
     if (!form) return;
     // Validierung: Lieferant + gültiger Bruttobetrag (verhindert NaN in der DB)
@@ -173,6 +302,13 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       return;
     }
     const toNumOrNull = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    // Netto: fehlend/ungültig/negativ → aus Brutto+USt ableiten, damit die
+    // Nachkalkulation nicht auf den pauschalen Brutto/1,2-Fallback fällt.
+    let netto = toNumOrNull(form.betrag_netto);
+    if (netto === null || netto <= 0) {
+      const ust = toNumOrNull(form.ust_satz) ?? 20;
+      netto = parseFloat((brutto / (1 + ust / 100)).toFixed(2));
+    }
     setSaving(true);
     const { error } = await supabase.from("purchase_invoices").update({
       lieferant: form.lieferant.trim(),
@@ -181,7 +317,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       faellig_am: form.faellig_am || null,
       bezahlt_am: form.bezahlt_am || null,
       betrag_brutto: brutto,
-      betrag_netto: toNumOrNull(form.betrag_netto),
+      betrag_netto: netto,
       ust_satz: toNumOrNull(form.ust_satz),
       kategorie: form.kategorie,
       project_id: form.project_id || null,
@@ -315,6 +451,136 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               )}
             </div>
 
+            {/* Projekt-Aufteilung: Teilbeträge/Positionen auf mehrere Projekte */}
+            <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
+              <div className="flex items-center gap-2">
+                <Split className="h-4 w-4 text-muted-foreground" />
+                <Label className="text-sm font-medium">Projekt-Aufteilung</Label>
+                {allocations.length > 0 && (
+                  <Badge variant="outline" className="text-[10px] py-0 h-4">
+                    {allocations.length} Teilbetr{allocations.length === 1 ? "ag" : "äge"}
+                  </Badge>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Rechnung auf mehrere Projekte aufteilen (z.B. 3 Positionen → Projekt X, 5 → Projekt Z).
+                Sobald Teilbeträge existieren, rechnet die Nachkalkulation je Projekt nur mit den
+                zugeordneten Teilbeträgen — das Projekt oben dient dann nur noch als Hauptzuordnung der Rechnung.
+              </p>
+
+              {allocSelected.size > 0 && (
+                <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
+                  <span className="text-xs whitespace-nowrap font-medium">{allocSelected.size} ausgewählt</span>
+                  <Select value={allocBulkProject || "none"} onValueChange={v => setAllocBulkProject(v === "none" ? "" : v)}>
+                    <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Projekt wählen...</SelectItem>
+                      {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Button type="button" size="sm" className="h-8" onClick={assignAllocBulk} disabled={!allocBulkProject}>
+                    Auswahl zuordnen
+                  </Button>
+                </div>
+              )}
+
+              {allocations.length > 0 && (
+                <div className="space-y-1 max-h-56 overflow-y-auto">
+                  {allocations.map(a => (
+                    <div key={a.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
+                      <Checkbox
+                        checked={allocSelected.has(a.id)}
+                        onCheckedChange={() => toggleAllocSelected(a.id)}
+                        className="shrink-0"
+                      />
+                      <span className="flex-1 min-w-0 text-xs truncate" title={a.beschreibung || undefined}>
+                        {a.beschreibung || `Teilbetrag${a.position_index != null ? ` (Position ${a.position_index + 1})` : ""}`}
+                      </span>
+                      <span className="text-xs font-mono tabular-nums whitespace-nowrap">
+                        {eur(Number(a.betrag_netto) || 0)}
+                      </span>
+                      <Select value={a.project_id} onValueChange={v => reassignAllocation(a.id, v)}>
+                        <SelectTrigger className="h-7 w-[140px] text-xs shrink-0">
+                          <SelectValue placeholder="Projekt" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <button
+                        type="button"
+                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive shrink-0"
+                        onClick={() => deleteAllocation(a.id)}
+                        title="Teilbetrag entfernen"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Neuer Teilbetrag */}
+              <div className="flex items-center gap-2">
+                <Input
+                  placeholder="Beschreibung (optional)"
+                  value={newAlloc.beschreibung}
+                  onChange={e => setNewAlloc(prev => ({ ...prev, beschreibung: e.target.value }))}
+                  className="h-8 text-xs flex-1"
+                />
+                <Input
+                  type="number"
+                  step="0.01"
+                  placeholder="€ netto"
+                  value={newAlloc.betrag}
+                  onChange={e => setNewAlloc(prev => ({ ...prev, betrag: e.target.value }))}
+                  className="h-8 text-xs w-24 shrink-0"
+                />
+                <Select
+                  value={newAlloc.project_id || "none"}
+                  onValueChange={v => setNewAlloc(prev => ({ ...prev, project_id: v === "none" ? "" : v }))}
+                >
+                  <SelectTrigger className="h-8 w-[140px] text-xs shrink-0">
+                    <SelectValue placeholder="Projekt" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Projekt wählen...</SelectItem>
+                    {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8 px-2 shrink-0"
+                  onClick={addAllocation}
+                  disabled={allocSaving}
+                  title="Teilbetrag hinzufügen"
+                >
+                  {allocSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                </Button>
+              </div>
+
+              <div className={`flex items-center justify-between text-xs pt-1 border-t ${restBetrag < -0.005 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+                <span>
+                  Zugeordnet: <span className="font-mono tabular-nums">{eur(zugeordnetSumme)}</span> von{" "}
+                  <span className="font-mono tabular-nums">{eur(invoiceNetto())}</span>{" "}
+                  (Rest: <span className="font-mono tabular-nums">{eur(restBetrag)}</span>)
+                  {restBetrag < -0.005 && " — mehr zugeordnet als Rechnungsbetrag!"}
+                </span>
+                {restBetrag > 0.005 && allocations.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-primary underline-offset-2 hover:underline shrink-0 ml-2"
+                    onClick={() => setNewAlloc(prev => ({ ...prev, betrag: String(restBetrag) }))}
+                    title="Restbetrag in das Betragsfeld übernehmen"
+                  >
+                    Rest übernehmen
+                  </button>
+                )}
+              </div>
+            </div>
+
             <div className="grid grid-cols-2 gap-3">
               <div className="col-span-2">
                 <Label>Lieferant *</Label>
@@ -330,7 +596,19 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
               <div>
                 <Label>Betrag Brutto * (€)</Label>
-                <Input type="number" step="0.01" value={form.betrag_brutto || ""} onChange={e => update("betrag_brutto", e.target.value)} />
+                <Input
+                  type="number"
+                  step="0.01"
+                  value={form.betrag_brutto || ""}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setForm((prev: any) => ({
+                      ...prev,
+                      betrag_brutto: v,
+                      betrag_netto: deriveNetto(v, prev.ust_satz) ?? prev.betrag_netto,
+                    }));
+                  }}
+                />
               </div>
               <div>
                 <Label>Betrag Netto (€)</Label>
@@ -338,7 +616,16 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
               <div>
                 <Label>USt-Satz (%)</Label>
-                <Select value={String(form.ust_satz || 20)} onValueChange={v => update("ust_satz", v)}>
+                <Select
+                  value={String(form.ust_satz || 20)}
+                  onValueChange={v => {
+                    setForm((prev: any) => ({
+                      ...prev,
+                      ust_satz: v,
+                      betrag_netto: deriveNetto(prev.betrag_brutto, v) ?? prev.betrag_netto,
+                    }));
+                  }}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="0">0%</SelectItem>

@@ -171,6 +171,8 @@ export default function Admin() {
 
   // App settings states
   const [regiereportEmail, setRegiereportEmail] = useState("");
+  // Lohnnebenkosten-Faktor für die Projekt-Nachkalkulation (Bruttolohn × Faktor)
+  const [lnkFaktor, setLnkFaktor] = useState("1.8");
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
   const [bankBic, setBankBic] = useState("");
@@ -185,7 +187,7 @@ export default function Admin() {
       const { data, error } = await supabase
         .from("app_settings")
         .select("key, value")
-        .in("key", ["disturbance_report_email", "bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "einheiten", "default_betreff_rechnung", "default_betreff_angebot"]);
+        .in("key", ["disturbance_report_email", "bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "einheiten", "default_betreff_rechnung", "default_betreff_angebot", "lohnnebenkosten_faktor"]);
 
       if (error) {
         console.error("Error fetching app settings:", error);
@@ -199,6 +201,7 @@ export default function Admin() {
           if (row.key === "einheiten") setEinheitenStr(row.value);
           if (row.key === "default_betreff_rechnung") setDefaultBetreffRechnung(row.value);
           if (row.key === "default_betreff_angebot") setDefaultBetreffAngebot(row.value);
+          if (row.key === "lohnnebenkosten_faktor") setLnkFaktor(row.value || "1.8");
         });
       }
     } catch (err) {
@@ -1044,6 +1047,47 @@ export default function Admin() {
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Diese E-Mail-Adresse erhält alle Regieberichte als Kopie.
+                  </p>
+                </div>
+
+                {/* Lohnnebenkosten-Faktor für die Nachkalkulation */}
+                <div className="border-t pt-4 space-y-2">
+                  <Label htmlFor="lnk-faktor">Lohnnebenkosten-Faktor (Nachkalkulation)</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      id="lnk-faktor"
+                      type="number"
+                      min={1}
+                      max={3}
+                      step={0.05}
+                      value={lnkFaktor}
+                      onChange={(e) => setLnkFaktor(e.target.value)}
+                      disabled={loadingSettings}
+                      className="w-32"
+                    />
+                    <Button
+                      onClick={async () => {
+                        const f = parseFloat(String(lnkFaktor).replace(",", "."));
+                        if (!Number.isFinite(f) || f < 1 || f > 3) {
+                          toast({ variant: "destructive", title: "Ungültiger Faktor", description: "Bitte einen Wert zwischen 1,0 und 3,0 eingeben (üblich: 1,7–2,0)." });
+                          return;
+                        }
+                        const { error } = await supabase.from("app_settings").upsert(
+                          { key: "lohnnebenkosten_faktor", value: String(f), updated_at: new Date().toISOString() },
+                          { onConflict: "key" },
+                        );
+                        if (error) toast({ variant: "destructive", title: "Fehler", description: error.message });
+                        else toast({ title: "Gespeichert", description: `Lohnkosten in der Nachkalkulation = Stundenlohn × ${String(f).replace(".", ",")}` });
+                      }}
+                      disabled={loadingSettings}
+                    >
+                      <Save className="h-4 w-4 mr-2" />
+                      Speichern
+                    </Button>
+                  </div>
+                  <p className="text-sm text-muted-foreground">
+                    Die Projekt-Nachkalkulation rechnet Lohnkosten als Bruttostundenlohn × diesen Faktor
+                    (Lohnnebenkosten, Urlaub/Krankenstand, unproduktive Zeiten). Üblich im Handwerk: 1,7–2,0.
                   </p>
                 </div>
 

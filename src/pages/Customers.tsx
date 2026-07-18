@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Plus, Pencil, Trash2, Search, Users, X, Receipt, ArrowLeft } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { CustomerForm, EMPTY_CUSTOMER_FORM, composeCustomerName, type CustomerFormData } from "@/components/CustomerForm";
@@ -142,9 +142,19 @@ export default function Customers() {
   const [customerColors, setCustomerColors] = useState<Record<string, { bg: string; text: string }>>({});
   const { toast } = useToast();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   useEffect(() => {
     fetchCustomers();
+    // Deep-Links von der KingBill-Hauptmaske: ?q=<Suche>, ?neu=1 (Anlege-Dialog)
+    const q = searchParams.get("q");
+    if (q) setSearch(q);
+    if (searchParams.get("neu") === "1") {
+      setEditId(null);
+      setForm(emptyForm);
+      setDialogOpen(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const fetchCustomers = async () => {

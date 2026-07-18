@@ -7,7 +7,6 @@ import { supabase } from "@/integrations/supabase/client";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -15,7 +14,7 @@ import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { getDocConfig } from "@/lib/documentTypes";
 import { getStatusLabel } from "@/lib/statusColors";
 import { formatDateShort } from "@/lib/dateFormat";
-import { DEFAULT_STUNDENSATZ } from "@/lib/kalkulation";
+import { istArbeitszeitZeile } from "@/lib/stunden";
 import { cn } from "@/lib/utils";
 import {
   PAYABLE_INVOICE_TYPES,
@@ -52,14 +51,34 @@ interface InvoiceRaw {
 
 interface ItemRaw {
   invoice_id: string;
+  position: number;
+  beschreibung: string;
+  kurztext: string | null;
   menge: number;
+  einheit: string | null;
   arbeitszeit_minuten: number;
 }
 
 interface TimeEntryRaw {
   project_id: string | null;
+  user_id: string;
   stunden: number;
+  taetigkeit: string | null;
   datum: string;
+}
+
+interface EmployeeRaw {
+  user_id: string | null;
+  stundenlohn: number | null;
+}
+
+interface MaterialRaw {
+  project_id: string | null;
+  typ: string | null;
+  menge: string | null;
+  einzelpreis: number | null;
+  datum: string | null;
+  created_at: string;
 }
 
 interface PurchaseRaw {
@@ -73,6 +92,15 @@ interface PurchaseRaw {
   betrag_brutto: number;
   ust_satz: number | null;
   status: string | null;
+}
+
+// purchase_invoice_allocations ist (noch) nicht in den generierten Supabase-
+// Typen — lokales Interface + Cast (Repo-Muster, types.ts nicht regenerieren).
+interface AllocationRaw {
+  project_id: string;
+  purchase_invoice_id: string;
+  betrag_netto: number;
+  beschreibung: string | null;
 }
 
 interface DocRef {
@@ -90,6 +118,8 @@ interface PurchaseRef {
   nummer: string | null;
   datum: string | null;
   netto: number;
+  /** true = Teilbetrag (Positions-Aufteilung) einer geteilten Eingangsrechnung */
+  anteil?: boolean;
 }
 
 interface ProjectRow {
@@ -104,6 +134,7 @@ interface ProjectRow {
   rechnungDocs: DocRef[]; // Rechnungen + Gutschriften (Gutschrift-Netto negativ)
   istStunden: number;
   lohnkosten: number;
+  materialkosten: number;
   fremdkosten: number;
   purchaseDocs: PurchaseRef[];
   basis: number;
@@ -119,6 +150,7 @@ type SortKey =
   | "sollStunden"
   | "istStunden"
   | "lohnkosten"
+  | "materialkosten"
   | "fremdkosten"
   | "db"
   | "marge";
@@ -132,6 +164,9 @@ const ZEITRAUM_LABELS: Record<Zeitraum, string> = {
   "12m": "Letzte 12 Monate",
   "6m": "Letzte 6 Monate",
 };
+
+/** Abwesenheiten zählen nicht als produktive Projektstunden/Lohnkosten. */
+const ABWESENHEIT = new Set(["Urlaub", "Krankenstand", "Feiertag", "Zeitausgleich", "Weiterbildung"]);
 
 function zeitraumRange(z: Zeitraum): { from: string; to: string } | null {
   const now = new Date();
@@ -152,6 +187,15 @@ function zeitraumRange(z: Zeitraum): { from: string; to: string } | null {
   }
 }
 
+/** Soll-Stunden einer Angebots-/Rechnungszeile (Lutz-Heuristik):
+ *  explizite Stunden-Position → Menge zählt 1:1, sonst kalkulierte
+ *  Arbeitszeit (arbeitszeit_minuten ist "pro Einheit" → × Menge / 60). */
+function positionStunden(item: ItemRaw): number {
+  const name = item.kurztext || item.beschreibung || "";
+  if (istArbeitszeitZeile(name, item.einheit)) return Number(item.menge) || 0;
+  return ((Number(item.arbeitszeit_minuten) || 0) * (Number(item.menge) || 0)) / 60;
+}
+
 // ---------------------------------------------------------------------------
 // Komponente
 // ---------------------------------------------------------------------------
@@ -164,16 +208,16 @@ export function ProjektNachkalkulation() {
   const [invoices, setInvoices] = useState<InvoiceRaw[]>([]);
   const [sollStundenByInvoice, setSollStundenByInvoice] = useState<Record<string, number>>({});
   const [timeEntries, setTimeEntries] = useState<TimeEntryRaw[]>([]);
+  const [materialEntries, setMaterialEntries] = useState<MaterialRaw[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRaw[]>([]);
+  const [allocations, setAllocations] = useState<AllocationRaw[]>([]);
+  const [lohnByUser, setLohnByUser] = useState<Record<string, number>>({});
+  // Lohnnebenkosten-Faktor (app_settings, Admin → Einstellungen), Default 1,8
+  const [faktor, setFaktor] = useState(1.8);
 
-  // Filter & Parameter
+  // Filter
   const [statusFilter, setStatusFilter] = useState<string>("alle");
   const [zeitraum, setZeitraum] = useState<Zeitraum>("gesamt");
-  const [stundensatzInput, setStundensatzInput] = useState(String(DEFAULT_STUNDENSATZ));
-  const stundensatz = useMemo(() => {
-    const n = parseFloat(stundensatzInput.replace(",", "."));
-    return Number.isFinite(n) && n >= 0 ? n : DEFAULT_STUNDENSATZ;
-  }, [stundensatzInput]);
 
   const [sortKey, setSortKey] = useState<SortKey>("db");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
@@ -186,7 +230,7 @@ export function ProjektNachkalkulation() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [projs, invs, entries, purch] = await Promise.all([
+      const [projs, invs, entries, mats, purch, allocs, emps, factRes] = await Promise.all([
         fetchAllRows<ProjectRaw>((f, t) =>
           supabase.from("projects").select("id, name, projektnummer, status").order("name").order("id").range(f, t),
         ),
@@ -202,24 +246,45 @@ export function ProjektNachkalkulation() {
         fetchAllRows<TimeEntryRaw>((f, t) =>
           supabase
             .from("time_entries")
-            .select("project_id, stunden, datum")
+            .select("project_id, user_id, stunden, taetigkeit, datum")
             .not("project_id", "is", null)
             .order("id")
             .range(f, t),
         ),
+        fetchAllRows<MaterialRaw>((f, t) =>
+          supabase
+            .from("material_entries")
+            .select("project_id, typ, menge, einzelpreis, datum, created_at")
+            .not("project_id", "is", null)
+            .order("id")
+            .range(f, t),
+        ),
+        // OHNE project_id-Filter: auch Rechnungen ohne Kopf-Projekt können per
+        // Positions-Aufteilung (allocations) Projekten zugeordnet sein.
         fetchAllRows<PurchaseRaw>((f, t) =>
           supabase
             .from("purchase_invoices")
             .select("id, project_id, lieferant, rechnungsnummer, rechnungsdatum, created_at, betrag_netto, betrag_brutto, ust_satz, status")
-            .not("project_id", "is", null)
             .order("id")
             .range(f, t),
         ),
+        // Teilbeträge geteilter Eingangsrechnungen; Tabelle kann in frischen
+        // Umgebungen fehlen (Migration noch nicht eingespielt) → leer weiter.
+        fetchAllRows<AllocationRaw>((f, t) =>
+          (supabase.from("purchase_invoice_allocations" as never) as any)
+            .select("project_id, purchase_invoice_id, betrag_netto, beschreibung")
+            .order("id")
+            .range(f, t),
+        ).catch(() => [] as AllocationRaw[]),
+        fetchAllRows<EmployeeRaw>((f, t) =>
+          supabase.from("employees").select("user_id, stundenlohn").order("id").range(f, t),
+        ),
+        supabase.from("app_settings").select("value").eq("key", "lohnnebenkosten_faktor").maybeSingle(),
       ]);
 
-      // Soll-Stunden: invoice_items der Soll-Belege (AB + angenommene Angebote).
-      // arbeitszeit_minuten ist "pro Einheit" (vgl. src/lib/kalkulation.ts),
-      // daher Menge × Minuten / 60.
+      // Soll-Stunden: invoice_items der Soll-Belege (AB + angenommene Angebote)
+      // per Lutz-Heuristik: explizite Stunden-Positionen zählen 1:1, sonst
+      // kalkulierte Arbeitszeit (Menge × arbeitszeit_minuten / 60).
       const sollDocIds = invs
         .filter(
           (i) =>
@@ -233,7 +298,7 @@ export function ProjektNachkalkulation() {
           fetchAllRows<ItemRaw>((f, t) =>
             supabase
               .from("invoice_items")
-              .select("invoice_id, menge, arbeitszeit_minuten")
+              .select("invoice_id, position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
               .in("invoice_id", ids)
               .order("id")
               .range(f, t),
@@ -242,14 +307,22 @@ export function ProjektNachkalkulation() {
       );
       const hours: Record<string, number> = {};
       for (const item of itemChunks.flat()) {
-        const h = (Number(item.menge) * Number(item.arbeitszeit_minuten)) / 60;
-        hours[item.invoice_id] = (hours[item.invoice_id] || 0) + h;
+        hours[item.invoice_id] = (hours[item.invoice_id] || 0) + positionStunden(item);
+      }
+
+      const wages: Record<string, number> = {};
+      for (const e of emps) {
+        if (e.user_id) wages[e.user_id] = Number(e.stundenlohn) || 0;
       }
 
       setProjects(projs);
       setInvoices(invs);
       setTimeEntries(entries);
+      setMaterialEntries(mats);
       setPurchases(purch);
+      setAllocations(allocs);
+      setLohnByUser(wages);
+      setFaktor(Number(factRes.data?.value) || 1.8);
       setSollStundenByInvoice(hours);
     } catch (e) {
       toast.error("Fehler beim Laden der Nachkalkulation", {
@@ -278,18 +351,58 @@ export function ProjektNachkalkulation() {
       list.push(inv);
       invByProject.set(inv.project_id, list);
     }
+
+    // Stunden + Lohnkosten (Mitarbeiter-Stundenlohn × Lohnnebenkosten-Faktor),
+    // Abwesenheits-Tätigkeiten ausgefiltert.
     const hoursByProject = new Map<string, number>();
+    const lohnByProject = new Map<string, number>();
     for (const te of timeEntries) {
       if (!te.project_id || !inRange(te.datum)) continue;
-      hoursByProject.set(te.project_id, (hoursByProject.get(te.project_id) || 0) + Number(te.stunden));
+      if (te.taetigkeit && ABWESENHEIT.has(te.taetigkeit)) continue;
+      const std = Number(te.stunden) || 0;
+      hoursByProject.set(te.project_id, (hoursByProject.get(te.project_id) || 0) + std);
+      lohnByProject.set(te.project_id, (lohnByProject.get(te.project_id) || 0) + std * (lohnByUser[te.user_id] || 0) * faktor);
     }
-    const purchasesByProject = new Map<string, PurchaseRaw[]>();
+
+    // Materialkosten: Entnahme + Verbrauch − Rückgabe, jeweils Menge × EK.
+    const materialByProject = new Map<string, number>();
+    for (const m of materialEntries) {
+      if (!m.project_id || !inRange(m.datum ?? m.created_at)) continue;
+      const menge = parseFloat(String(m.menge || "0")) || 0;
+      const ek = Number(m.einzelpreis) || 0;
+      const delta = m.typ === "entnahme" || m.typ === "verbrauch" ? menge * ek : m.typ === "rueckgabe" ? -menge * ek : 0;
+      if (delta !== 0) materialByProject.set(m.project_id, (materialByProject.get(m.project_id) || 0) + delta);
+    }
+
+    // Fremdkosten: Teilbeträge (allocations) zählen immer zu ihrem Projekt;
+    // der Kopf-Betrag einer Rechnung zählt nur, wenn die Rechnung KEINE
+    // Teilbeträge hat (Anti-Doppelzählung).
+    const purchaseById = new Map<string, PurchaseRaw>();
+    for (const p of purchases) purchaseById.set(p.id, p);
+    const idsMitAufteilung = new Set(allocations.map((a) => a.purchase_invoice_id));
+
+    const purchasesByProject = new Map<string, PurchaseRef[]>();
     for (const p of purchases) {
-      if (!p.project_id || p.status === "abgelehnt") continue;
+      if (!p.project_id || p.status === "abgelehnt" || idsMitAufteilung.has(p.id)) continue;
       if (!inRange(p.rechnungsdatum ?? p.created_at)) continue;
       const list = purchasesByProject.get(p.project_id) || [];
-      list.push(p);
+      list.push({ id: p.id, lieferant: p.lieferant, nummer: p.rechnungsnummer, datum: p.rechnungsdatum ?? p.created_at, netto: purchaseNetto(p) });
       purchasesByProject.set(p.project_id, list);
+    }
+    for (const a of allocations) {
+      const parent = purchaseById.get(a.purchase_invoice_id);
+      if (!parent || parent.status === "abgelehnt") continue;
+      if (!inRange(parent.rechnungsdatum ?? parent.created_at)) continue;
+      const list = purchasesByProject.get(a.project_id) || [];
+      list.push({
+        id: `${a.purchase_invoice_id}-${list.length}`,
+        lieferant: a.beschreibung ? `${parent.lieferant} — ${a.beschreibung}` : parent.lieferant,
+        nummer: parent.rechnungsnummer,
+        datum: parent.rechnungsdatum ?? parent.created_at,
+        netto: Number(a.betrag_netto) || 0,
+        anteil: true,
+      });
+      purchasesByProject.set(a.project_id, list);
     }
 
     const result: ProjectRow[] = [];
@@ -329,26 +442,20 @@ export function ProjektNachkalkulation() {
       }
 
       const istStunden = hoursByProject.get(proj.id) || 0;
-      const lohnkosten = istStunden * stundensatz;
+      const lohnkosten = lohnByProject.get(proj.id) || 0;
+      const materialkosten = materialByProject.get(proj.id) || 0;
 
-      const projPurchases = purchasesByProject.get(proj.id) || [];
-      const purchaseDocs: PurchaseRef[] = projPurchases.map((p) => ({
-        id: p.id,
-        lieferant: p.lieferant,
-        nummer: p.rechnungsnummer,
-        datum: p.rechnungsdatum ?? p.created_at,
-        netto: purchaseNetto(p),
-      }));
+      const purchaseDocs = purchasesByProject.get(proj.id) || [];
       const fremdkosten = purchaseDocs.reduce((s, p) => s + p.netto, 0);
 
       // Deckungsbeitrag: Basis = Verrechnet; solange nichts verrechnet
       // wurde, die Auftragssumme (gekennzeichnet als "Soll-Basis").
       const basisIsSoll = rechnungDocs.length === 0 && sollNetto > 0;
       const basis = basisIsSoll ? sollNetto : verrechnetNetto;
-      const db = basis - lohnkosten - fremdkosten;
+      const db = basis - lohnkosten - materialkosten - fremdkosten;
       const marge = basis > 0 ? (db / basis) * 100 : null;
 
-      const hasIst = rechnungDocs.length > 0 || istStunden > 0 || purchaseDocs.length > 0;
+      const hasIst = rechnungDocs.length > 0 || istStunden > 0 || purchaseDocs.length > 0 || materialkosten !== 0;
       const hasAny = hasIst || sollNetto !== 0;
       // Bei eingeschränktem Zeitraum nur Projekte mit Ist-Aktivität im
       // Zeitraum, sonst alle Projekte mit irgendwelchen Zahlen.
@@ -366,6 +473,7 @@ export function ProjektNachkalkulation() {
         rechnungDocs,
         istStunden,
         lohnkosten,
+        materialkosten,
         fremdkosten,
         purchaseDocs,
         basis,
@@ -375,7 +483,7 @@ export function ProjektNachkalkulation() {
       });
     }
     return result;
-  }, [projects, invoices, sollStundenByInvoice, timeEntries, purchases, statusFilter, zeitraum, stundensatz]);
+  }, [projects, invoices, sollStundenByInvoice, timeEntries, materialEntries, purchases, allocations, lohnByUser, faktor, statusFilter, zeitraum]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -399,6 +507,7 @@ export function ProjektNachkalkulation() {
       sollStunden: 0,
       istStunden: 0,
       lohnkosten: 0,
+      materialkosten: 0,
       fremdkosten: 0,
       basis: 0,
       db: 0,
@@ -409,6 +518,7 @@ export function ProjektNachkalkulation() {
       t.sollStunden += r.sollStunden;
       t.istStunden += r.istStunden;
       t.lohnkosten += r.lohnkosten;
+      t.materialkosten += r.materialkosten;
       t.fremdkosten += r.fremdkosten;
       t.basis += r.basis;
       t.db += r.db;
@@ -482,21 +592,15 @@ export function ProjektNachkalkulation() {
             </Select>
           </div>
           <div className="space-y-1">
-            <Label htmlFor="nk-stundensatz" className="text-xs text-muted-foreground">
-              Kalkulatorischer Stundensatz (€/h)
-            </Label>
-            <Input
-              id="nk-stundensatz"
-              type="number"
-              min="0"
-              step="0.5"
-              value={stundensatzInput}
-              onChange={(e) => setStundensatzInput(e.target.value)}
-            />
+            <Label className="text-xs text-muted-foreground">Lohnnebenkosten-Faktor</Label>
+            <p className="text-sm font-medium tabular-nums h-10 flex items-center">
+              × {faktor.toLocaleString("de-AT")}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">(Admin → Einstellungen)</span>
+            </p>
           </div>
           <p className="text-xs text-muted-foreground flex items-start gap-1.5 lg:pb-2">
             <Info className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-            Lohnkosten Ist = erfasste Stunden × Stundensatz. Alle Beträge netto.
+            Lohnkosten Ist = erfasste Stunden × Mitarbeiter-Stundenlohn × Faktor. Alle Beträge netto.
           </p>
         </CardContent>
       </Card>
@@ -523,6 +627,7 @@ export function ProjektNachkalkulation() {
                   <SortHead label="Std. Soll" k="sollStunden" className="text-right" />
                   <SortHead label="Std. Ist" k="istStunden" className="text-right" />
                   <SortHead label="Lohn Ist" k="lohnkosten" className="text-right" />
+                  <SortHead label="Material Ist" k="materialkosten" className="text-right" />
                   <SortHead label="Fremd Ist" k="fremdkosten" className="text-right" />
                   <SortHead label="DB" k="db" className="text-right" />
                   <SortHead label="Marge" k="marge" className="text-right" />
@@ -535,7 +640,6 @@ export function ProjektNachkalkulation() {
                     row={r}
                     expanded={expanded.has(r.id)}
                     onToggle={() => toggleExpand(r.id)}
-                    stundensatz={stundensatz}
                   />
                 ))}
               </TableBody>
@@ -549,6 +653,7 @@ export function ProjektNachkalkulation() {
                   <TableCell className="text-right font-semibold tabular-nums">{formatStunden(totals.sollStunden)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatStunden(totals.istStunden)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.lohnkosten)}</TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.materialkosten)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.fremdkosten)}</TableCell>
                   <TableCell className={cn("text-right font-semibold tabular-nums", totals.db < 0 && "text-red-600")}>
                     {formatEUR(totals.db)}
@@ -584,12 +689,10 @@ function ProjectTableRow({
   row,
   expanded,
   onToggle,
-  stundensatz,
 }: {
   row: ProjectRow;
   expanded: boolean;
   onToggle: () => void;
-  stundensatz: number;
 }) {
   const stundenDiff = row.istStunden - row.sollStunden;
   return (
@@ -629,6 +732,9 @@ function ProjectTableRow({
           {row.istStunden > 0 ? formatStunden(row.istStunden) : "—"}
         </TableCell>
         <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">{formatEUR(row.lohnkosten)}</TableCell>
+        <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">
+          {row.materialkosten !== 0 ? formatEUR(row.materialkosten) : "—"}
+        </TableCell>
         <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">{formatEUR(row.fremdkosten)}</TableCell>
         <TableCell className={cn("py-2 text-right tabular-nums whitespace-nowrap font-medium", row.db < 0 && "text-red-600")}>
           <span className="inline-flex items-center gap-1.5">
@@ -645,21 +751,21 @@ function ProjectTableRow({
 
       {expanded && (
         <TableRow className="bg-muted/30 hover:bg-muted/30">
-          <TableCell colSpan={11} className="p-4">
+          <TableCell colSpan={12} className="p-4">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               {/* Stunden-Vergleich */}
               <div>
-                <p className="font-semibold mb-2">Stunden & Lohn (Soll/Ist)</p>
+                <p className="font-semibold mb-2">Stunden & Kosten (Soll/Ist)</p>
                 <div className="space-y-1">
-                  <DetailLine label="Soll-Stunden (Kalkulation)" value={row.sollStunden > 0 ? formatStunden(row.sollStunden) : "—"} />
+                  <DetailLine label="Soll-Stunden (Angebot/AB)" value={row.sollStunden > 0 ? formatStunden(row.sollStunden) : "—"} />
                   <DetailLine label="Ist-Stunden (Zeiterfassung)" value={formatStunden(row.istStunden)} />
                   <DetailLine
-                    label="Differenz"
+                    label="Abweichung"
                     value={`${stundenDiff > 0 ? "+" : ""}${formatStunden(stundenDiff)}`}
                     valueClass={row.sollStunden > 0 ? (stundenDiff > 0 ? "text-red-600" : "text-green-600") : undefined}
                   />
-                  <DetailLine label="Lohnkosten Soll" value={formatEUR(row.sollStunden * stundensatz)} />
-                  <DetailLine label="Lohnkosten Ist" value={formatEUR(row.lohnkosten)} />
+                  <DetailLine label="Lohnkosten Ist (Lohn × Faktor)" value={formatEUR(row.lohnkosten)} />
+                  <DetailLine label="Materialkosten Ist" value={formatEUR(row.materialkosten)} />
                 </div>
               </div>
 
@@ -691,6 +797,11 @@ function ProjectTableRow({
                       <div key={p.id} className="flex items-center justify-between gap-2">
                         <span className="truncate">
                           {p.lieferant}
+                          {p.anteil && (
+                            <Badge variant="outline" className="ml-1 text-[10px] py-0 h-4 font-normal" title="Teilbetrag einer auf mehrere Projekte aufgeteilten Rechnung">
+                              Anteil
+                            </Badge>
+                          )}
                           {p.nummer && <span className="text-muted-foreground"> #{p.nummer}</span>}
                           <span className="text-muted-foreground"> · {formatDateShort(p.datum)}</span>
                         </span>
@@ -701,10 +812,131 @@ function ProjectTableRow({
                 )}
               </div>
             </div>
+
+            {/* Alle Positionen der Angebots-/Rechnungsbelege mit Soll-Stunden */}
+            <PositionenDetail row={row} />
           </TableCell>
         </TableRow>
       )}
     </>
+  );
+}
+
+/**
+ * Positionen-Detail: alle Angebots-/Rechnungspositionen des Projekts —
+ * je Position Menge, Einheit und die enthaltene Arbeitszeit (explizite
+ * Stunden-Position bzw. kalkulierte Std/Einheit × Menge). Wird erst beim
+ * Aufklappen geladen (spart Datenvolumen in der Gesamttabelle).
+ */
+function PositionenDetail({ row }: { row: ProjectRow }) {
+  const [items, setItems] = useState<ItemRaw[] | null>(null);
+
+  const docs = useMemo(() => {
+    // Soll-Belege zuerst, dann Rechnungen/Gutschriften; keine Duplikate.
+    const seen = new Set<string>();
+    const out: DocRef[] = [];
+    for (const d of [...row.sollDocs, ...row.rechnungDocs]) {
+      if (seen.has(d.id)) continue;
+      seen.add(d.id);
+      out.push(d);
+    }
+    return out;
+  }, [row]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const ids = docs.map((d) => d.id);
+      if (ids.length === 0) {
+        if (!cancelled) setItems([]);
+        return;
+      }
+      try {
+        const chunks = await Promise.all(
+          chunk(ids, 150).map((part) =>
+            fetchAllRows<ItemRaw>((f, t) =>
+              supabase
+                .from("invoice_items")
+                .select("invoice_id, position, beschreibung, kurztext, menge, einheit, arbeitszeit_minuten")
+                .in("invoice_id", part)
+                .order("id")
+                .range(f, t),
+            ),
+          ),
+        );
+        if (!cancelled) setItems(chunks.flat());
+      } catch {
+        if (!cancelled) setItems([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [docs]);
+
+  if (docs.length === 0) return null;
+
+  const byInvoice = new Map<string, ItemRaw[]>();
+  for (const it of items || []) {
+    const list = byInvoice.get(it.invoice_id) || [];
+    list.push(it);
+    byInvoice.set(it.invoice_id, list);
+  }
+
+  return (
+    <div className="mt-4 border-t pt-3 text-sm">
+      <p className="font-semibold mb-2">Positionen (mit enthaltener Arbeitszeit)</p>
+      {items === null ? (
+        <p className="text-muted-foreground text-xs">Lade Positionen…</p>
+      ) : items.length === 0 ? (
+        <p className="text-muted-foreground text-xs">Keine Positionen vorhanden.</p>
+      ) : (
+        <div className="space-y-3">
+          {docs.map((doc) => {
+            const list = (byInvoice.get(doc.id) || []).slice().sort((a, b) => a.position - b.position);
+            if (list.length === 0) return null;
+            const cfg = getDocConfig(doc.typ);
+            const summe = list.reduce((s, it) => s + positionStunden(it), 0);
+            return (
+              <div key={doc.id}>
+                <div className="flex items-center gap-1.5 mb-1">
+                  <Badge variant="outline" className="text-[10px] py-0 h-4 shrink-0">{cfg.shortLabel}</Badge>
+                  <Link to={`/invoices/${doc.id}`} className="text-xs font-medium hover:underline">{doc.nummer}</Link>
+                  <span className="text-xs text-muted-foreground">· {formatDateShort(doc.datum)} · {list.length} Position{list.length === 1 ? "" : "en"}</span>
+                </div>
+                <ul className="rounded-md border bg-background/60 p-2 space-y-0.5 text-xs">
+                  {list.map((it) => {
+                    const name = it.kurztext || it.beschreibung || "";
+                    const istStdZeile = istArbeitszeitZeile(name, it.einheit);
+                    const stunden = positionStunden(it);
+                    return (
+                      <li key={`${doc.id}-${it.position}`} className="flex justify-between gap-2">
+                        <span className="truncate text-muted-foreground">
+                          <span className="font-mono">{String(it.position).padStart(2, "0")}</span>{" "}
+                          {name.length > 70 ? name.slice(0, 70) + "…" : name}
+                          <span className="opacity-70"> · {Number(it.menge)} {it.einheit || "Stk."}</span>
+                          {stunden > 0 && !istStdZeile && (
+                            <span className="ml-1.5 text-[10px] rounded bg-muted px-1 py-0.5 text-muted-foreground/80"
+                              title="Arbeitszeit aus der Kalkulation dieser Position (Std/Einheit × Menge)">
+                              aus Kalkulation
+                            </span>
+                          )}
+                        </span>
+                        <span className="font-mono tabular-nums shrink-0">{stunden > 0 ? `${stunden.toFixed(1)} h` : "—"}</span>
+                      </li>
+                    );
+                  })}
+                  {summe > 0 && (
+                    <li className="flex justify-between gap-2 pt-1 mt-1 border-t border-border/50 font-medium">
+                      <span className="text-muted-foreground">Arbeitszeit gesamt</span>
+                      <span className="font-mono tabular-nums shrink-0">{summe.toFixed(1)} h</span>
+                    </li>
+                  )}
+                </ul>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 

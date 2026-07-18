@@ -17,7 +17,7 @@ import {
   Home, Clock, FolderKanban, LayoutGrid,
   Receipt, FileText,
   BookUser, Package, BarChart3, Shield, LogOut, FileDown, Calculator,
-  TrendingUp, Wallet,
+  TrendingUp,
 } from "lucide-react";
 import { usePermissions, type FeatureKey } from "@/hooks/usePermissions";
 import { supabase } from "@/integrations/supabase/client";
@@ -54,18 +54,22 @@ const MENU_GROUPS: MenuGroup[] = [
     ],
   },
   {
+    label: "Kalkulation & Material",
+    items: [
+      { title: "Kalkulation", path: "/auftragskalkulation", icon: Calculator, feature: "materialien" },
+      { title: "Materialien & Preise", path: "/materials", icon: Package, feature: "materialien" },
+    ],
+  },
+  {
     label: "Auswertung",
     items: [
-      { title: "Nachkalkulation & Firmenzahlen", path: "/nachkalkulation", icon: TrendingUp, feature: "nachkalkulation" },
-      { title: "Finanzplanung", path: "/finanzplanung", icon: Wallet, feature: "finanzplanung" },
+      { title: "Nachkalkulation", path: "/nachkalkulation", icon: TrendingUp, feature: "nachkalkulation" },
     ],
   },
   {
     label: "Verwaltung",
     items: [
       { title: "Kunden", path: "/customers", icon: BookUser, feature: "kunden" },
-      { title: "Materialien & Kalkulation", path: "/materials", icon: Package, feature: "materialien" },
-      { title: "Auftragskalkulation", path: "/auftragskalkulation", icon: Calculator, feature: "materialien" },
       { title: "Meine Stunden", path: "/my-hours", icon: BarChart3, feature: null },
       { title: "Stundenauswertung", path: "/hours-report", icon: BarChart3, feature: "stundenauswertung" },
     ],
@@ -106,8 +110,9 @@ export function AppSidebar() {
   };
 
   return (
-    <Sidebar collapsible="icon" className="border-r">
-      <SidebarHeader className="p-3 border-b">
+    <Sidebar collapsible="icon" className="border-r border-sidebar-border">
+      {/* KingBill-Styling: weißer Logo-Kopf über hellblauer Leiste */}
+      <SidebarHeader className="p-3 border-b border-sidebar-border bg-white/80">
         <Link to="/" className="flex items-center justify-center px-1">
           <img
             src="/groismaier-logo.png"
@@ -126,7 +131,7 @@ export function AppSidebar() {
 
           return (
             <SidebarGroup key={group.label}>
-              <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+              <SidebarGroupLabel className="text-kb-blue-dark font-bold">{group.label}</SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
                   {visibleItems.map((item) => (
@@ -150,7 +155,7 @@ export function AppSidebar() {
         })}
       </SidebarContent>
 
-      <SidebarFooter className="p-3 border-t">
+      <SidebarFooter className="p-3 border-t border-sidebar-border bg-white/60">
         <div className="flex items-center justify-between gap-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-sm font-medium truncate group-data-[collapsible=icon]:hidden">
             {userName || "Benutzer"}

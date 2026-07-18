@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown } from "lucide-react";
+import { KBButton } from "@/components/kingbill";
+import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import {
   generateEpcQrCode,
@@ -210,7 +211,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, fileName }:
   // Eingeklappt: schmale Leiste zum Wieder-Einblenden (Zustand in localStorage).
   if (!open) {
     return (
-      <div className="hidden xl:flex sticky top-20 shrink-0 self-start flex-col items-center gap-2 rounded-lg border bg-card p-1.5 shadow-sm">
+      <div className="kb-panel hidden xl:flex sticky top-20 shrink-0 self-start flex-col items-center gap-2 p-1.5">
         <Button
           variant="ghost"
           size="icon"
@@ -218,7 +219,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, fileName }:
           onClick={toggleOpen}
           title="Live-Vorschau einblenden"
         >
-          <PanelRightOpen className="h-4 w-4" />
+          <PanelRightOpen className="h-4 w-4 text-kb-blue-dark" />
         </Button>
         <span className="text-[10px] font-medium text-muted-foreground [writing-mode:vertical-rl] py-1 select-none">
           Vorschau
@@ -227,108 +228,111 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, fileName }:
     );
   }
 
+  const handlePrint = () => {
+    // Drucken — öffnet das PDF in neuem Tab mit Druckfunktion des Viewers.
+    if (pdfUrl) window.open(pdfUrl, "_blank");
+  };
+
+  const handleExportPdf = () => {
+    if (!pdfUrl) return;
+    const a = document.createElement("a");
+    a.href = pdfUrl;
+    a.download = `${fileName || "Beleg"}.pdf`;
+    a.click();
+  };
+
   return (
-    <div
-      className="hidden xl:flex w-[40%] shrink-0 sticky top-20 self-start flex-col rounded-lg border bg-card shadow-sm overflow-hidden"
-      style={{ height: "calc(100vh - 6.5rem)" }}
-    >
-      <div className="flex items-center justify-between gap-2 border-b bg-muted/40 px-3 py-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Eye className="h-4 w-4 text-muted-foreground shrink-0" />
-          <span className="text-sm font-semibold truncate">Live-Vorschau</span>
-          {generating && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground shrink-0" />}
+    // KingBill-Layout: Vorschau-Panel + vertikale Aktions-Buttonspalte rechts daneben.
+    <div className="hidden xl:flex w-[40%] shrink-0 sticky top-20 self-start items-start gap-2">
+      <div
+        className="kb-panel flex min-w-0 flex-1 flex-col overflow-hidden"
+        style={{ height: "calc(100vh - 6.5rem)" }}
+      >
+        {/* Kopf: blaue KingBill-Leiste mit Netto/Brutto oben rechts */}
+        <div className="kb-toolbar min-h-0 gap-2 px-2.5 py-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <Eye className="h-4 w-4 shrink-0 text-white/90" />
+            <span className="truncate text-sm font-bold text-white [text-shadow:0_1px_2px_rgba(0,40,90,0.55)]">
+              Beleg-Vorschau
+            </span>
+            {generating && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-white/80" />}
+          </div>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {netto !== undefined && brutto !== undefined && (
+              <span className="whitespace-nowrap text-xs text-white/90">
+                Netto <span className="font-bold text-white">€ {eur(netto)}</span>
+                <span className="mx-1.5 text-white/60">|</span>
+                Brutto <span className="font-bold text-white">€ {eur(brutto)}</span>
+              </span>
+            )}
+            <button
+              type="button"
+              className="kb-btn h-7 min-h-0 px-1.5 py-0"
+              onClick={() => void generate()}
+              disabled={generating}
+              title="Vorschau jetzt neu erzeugen"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 text-kb-blue-dark ${generating ? "animate-spin" : ""}`} />
+            </button>
+            <button
+              type="button"
+              className="kb-btn h-7 min-h-0 px-1.5 py-0"
+              onClick={toggleOpen}
+              title="Vorschau ausblenden"
+            >
+              <PanelRightClose className="h-3.5 w-3.5 text-kb-blue-dark" />
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => void generate()}
-            disabled={generating}
-            title="Vorschau jetzt neu erzeugen"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${generating ? "animate-spin" : ""}`} />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => { if (pdfUrl) window.open(pdfUrl, "_blank"); }}
-            disabled={!pdfUrl}
-            title="Drucken — öffnet das PDF in neuem Tab mit Druckfunktion"
-          >
-            <Printer className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => {
-              if (!pdfUrl) return;
-              const a = document.createElement("a");
-              a.href = pdfUrl;
-              a.download = `${fileName || "Beleg"}.pdf`;
-              a.click();
-            }}
-            disabled={!pdfUrl}
-            title="Als PDF exportieren"
-          >
-            <FileDown className="h-4 w-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={toggleOpen}
-            title="Vorschau ausblenden"
-          >
-            <PanelRightClose className="h-4 w-4" />
-          </Button>
+
+        <div className="flex-1 overflow-hidden bg-gray-200">
+          {error ? (
+            <div className="flex h-full items-center justify-center p-4">
+              <div className="text-center">
+                <p className="mb-2 text-sm text-destructive">{error}</p>
+                <KBButton label="Nochmal versuchen" onClick={() => void generate()} />
+              </div>
+            </div>
+          ) : pdfUrl ? (
+            // Eigene Scrollbar: der PDF-Viewer im iframe scrollt selbst.
+            <iframe
+              src={`${pdfUrl}#toolbar=0&navpanes=0`}
+              className="h-full w-full border-0"
+              title="Beleg Live-Vorschau"
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <div className="text-center text-muted-foreground">
+                <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />
+                <p className="text-sm">Vorschau wird erstellt…</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="border-t border-border px-3 py-1.5 text-[11px] text-muted-foreground">
+          Aktualisiert sich automatisch beim Bearbeiten (ca. 1 Sek. nach der letzten Eingabe).
         </div>
       </div>
 
-      {/* Netto/Brutto-Zeile im KingBill-Stil */}
-      {netto !== undefined && brutto !== undefined && (
-        <div className="flex items-center justify-end gap-3 border-b bg-muted/20 px-3 py-1 text-xs">
-          <span className="text-muted-foreground">
-            Netto <span className="font-semibold text-foreground">€ {eur(netto)}</span>
-          </span>
-          <span className="text-muted-foreground">|</span>
-          <span className="text-muted-foreground">
-            Brutto <span className="font-semibold text-foreground">€ {eur(brutto)}</span>
-          </span>
-        </div>
-      )}
-
-      <div className="flex-1 overflow-hidden bg-gray-200">
-        {error ? (
-          <div className="flex h-full items-center justify-center p-4">
-            <div className="text-center">
-              <p className="mb-2 text-sm text-destructive">{error}</p>
-              <Button variant="outline" size="sm" onClick={() => void generate()}>
-                Nochmal versuchen
-              </Button>
-            </div>
-          </div>
-        ) : pdfUrl ? (
-          // Eigene Scrollbar: der PDF-Viewer im iframe scrollt selbst.
-          <iframe
-            src={`${pdfUrl}#toolbar=0&navpanes=0`}
-            className="h-full w-full border-0"
-            title="Beleg Live-Vorschau"
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center">
-            <div className="text-center text-muted-foreground">
-              <Loader2 className="mx-auto mb-2 h-6 w-6 animate-spin" />
-              <p className="text-sm">Vorschau wird erstellt…</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="border-t px-3 py-1.5 text-[11px] text-muted-foreground">
-        Aktualisiert sich automatisch beim Bearbeiten (ca. 1 Sek. nach der letzten Eingabe).
+      {/* Vertikale Button-Spalte wie im KingBill-Original */}
+      <div className="flex w-36 shrink-0 flex-col gap-2">
+        <KBButton
+          className="w-full"
+          icon={Printer}
+          label="Drucken"
+          onClick={handlePrint}
+          disabled={!pdfUrl}
+          title="Drucken — öffnet das PDF in neuem Tab mit Druckfunktion"
+        />
+        <KBButton
+          className="w-full"
+          icon={FileDown}
+          label="Export als PDF"
+          onClick={handleExportPdf}
+          disabled={!pdfUrl}
+          title="Als PDF exportieren"
+        />
       </div>
     </div>
   );

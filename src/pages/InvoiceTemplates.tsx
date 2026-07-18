@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -103,6 +104,15 @@ export default function InvoiceTemplates() {
   const einheiten = useEinheiten();
 
   useEffect(() => { fetchTemplates(); }, []);
+
+  // Deep-Links von der KingBill-Hauptmaske: ?q=<Suche>, ?neu=1 (Anlege-Dialog)
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    const q = searchParams.get("q");
+    if (q) setSearch(q);
+    if (searchParams.get("neu") === "1") openNew();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const fetchTemplates = async () => {
     const { data, error } = await supabase
@@ -426,7 +436,7 @@ export default function InvoiceTemplates() {
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-8 max-w-[1400px]">
-        <PageHeader title="Materialien & Kalkulation" backPath="/" />
+        <PageHeader title="Materialien & Preise" backPath="/" />
 
         {/* Search & Filter Bar */}
         <div className="flex flex-wrap gap-3 mb-4 items-center">

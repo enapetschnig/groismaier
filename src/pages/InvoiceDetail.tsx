@@ -11,7 +11,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2 } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User } from "lucide-react";
+import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -27,7 +28,6 @@ import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { format, addMonths, parseISO } from "date-fns";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
-import { PageHeader } from "@/components/PageHeader";
 import { CustomerSelect, type CustomerData } from "@/components/CustomerSelect";
 import { CustomerEditDialog } from "@/components/CustomerEditDialog";
 import {
@@ -212,14 +212,15 @@ function nettofristToDropdown(nettofrist: number): string {
 
 /**
  * KingBill-Wizard: Der Beleg-Editor ist in drei nummerierte Schritte
- * gegliedert (1. Allgemein / 2. Kunde / 3. Positionen). Die Schritt-Leiste
- * oben springt per Klick zum jeweiligen Abschnitt; auf Mobile stehen alle
- * Schritte untereinander und die Navigation scrollt.
+ * gegliedert (1. Allgemein / 2. Kunde / 3. Artikel). Die drei großen
+ * Wizard-Tab-Buttons sitzen wie im Original in der blauen Toolbar oben
+ * (aktiver Tab gelb-orange umrandet) und springen per Klick zum Abschnitt;
+ * der aktive Tab folgt der Scroll-Position (Scroll-Spy).
  */
 const WIZARD_STEPS = [
-  { id: "step-allgemein", num: 1, label: "Allgemein" },
-  { id: "step-kunde", num: 2, label: "Kunde" },
-  { id: "step-positionen", num: 3, label: "Artikel" },
+  { id: "step-allgemein", num: 1, label: "Allgemein", icon: Type },
+  { id: "step-kunde", num: 2, label: "Kunde", icon: User },
+  { id: "step-positionen", num: 3, label: "Artikel", icon: Package },
 ] as const;
 
 function StepSectionHeader({ num, label, id }: { num: number; label: string; id: string }) {
@@ -235,90 +236,38 @@ function StepSectionHeader({ num, label, id }: { num: number; label: string; id:
 }
 
 /**
- * Sticky KingBill-Schrittleiste: drei klickbare, nummerierte Schritte, die
- * per Klick zum Abschnitt springen; der aktive Schritt folgt der Scroll-Position.
+ * KingBill-Wizard-Tabs: die drei großen Tab-Buttons („1. Allgemein" /
+ * „2. Kunde" / „3. Artikel") für die blaue Editor-Toolbar. Der aktive Tab
+ * bekommt die gelb-orange Umrandung (.kb-tab-active).
  */
-function StepNav({
+function KBWizardTabs({
   activeStep,
   onStepClick,
-  onSave,
-  onSaveAndClose,
-  saving,
-  showSave,
 }: {
   activeStep: number;
   onStepClick: (step: (typeof WIZARD_STEPS)[number]) => void;
-  onSave?: () => void;
-  onSaveAndClose?: () => void;
-  saving?: boolean;
-  showSave?: boolean;
 }) {
   return (
-    <div className="sticky top-2 z-20 -mx-1 mb-1 rounded-lg border bg-card/95 px-1.5 py-1.5 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-card/80">
-      <div className="flex items-center gap-1">
-        {/* Speichern-Aktionen rechts in der Leiste — wie bei KingBill immer erreichbar */}
-        {showSave && (
-          <div className="order-last flex shrink-0 items-center gap-1 pl-1">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-8 gap-1.5 px-2"
-              onClick={onSave}
-              disabled={saving}
-              title="Speichern (bleibt geöffnet)"
-            >
-              <Save className="h-4 w-4" />
-              <span className="hidden lg:inline">Speichern</span>
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              className="h-8 gap-1.5 px-2"
-              onClick={onSaveAndClose}
-              disabled={saving}
-              title="Speichern & Schließen"
-            >
-              <CheckCircle2 className="h-4 w-4" />
-              <span className="hidden sm:inline">Speichern & Schließen</span>
-            </Button>
-          </div>
-        )}
-        {WIZARD_STEPS.map((s, i) => {
-          const active = activeStep === s.num;
-          const done = activeStep > s.num;
-          return (
-            <div key={s.id} className="flex flex-1 items-center gap-1">
-              <button
-                type="button"
-                onClick={() => onStepClick(s)}
-                className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-sm font-medium transition-colors ${
-                  active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted"
-                }`}
-              >
-                <span
-                  className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                    active
-                      ? "bg-primary-foreground text-primary"
-                      : done
-                      ? "bg-primary/20 text-primary"
-                      : "bg-muted-foreground/20 text-muted-foreground"
-                  }`}
-                >
-                  {s.num}
-                </span>
-                <span className="truncate">{s.label}</span>
-              </button>
-              {i < WIZARD_STEPS.length - 1 && (
-                <div className="hidden h-px w-3 shrink-0 bg-border sm:block" />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
+    <>
+      {WIZARD_STEPS.map((s) => {
+        const Icon = s.icon;
+        const active = activeStep === s.num;
+        return (
+          <button
+            key={s.id}
+            type="button"
+            onClick={() => onStepClick(s)}
+            className={`${active ? "kb-tab-active" : "kb-tab"} min-w-0`}
+            aria-current={active ? "step" : undefined}
+          >
+            <Icon className="h-5 w-5 shrink-0 text-kb-blue-dark" />
+            <span className="truncate">
+              {s.num}. <span className="hidden sm:inline">{s.label}</span>
+            </span>
+          </button>
+        );
+      })}
+    </>
   );
 }
 
@@ -341,6 +290,17 @@ export default function InvoiceDetail() {
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
+
+  // KingBill: Dialog „Änderungen speichern?" beim Verlassen mit
+  // ungespeicherten Änderungen (Zurück-Button der Toolbar / Abbrechen unten).
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const handleBackNav = () => {
+    if (isDirty) {
+      setLeaveDialogOpen(true);
+      return;
+    }
+    navigate("/invoices");
+  };
 
   // KingBill-Schrittleiste: aktiver Schritt folgt der Scroll-Position
   // (leichter Scroll-Spy — der oberste Abschnitt über der Marke gewinnt).
@@ -2657,7 +2617,7 @@ export default function InvoiceDetail() {
     }
   };
 
-  if (loading) return <div className="text-center py-8">Lädt...</div>;
+  if (loading) return <div className="kb-page min-h-screen flex items-center justify-center"><p>Lädt...</p></div>;
 
   const typLabel = getDocConfig(form.typ).label;
   // Lieferschein: Preisdaten bleiben im State/DB vollständig erhalten
@@ -2751,11 +2711,11 @@ export default function InvoiceDetail() {
   // Stornierte Rechnung: Nur Stornobeleg anzeigen
   if (form.status === "storniert" && !isNew && invoiceId) {
     return (
-      <div className="min-h-screen bg-background">
-        <div className="container mx-auto px-4 py-8 max-w-[800px]">
-          <PageHeader title={`Storno: ${form.nummer}`} backPath="/invoices" />
+      <div className="kb-page min-h-screen">
+        <KBToolbar onBack={() => navigate("/invoices")} title={`Storno: ${form.nummer}`} />
+        <div className="container mx-auto px-4 py-6 max-w-[800px]">
           <div className="space-y-6">
-            <Card>
+            <Card className="kb-panel">
               <CardContent className="pt-6 text-center space-y-4">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 mb-2">
                   <Ban className="w-8 h-8 text-red-600" />
@@ -2813,28 +2773,44 @@ export default function InvoiceDetail() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-8 max-w-[1600px]">
-        <PageHeader
-          title={isNew ? `${typArticle} ${typLabel} erstellen` : `${typLabel} ${form.nummer}`}
-          backPath="/invoices"
-        />
+    <div className="kb-page min-h-screen">
+      {/* KingBill-Editor-Toolbar: [Zurück] links, Wizard-Tabs Mitte,
+          Speichern + grüner „Speichern & Schließen" rechts */}
+      <KBToolbar
+        onBack={handleBackNav}
+        title={isNew ? `${typArticle} ${typLabel} erstellen` : `${typLabel} ${form.nummer}`}
+        rightActions={
+          !isLocked ? (
+            <>
+              <KBToolbarButton
+                icon={Save}
+                label="Speichern"
+                className="hidden sm:inline-flex"
+                onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
+                disabled={saving}
+                title="Speichern (bleibt geöffnet)"
+              />
+              <KBToolbarButton
+                icon={CheckCircle2}
+                variant="green"
+                label={saving ? "Speichert..." : "Speichern & Schließen"}
+                onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); navigate("/invoices"); } }}
+                disabled={saving}
+              />
+            </>
+          ) : undefined
+        }
+      >
+        <KBWizardTabs activeStep={activeStep} onStepClick={scrollToStep} />
+      </KBToolbar>
 
+      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
         {/* KingBill-Layout: Editor links, permanente Beleg-Live-Vorschau rechts (xl+) */}
         <div className="xl:flex xl:items-start xl:gap-6">
         <div className="space-y-6 min-w-0 xl:flex-1">
-          {/* Sticky Schrittleiste (KingBill-Wizard) */}
-          <StepNav
-            activeStep={activeStep}
-            onStepClick={scrollToStep}
-            showSave={!isLocked}
-            saving={saving}
-            onSave={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
-            onSaveAndClose={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); navigate("/invoices"); } }}
-          />
           {/* Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente */}
           {!isNew && chainRoot && (chainRoot.id !== invoiceId || chainChildren.length > 0) && (
-            <Card className="border-blue-200 bg-blue-50/40">
+            <Card className="kb-panel border-blue-200 bg-blue-50/40">
               <CardContent className="pt-4 pb-3">
                 <div className="text-xs font-medium text-blue-900 uppercase tracking-wide mb-2">Auftrag</div>
                 <div className="flex flex-wrap items-center gap-2 text-sm">
@@ -2879,7 +2855,7 @@ export default function InvoiceDetail() {
 
           {/* Status & Actions */}
           {!isNew && (
-            <Card>
+            <Card className="kb-panel">
               <CardContent className="pt-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-wrap">
@@ -3253,7 +3229,7 @@ export default function InvoiceDetail() {
 
           {/* Zahlungsverlauf */}
           {!isNew && form.typ === "rechnung" && form.status !== "storniert" && (
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <div className="flex justify-between items-center">
                   <CardTitle className="text-base">Zahlungsverlauf</CardTitle>
@@ -3328,7 +3304,7 @@ export default function InvoiceDetail() {
 
           {/* Mahnungs-Übersicht */}
           {!isNew && form.typ === "rechnung" && mahnungen.length > 0 && (
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Mahnungen</CardTitle>
               </CardHeader>
@@ -3387,7 +3363,7 @@ export default function InvoiceDetail() {
           <StepSectionHeader num={1} label="Allgemein" id="step-allgemein" />
 
           {/* Betreff */}
-          <Card className={isLocked ? "opacity-80" : ""}>
+          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <fieldset disabled={isLocked}>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Betreff</CardTitle>
@@ -3405,7 +3381,7 @@ export default function InvoiceDetail() {
           </Card>
 
           {/* Rechnungsdetails */}
-          <Card className={isLocked ? "opacity-80" : ""}>
+          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <fieldset disabled={isLocked}>
             <CardHeader>
               <CardTitle>Details</CardTitle>
@@ -3624,7 +3600,7 @@ export default function InvoiceDetail() {
               erscheint. Felder bleiben in der DB persistiert auch wenn
               Toggle off — beim Wieder-Aktivieren sind die Werte da. */}
           {getDocConfig(form.typ).isAngebotLike && (
-            <Card className={isLocked ? "opacity-80" : ""}>
+            <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
               <fieldset disabled={isLocked}>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Allgemeine Angaben</CardTitle>
@@ -3807,7 +3783,7 @@ export default function InvoiceDetail() {
               übernehmen"-Button in den Allgemeinen Angaben den Ausführungsort
               ziehen kann. Beim Lieferschein für die Projekt-Spalte der Liste. */}
           {!isLocked && (form.typ === "rechnung" || form.typ === "lieferschein" || getDocConfig(form.typ).isAngebotLike) && (
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Projekt (optional)</CardTitle>
               </CardHeader>
@@ -3898,7 +3874,7 @@ export default function InvoiceDetail() {
               (from_doc) ist parent_invoice_id schon gesetzt und der
               Bezugs-Block versteckt sich. */}
           {isNew && form.typ === "gutschrift" && !form.parent_invoice_id && (
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Bezug auf Rechnung (optional)</CardTitle>
                 <CardDescription>
@@ -3943,7 +3919,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Kundendaten — locked nach Speichern nur bei Rechnungen, bei Angeboten editierbar */}
-          <Card className={isKundeLocked ? "opacity-80" : ""}>
+          <Card className={`kb-panel ${isKundeLocked ? "opacity-80" : ""}`}>
             <fieldset disabled={isKundeLocked}>
             <CardHeader>
               <div className="flex justify-between items-center">
@@ -4247,7 +4223,7 @@ export default function InvoiceDetail() {
           <StepSectionHeader num={3} label="Artikel" id="step-positionen" />
 
           {/* Positionen */}
-          <Card className={isLocked ? "opacity-80" : ""}>
+          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <CardHeader>
               <div className="flex justify-between items-center">
                 <CardTitle>Positionen</CardTitle>
@@ -4563,7 +4539,7 @@ export default function InvoiceDetail() {
           </Card>
 
           {/* Notizen */}
-          <Card className={isLocked ? "opacity-80" : ""}>
+          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <CardHeader>
               <CardTitle>Notizen</CardTitle>
             </CardHeader>
@@ -4580,7 +4556,7 @@ export default function InvoiceDetail() {
 
           {/* Archivierte PDFs */}
           {!isNew && storedPdfs.length > 0 && (
-            <Card>
+            <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Archivierte PDFs</CardTitle>
               </CardHeader>
@@ -4602,7 +4578,7 @@ export default function InvoiceDetail() {
 
           {/* Actions */}
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => navigate("/invoices")}>
+            <Button variant="outline" onClick={handleBackNav}>
               {isLocked ? "Zurück" : "Abbrechen"}
             </Button>
             {canCancel && (
@@ -4863,6 +4839,41 @@ export default function InvoiceDetail() {
             </div>
           </DialogContent>
         </Dialog>
+        {/* KingBill: „Änderungen speichern?" beim Verlassen mit ungespeicherten
+            Änderungen — [Zurück]=abbrechen, [Nein]=verwerfen+navigieren,
+            [Speichern & Schließen]=speichern+navigieren */}
+        <Dialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Änderungen speichern?</DialogTitle>
+              <DialogDescription>
+                Dieser Beleg enthält ungespeicherte Änderungen. Sollen die Änderungen vor dem Verlassen gespeichert werden?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <KBButton label="Zurück" onClick={() => setLeaveDialogOpen(false)} />
+              <KBButton
+                label="Nein"
+                onClick={() => { setLeaveDialogOpen(false); navigate("/invoices"); }}
+              />
+              <KBButton
+                icon={CheckCircle2}
+                variant="green"
+                label={saving ? "Speichert..." : "Speichern & Schließen"}
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await handleSave();
+                  if (ok) {
+                    setLeaveDialogOpen(false);
+                    toast({ title: "Gespeichert" });
+                    navigate("/invoices");
+                  }
+                }}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+
         {/* PDF Preview Dialog — works both before and after saving */}
         <InvoicePdfPreview
           open={previewOpen}
