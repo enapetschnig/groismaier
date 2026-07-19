@@ -17,7 +17,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { FileText, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
+import { FileText, Home, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -322,6 +322,9 @@ export default function KalkulationEditor() {
           </div>
         }
       >
+        <KBButton icon={Home} label="Hauptmenü"
+          onClick={() => { persist({ silent: true }); navigate("/"); }}
+          title="Speichert und wechselt zur Startmaske" />
         <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
           onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
         <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}

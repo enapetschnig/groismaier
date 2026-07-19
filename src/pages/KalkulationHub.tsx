@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Calculator, Plus, FileText, Trash2, User, Clock, MoreVertical,
   Copy, LayoutTemplate, Pencil, FilePlus2,
 } from "lucide-react";
-import { PageHeader } from "@/components/PageHeader";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +22,6 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CustomerSelect } from "@/components/CustomerSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -104,6 +103,13 @@ export default function KalkulationHub() {
   }, []);
 
   useEffect(() => { load(); }, [load]);
+
+  // Deep-Link von der KingBill-Hauptmaske: ?neu=1 öffnet den Anlege-Dialog
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("neu") === "1") setDialogOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const kalkulationen = useMemo(() => rows.filter((r) => !r.ist_vorlage), [rows]);
   const vorlagen = useMemo(() => rows.filter((r) => r.ist_vorlage), [rows]);
@@ -324,31 +330,40 @@ export default function KalkulationHub() {
   const list = tab === "vorlagen" ? vorlagen : kalkulationen;
 
   return (
-    <div className="min-h-screen bg-background">
-      <PageHeader title="Auftragskalkulation" />
+    <div className="min-h-screen kb-page">
+      {/* KingBill-Toolbar: Zurück führt IMMER zur Startmaske (kein navigate(-1)-
+          Ping-Pong zwischen Hub und Editor) */}
+      <KBToolbar
+        onBack={() => navigate("/")}
+        title="Kalkulation"
+        rightActions={
+          <KBToolbarButton
+            icon={Plus}
+            label="Neue Kalkulation"
+            variant="green"
+            onClick={() => setDialogOpen(true)}
+          />
+        }
+      />
 
       <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-6 max-w-5xl">
-        <div className="flex items-center justify-between gap-3 mb-6">
-          <p className="text-muted-foreground flex items-center gap-2">
-            <Calculator className="h-5 w-5 text-primary shrink-0" />
-            Kalkulationen anlegen, berechnen und als Angebot übernehmen.
-          </p>
-          <Button onClick={() => setDialogOpen(true)} className="shrink-0">
-            <Plus className="h-4 w-4 sm:mr-2" />
-            <span className="hidden sm:inline">Neue Kalkulation</span>
-          </Button>
+        {/* KingBill-Tabs: Kalkulationen / Vorlagen mit gelber Aktiv-Umrandung */}
+        <div className="mb-6 flex items-center gap-1.5">
+          <button
+            type="button"
+            className={tab === "kalkulationen" ? "kb-tab kb-tab-active" : "kb-tab"}
+            onClick={() => setTab("kalkulationen")}
+          >
+            Kalkulationen{kalkulationen.length > 0 ? ` (${kalkulationen.length})` : ""}
+          </button>
+          <button
+            type="button"
+            className={tab === "vorlagen" ? "kb-tab kb-tab-active" : "kb-tab"}
+            onClick={() => setTab("vorlagen")}
+          >
+            Vorlagen{vorlagen.length > 0 ? ` (${vorlagen.length})` : ""}
+          </button>
         </div>
-
-        <Tabs value={tab} onValueChange={(v) => setTab(v as "kalkulationen" | "vorlagen")} className="mb-6">
-          <TabsList>
-            <TabsTrigger value="kalkulationen">
-              Kalkulationen {kalkulationen.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">({kalkulationen.length})</span>}
-            </TabsTrigger>
-            <TabsTrigger value="vorlagen">
-              Vorlagen {vorlagen.length > 0 && <span className="ml-1.5 text-xs text-muted-foreground">({vorlagen.length})</span>}
-            </TabsTrigger>
-          </TabsList>
-        </Tabs>
 
         {loading ? (
           <p className="text-muted-foreground py-12 text-center">Lädt …</p>

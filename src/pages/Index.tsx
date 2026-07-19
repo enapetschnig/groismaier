@@ -332,6 +332,14 @@ export default function Index() {
                 buttonLabel="Rechnung suchen"
                 onSearch={(q) => navigate(`/invoices?tab=rechnung${q ? `&q=${encodeURIComponent(q)}` : ""}`)}
               />
+              <div className="my-1 h-px bg-white/70" />
+              <KBButton
+                className="w-full"
+                icon={FileText}
+                label="Dokumentenliste"
+                title="Alle Belege: Angebote, Aufträge, Lieferscheine, Rechnungen"
+                onClick={() => navigate("/invoices")}
+              />
             </KBBereich>
           )}
 
@@ -414,14 +422,8 @@ export default function Index() {
                   onClick={() => navigate("/nachkalkulation")}
                 />
               )}
-              {canView("plantafel") && (
-                <KBButton
-                  className="w-full"
-                  icon={CalendarRange}
-                  label="Auslastung"
-                  onClick={() => navigate("/schedule?view=year")}
-                />
-              )}
+              {/* „Auslastung" auf Kundenwunsch vorerst entfernt (Jahresansicht
+                  bleibt über Plantafel → Jahr erreichbar) */}
               {canView("stundenauswertung") && (
                 <KBButton
                   className="w-full"
