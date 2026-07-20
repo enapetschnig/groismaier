@@ -267,11 +267,23 @@ export function applyAiPrices(
 
   // Auf die Zielsumme nachjustieren: die Differenz proportional zu den
   // KI-Vorschlagswerten verteilen, damit die KI-Gewichtung erhalten bleibt.
+  //
+  // WICHTIG: Nur auf Positionen, die die KI tatsächlich verändert hat. Sonst
+  // würde die Restdifferenz Positionen anfassen, die die KI auf Wunsch des
+  // Nutzers bewusst unangetastet ließ („Montage nicht verändern").
   const summeKi = targets.reduce((s, t) => s + Math.round(t * 100), 0);
   const deltaCents = Math.round(zielSumme * 100) - summeKi;
   if (deltaCents !== 0) {
-    const anteile = distributeCents(targets, deltaCents);
+    const veraendert = lines.map((l, i) => {
+      const alt = lineTotal({ menge: l.menge, einzelpreis: l.einzelpreis, rabatt_prozent: l.rabatt_prozent });
+      return Math.round(alt * 100) !== Math.round(targets[i] * 100);
+    });
+    // Fallback: hat die KI nichts verändert, darf jede Position tragen.
+    const tragend = veraendert.some(Boolean) ? veraendert : lines.map(() => true);
+    const gewichte = targets.map((t, i) => (tragend[i] ? t : 0));
+    const anteile = distributeCents(gewichte, deltaCents);
     anteile.forEach((c, i) => {
+      if (!tragend[i]) return;
       targets[i] = r2(Math.max(0, Math.round(targets[i] * 100) + c) / 100);
     });
   }
