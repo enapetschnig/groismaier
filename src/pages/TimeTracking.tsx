@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
@@ -49,11 +49,36 @@ interface KfzEntry {
   kmGefahren: string;
   kmStart: string;
   kmEnde: string;
+  stunden: string;          // Fahrzeugstunden (leer = Stunden des Zeitblocks)
+  stundenTouched: boolean;  // true, sobald manuell verändert
 }
+
+/** Kostenstelle aus admin_config_options (kategorie='kostenstelle'). */
+interface KostenstelleOption {
+  wert: string;
+  label: string;
+}
+
+/** Fallback, falls admin_config_options nicht geladen werden kann. */
+const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
+  { wert: "baustelle", label: "Baustelle" },
+  { wert: "werkstatt", label: "Werkstatt" },
+  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerplatz", label: "Lagerplatz" },
+];
+
+const KOSTENSTELLEN_ICONS: Record<string, string> = {
+  baustelle: "🏗️",
+  werkstatt: "🏢",
+  lagerwerkstatt: "🧰",
+  lagerplatz: "📦",
+};
 
 interface TimeBlock {
   id: string;
   locationType: "baustelle" | "werkstatt" | "regie";
+  /** Kostenstelle der Buchung — Pflichtfeld, wird in time_entries.kostenstelle gespeichert. */
+  kostenstelle: string;
   projectId: string;
   taetigkeit: string;
   startTime: string;
@@ -80,6 +105,7 @@ type Disturbance = {
 const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => ({
   id: crypto.randomUUID(),
   locationType: "baustelle",
+  kostenstelle: "baustelle",
   projectId: "",
   taetigkeit: "",
   startTime,
@@ -96,13 +122,15 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   kfzEntries: [],
 });
 
-const createEmptyKfzEntry = (): KfzEntry => ({
+const createEmptyKfzEntry = (vehicleId = ""): KfzEntry => ({
   key: crypto.randomUUID(),
-  vehicleId: "",
+  vehicleId,
   modus: "gefahren",
   kmGefahren: "",
   kmStart: "",
   kmEnde: "",
+  stunden: "",
+  stundenTouched: false,
 });
 
 const TimeTracking = () => {
@@ -110,6 +138,11 @@ const TimeTracking = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [vehicles, setVehicles] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null }[]>([]);
   const [taetigkeitOptions, setTaetigkeitOptions] = useState<string[]>([]);
+  const [kostenstellen, setKostenstellen] = useState<KostenstelleOption[]>(KOSTENSTELLEN_FALLBACK);
+  // Standard-Fahrzeug des eingeloggten Mitarbeiters (employees.standard_vehicle_id).
+  // Zusätzlich als Ref, damit Block-Erzeugung ohne Stale-Closure funktioniert.
+  const [standardVehicleId, setStandardVehicleId] = useState<string>("");
+  const standardVehicleIdRef = useRef<string>("");
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -141,6 +174,17 @@ const TimeTracking = () => {
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   const entryMode = "zeitraum" as const;
+
+  // Neuer Zeitblock inkl. Vorschlag des Standard-Fahrzeugs (entfernbar).
+  const buildBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => {
+    const block = createDefaultBlock(startTime, endTime, pauseStart, pauseEnd);
+    const vid = standardVehicleIdRef.current;
+    if (vid) {
+      block.kfzOpen = true;
+      block.kfzEntries = [createEmptyKfzEntry(vid)];
+    }
+    return block;
+  };
 
   // Fetch existing entries for selected date
   const fetchExistingDayEntries = async (date: string) => {
@@ -186,21 +230,21 @@ const TimeTracking = () => {
         const nextStartMinutes = lastEndHours * 60 + lastEndMinutes + 30;
         const suggestedStart = `${String(Math.floor(nextStartMinutes / 60)).padStart(2, '0')}:${String(nextStartMinutes % 60).padStart(2, '0')}`;
         
-        setTimeBlocks([createDefaultBlock(suggestedStart)]);
+        setTimeBlocks([buildBlock(suggestedStart)]);
       } else if (!entries.some(e => ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit))) {
         // Auto-fill default work times for the selected date
         const dateObj = new Date(date);
         const defaults = getDefaultWorkTimes(dateObj);
         if (defaults) {
-          setTimeBlocks([createDefaultBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd)]);
+          setTimeBlocks([buildBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd)]);
         } else {
-          setTimeBlocks([createDefaultBlock()]);
+          setTimeBlocks([buildBlock()]);
         }
       }
     } else {
       setExistingDayEntries([]);
       // Reset to empty default for new day
-      setTimeBlocks([createDefaultBlock()]);
+      setTimeBlocks([buildBlock()]);
     }
     setLoadingDayEntries(false);
   };
@@ -214,9 +258,9 @@ const TimeTracking = () => {
     fetchProjects();
     fetchDisturbances();
 
-    // Fahrzeuge + Tätigkeitsliste einmalig laden
+    // Fahrzeuge + Tätigkeitsliste + Kostenstellen einmalig laden
     (async () => {
-      const [{ data: vehData }, { data: taetData }] = await Promise.all([
+      const [{ data: vehData }, { data: taetData }, { data: ksData }] = await Promise.all([
         (supabase.from("vehicles" as never) as any)
           .select("id, bezeichnung, kennzeichen")
           .eq("aktiv", true)
@@ -226,9 +270,32 @@ const TimeTracking = () => {
           .eq("kategorie", "taetigkeit")
           .eq("is_active", true)
           .order("sort_order"),
+        (supabase.from("admin_config_options" as never) as any)
+          .select("wert, label, sort_order")
+          .eq("kategorie", "kostenstelle")
+          .eq("is_active", true)
+          .order("sort_order"),
       ]);
       if (vehData) setVehicles(vehData as any);
       if (taetData) setTaetigkeitOptions(((taetData as any[]) || []).map(o => o.label));
+      // Fallback-Liste behalten, wenn der Fetch nichts liefert
+      const ksList = ((ksData as any[]) || []).map(o => ({ wert: o.wert as string, label: o.label as string }));
+      if (ksList.length > 0) setKostenstellen(ksList);
+    })();
+
+    // Standard-Fahrzeug des eingeloggten Mitarbeiters laden
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: emp } = await (supabase.from("employees" as never) as any)
+        .select("standard_vehicle_id")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      const vid = (emp as any)?.standard_vehicle_id as string | null | undefined;
+      if (vid) {
+        standardVehicleIdRef.current = vid;
+        setStandardVehicleId(vid);
+      }
     })();
 
     // Check if user is admin
@@ -251,6 +318,19 @@ const TimeTracking = () => {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  // Das Standard-Fahrzeug kommt asynchron — Blöcke, die vorher erzeugt
+  // wurden, bekommen den Vorschlag einmalig nachgereicht.
+  const standardVehicleAppliedRef = useRef(false);
+  useEffect(() => {
+    if (!standardVehicleId || standardVehicleAppliedRef.current) return;
+    standardVehicleAppliedRef.current = true;
+    setTimeBlocks(prev => prev.map(b =>
+      b.kfzEntries.length === 0
+        ? { ...b, kfzOpen: true, kfzEntries: [createEmptyKfzEntry(standardVehicleId)] }
+        : b
+    ));
+  }, [standardVehicleId]);
 
   const handleCreateNewProject = async () => {
     if (creatingProject) return;
@@ -368,7 +448,7 @@ const TimeTracking = () => {
       suggestedStart = `${String(Math.floor(nextMinutes / 60)).padStart(2, '0')}:${String(nextMinutes % 60).padStart(2, '0')}`;
     }
     
-    setTimeBlocks(prev => [...prev, createDefaultBlock(suggestedStart)]);
+    setTimeBlocks(prev => [...prev, buildBlock(suggestedStart)]);
   };
 
   // Remove a time block
@@ -631,8 +711,16 @@ const TimeTracking = () => {
       // Kein Tageslimit mehr — Mitarbeiter dürfen beliebig viel buchen.
       // (AT-AZG-Warnung bei >12h wurde entfernt auf ausdrücklichen Wunsch.)
 
-      // Projekt ist Pflicht bei Baustelle
-      if (block.locationType === "baustelle" && !block.projectId) {
+      // Kostenstelle ist Pflicht
+      if (!block.kostenstelle) {
+        toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Bitte eine Kostenstelle wählen` });
+        setSaving(false);
+        return;
+      }
+
+      // Projekt ist nur bei Kostenstelle "Baustelle" Pflicht — bei allen
+      // anderen Kostenstellen (Werkstatt, Lager, …) ist es optional.
+      if (block.kostenstelle === "baustelle" && !block.projectId) {
         toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Bitte ein Projekt auswählen` });
         setSaving(false);
         return;
@@ -732,10 +820,16 @@ const TimeTracking = () => {
 
       // Prepare main entry for current user (Legacy-Spalten kfz_id/km_start/km_ende
       // bleiben NULL; detaillierte KFZ-Daten kommen in time_entry_vehicles)
+      // Projekt darf bei jeder Kostenstelle mitgegeben werden (bei
+      // "baustelle" Pflicht, sonst optional → NULL erlaubt). Regie bleibt
+      // wie bisher ohne Projekt.
+      const projectIdVal = block.locationType === "regie" ? null : (block.projectId || null);
+
       const mainEntry = {
         user_id: user.id,
         datum: selectedDate,
-        project_id: block.locationType === "werkstatt" || block.locationType === "regie" ? null : (block.projectId || null),
+        project_id: projectIdVal,
+        kostenstelle: block.kostenstelle,
         disturbance_id: null,
         taetigkeit: block.taetigkeit,
         stunden: blockHours,
@@ -757,7 +851,8 @@ const TimeTracking = () => {
       const teamEntries = block.selectedEmployees.map(workerId => ({
         user_id: workerId,
         datum: selectedDate,
-        project_id: block.locationType === "werkstatt" || block.locationType === "regie" ? null : (block.projectId || null),
+        project_id: projectIdVal,
+        kostenstelle: block.kostenstelle,
         taetigkeit: block.taetigkeit,
         stunden: blockHours,
         start_time: block.startTime,
@@ -789,9 +884,22 @@ const TimeTracking = () => {
         continue;
       }
 
+      const mainId = (result as any)?.mainEntryId as string | undefined;
+      const teamIds = ((result as any)?.teamEntryIds as string[] | undefined) || [];
+
+      // Kostenstelle nachziehen: die Edge Function kennt das Feld (noch)
+      // nicht, daher nach dem Insert per Update setzen. RLS begrenzt das
+      // Update auf Einträge, die der User bearbeiten darf.
+      const idsToPatch = [mainId, ...teamIds].filter(Boolean) as string[];
+      if (idsToPatch.length > 0 && block.kostenstelle) {
+        const { error: ksErr } = await (supabase.from("time_entries" as never) as any)
+          .update({ kostenstelle: block.kostenstelle })
+          .in("id", idsToPatch);
+        if (ksErr) console.error("Kostenstelle konnte nicht gesetzt werden:", ksErr);
+      }
+
       // KFZ-Einträge in time_entry_vehicles schreiben (nur für den
       // Haupt-User-Entry; Team-Member-Entries bekommen keine KFZ-Daten).
-      const mainId = (result as any)?.mainEntryId as string | undefined;
       if (mainId && block.kfzOpen && block.kfzEntries.length > 0) {
         const kfzRows = block.kfzEntries
           .filter(k => k.vehicleId)
@@ -799,6 +907,10 @@ const TimeTracking = () => {
             const gef = k.kmGefahren ? parseInt(k.kmGefahren, 10) : null;
             const s = k.kmStart ? parseInt(k.kmStart, 10) : null;
             const e = k.kmEnde ? parseInt(k.kmEnde, 10) : null;
+            // Fahrzeugstunden: manuell gesetzter Wert, sonst die Stunden
+            // des Zeitblocks (Vorbelegung).
+            const manuell = k.stundenTouched ? parseFloat(k.stunden.replace(",", ".")) : NaN;
+            const fahrzeugStunden = isFinite(manuell) && manuell >= 0 ? manuell : blockHours;
             return {
               time_entry_id: mainId,
               vehicle_id: k.vehicleId,
@@ -806,6 +918,7 @@ const TimeTracking = () => {
               km_gefahren: k.modus === "gefahren" ? gef : (s != null && e != null ? e - s : null),
               km_start: k.modus === "start_ende" ? s : null,
               km_ende: k.modus === "start_ende" ? e : null,
+              stunden: fahrzeugStunden > 0 ? Number(fahrzeugStunden.toFixed(2)) : null,
             };
           });
         if (kfzRows.length > 0) {
@@ -978,46 +1091,64 @@ const TimeTracking = () => {
                           )}
                         </div>
 
-                        {/* Location selection */}
+                        {/* Kostenstelle — Pflichtfeld, große Touch-Chips */}
                         <div className="space-y-2">
-                          <Label>Arbeitsort</Label>
-                          <RadioGroup
-                            value={block.locationType}
-                            onValueChange={(value: 'baustelle' | 'werkstatt' | 'regie') => updateBlock(block.id, { locationType: value, taetigkeit: value === 'regie' ? 'Regiearbeit' : block.taetigkeit })}
-                            className="grid grid-cols-2 gap-3"
-                          >
-                            <div>
-                              <RadioGroupItem value="baustelle" id={`baustelle-${block.id}`} className="peer sr-only" />
-                              <Label htmlFor={`baustelle-${block.id}`} className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
-                                🏗️ Baustelle
-                              </Label>
-                            </div>
-                            <div>
-                              <RadioGroupItem value="werkstatt" id={`werkstatt-${block.id}`} className="peer sr-only" />
-                              <Label htmlFor={`werkstatt-${block.id}`} className="flex h-12 cursor-pointer items-center justify-center rounded-md border-2 border-muted bg-popover p-4 hover:bg-accent peer-data-[state=checked]:border-primary text-sm">
-                                🏢 Firma
-                              </Label>
-                            </div>
-                          </RadioGroup>
+                          <Label>Kostenstelle *</Label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {kostenstellen.map((ks) => {
+                              const active = block.kostenstelle === ks.wert;
+                              return (
+                                <button
+                                  key={ks.wert}
+                                  type="button"
+                                  aria-pressed={active}
+                                  onClick={() => updateBlock(block.id, {
+                                    kostenstelle: ks.wert,
+                                    // location_type bleibt die grobe Einordnung:
+                                    // Baustelle vs. Firma (alles andere).
+                                    locationType: ks.wert === "baustelle" ? "baustelle" : "werkstatt",
+                                  })}
+                                  className={`flex min-h-[56px] items-center justify-center gap-2 rounded-md border-2 px-3 py-2 text-sm font-medium transition-colors ${
+                                    active
+                                      ? "border-primary bg-primary/10 text-primary"
+                                      : "border-muted bg-popover hover:bg-accent"
+                                  }`}
+                                >
+                                  <span aria-hidden>{KOSTENSTELLEN_ICONS[ks.wert] || "📍"}</span>
+                                  <span className="text-center leading-tight">{ks.label}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
 
-                        {/* Project selection - only for Baustelle */}
-                        {block.locationType === "baustelle" && (
+                        {/* Projekt — Pflicht bei Kostenstelle "Baustelle", sonst optional */}
+                        {block.locationType !== "regie" && (
                           <div className="space-y-2">
-                            <Label>Projekt *</Label>
+                            <Label>
+                              Projekt{" "}
+                              {block.kostenstelle === "baustelle" ? (
+                                <span className="text-primary">*</span>
+                              ) : (
+                                <span className="text-muted-foreground font-normal">(optional)</span>
+                              )}
+                            </Label>
                             <Select
-                              value={block.projectId}
+                              value={block.projectId || (block.kostenstelle === "baustelle" ? "" : "none")}
                               onValueChange={(value) => {
                                 if (value === "new") {
                                   setPendingBlockIdForNewProject(block.id);
                                   setShowNewProjectDialog(true);
                                 } else {
-                                  updateBlock(block.id, { projectId: value });
+                                  updateBlock(block.id, { projectId: value === "none" ? "" : value });
                                 }
                               }}
                             >
                               <SelectTrigger><SelectValue placeholder="Projekt auswählen" /></SelectTrigger>
                               <SelectContent>
+                                {block.kostenstelle !== "baustelle" && (
+                                  <SelectItem value="none">Kein Projekt</SelectItem>
+                                )}
                                 {projects.map((p) => (
                                   <SelectItem key={p.id} value={p.id}>{p.name} ({p.plz})</SelectItem>
                                 ))}
@@ -1107,7 +1238,9 @@ const TimeTracking = () => {
                                 type="button"
                                 onClick={() => updateBlock(block.id, {
                                   kfzOpen: true,
-                                  kfzEntries: block.kfzEntries.length > 0 ? block.kfzEntries : [createEmptyKfzEntry()],
+                                  kfzEntries: block.kfzEntries.length > 0
+                                    ? block.kfzEntries
+                                    : [createEmptyKfzEntry(standardVehicleId)],
                                 } as any)}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
                               >
@@ -1149,18 +1282,20 @@ const TimeTracking = () => {
                                           </SelectContent>
                                         </Select>
                                       </div>
-                                      {block.kfzEntries.length > 1 && (
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            const next = block.kfzEntries.filter((_, i) => i !== kfzIdx);
-                                            updateBlock(block.id, { kfzEntries: next } as any);
-                                          }}
-                                          className="mt-5 text-xs text-destructive hover:underline"
-                                        >
-                                          ×
-                                        </button>
-                                      )}
+                                      <button
+                                        type="button"
+                                        title="Fahrzeugzeile entfernen"
+                                        onClick={() => {
+                                          const next = block.kfzEntries.filter((_, i) => i !== kfzIdx);
+                                          updateBlock(block.id, {
+                                            kfzEntries: next,
+                                            kfzOpen: next.length > 0,
+                                          } as any);
+                                        }}
+                                        className="mt-5 h-9 w-9 shrink-0 rounded border text-destructive hover:bg-destructive/10"
+                                      >
+                                        ×
+                                      </button>
                                     </div>
                                     {/* Modus-Toggle */}
                                     <div className="flex gap-1 text-xs">
@@ -1243,6 +1378,40 @@ const TimeTracking = () => {
                                         )}
                                       </>
                                     )}
+                                    {/* Fahrzeugstunden — vorbelegt mit den Stunden des Zeitblocks */}
+                                    <div>
+                                      <Label className="text-xs">Fahrzeugstunden</Label>
+                                      <div className="flex items-center gap-2">
+                                        <Input
+                                          type="number"
+                                          step="0.25"
+                                          min="0"
+                                          max="24"
+                                          inputMode="decimal"
+                                          value={kfz.stundenTouched ? kfz.stunden : calculateBlockHours(block).toFixed(2)}
+                                          onChange={(e) => {
+                                            const next = [...block.kfzEntries];
+                                            next[kfzIdx] = { ...kfz, stunden: e.target.value, stundenTouched: true };
+                                            updateBlock(block.id, { kfzEntries: next } as any);
+                                          }}
+                                          disabled={!kfz.vehicleId}
+                                        />
+                                        <span className="text-xs text-muted-foreground">h</span>
+                                        {kfz.stundenTouched && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              const next = [...block.kfzEntries];
+                                              next[kfzIdx] = { ...kfz, stunden: "", stundenTouched: false };
+                                              updateBlock(block.id, { kfzEntries: next } as any);
+                                            }}
+                                            className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
+                                          >
+                                            Zurücksetzen
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
                                 ))}
                                 <button

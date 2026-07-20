@@ -40,7 +40,19 @@ interface Employee {
   kleidungsgroesse: string | null;
   schuhgroesse: string | null;
   notizen: string | null;
+  /** Standard-Fahrzeug (Migration 20260719100000, nicht in types.ts) */
+  standard_vehicle_id?: string | null;
 }
+
+/** Aktive Fahrzeuge für die Standard-Fahrzeug-Auswahl. */
+interface VehicleOption {
+  id: string;
+  bezeichnung: string;
+  kennzeichen: string | null;
+}
+
+/** Sentinel für „kein Standard-Fahrzeug" — Radix-Select erlaubt kein value="". */
+const NO_VEHICLE = "__none__";
 
 export default function Employees() {
   const navigate = useNavigate();
@@ -51,11 +63,23 @@ export default function Employees() {
   const [formData, setFormData] = useState<Partial<Employee>>({});
   const [newEmployee, setNewEmployee] = useState({ vorname: "", nachname: "", email: "" });
   const [showSizesDialog, setShowSizesDialog] = useState(false);
+  const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
 
   useEffect(() => {
     checkAdminAccess();
     fetchEmployees();
+    fetchVehicles();
   }, []);
+
+  // Aktive Fahrzeuge für das Feld „Standard-Fahrzeug".
+  // vehicles ist nicht in types.ts erfasst → untypisierter Client.
+  const fetchVehicles = async () => {
+    const { data } = await (supabase.from("vehicles" as never) as any)
+      .select("id, bezeichnung, kennzeichen")
+      .eq("aktiv", true)
+      .order("bezeichnung");
+    setVehicles(((data as VehicleOption[]) || []));
+  };
 
   const checkAdminAccess = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -122,9 +146,11 @@ export default function Employees() {
     if (!selectedEmployee) return;
 
     try {
+      // `as any`: formData enthält standard_vehicle_id, das (noch) nicht in
+      // src/integrations/supabase/types.ts steht (Migration 20260719100000).
       const { error } = await supabase
         .from("employees")
-        .update(formData)
+        .update(formData as any)
         .eq("id", selectedEmployee.id);
 
       if (error) throw error;
@@ -386,6 +412,27 @@ export default function Employees() {
                             setFormData({ ...formData, stundenlohn: parseFloat(e.target.value) })
                           }
                         />
+                      </div>
+                      <div>
+                        <Label>Standard-Fahrzeug</Label>
+                        <Select
+                          value={formData.standard_vehicle_id || NO_VEHICLE}
+                          onValueChange={(v) =>
+                            setFormData({ ...formData, standard_vehicle_id: v === NO_VEHICLE ? null : v })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Wählen..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_VEHICLE}>—</SelectItem>
+                            {vehicles.map((v) => (
+                              <SelectItem key={v.id} value={v.id}>
+                                {v.bezeichnung}{v.kennzeichen ? ` (${v.kennzeichen})` : ""}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     </div>
                   </div>

@@ -16,8 +16,18 @@ import { useToast } from "@/hooks/use-toast";
 import { num, round4 } from "@/lib/kalkulationEngine";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable } from "./useKalkKatalog";
 
-const BETRIEBSDATEN_FELDER: { key: string; label: string }[] = [
+const BETRIEBSDATEN_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
+  {
+    key: "kalk_selbstkosten_lohn",
+    label: "Selbstkosten Lohn (€/h)",
+    hinweis: "Echte Lohnkosten inkl. Nebenkosten — Basis für den Deckungsbeitrag, nicht der verrechnete Mittellohn.",
+  },
+  {
+    key: "kalk_warn_marge_prozent",
+    label: "Warnschwelle Marge (%)",
+    hinweis: "Liegt die Marge einer Kalkulation darunter, warnt der Editor.",
+  },
   { key: "kalk_stunden_pro_tag", label: "Tägliche Arbeitszeit (h)" },
   { key: "kalk_vk_faktor", label: "Faktor für VK-Zuschlag (Produkte)" },
   { key: "kalk_kran_stundensatz", label: "Krankosten pro Stunde (€)" },
@@ -163,13 +173,14 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
         <div className="border-b px-4 py-2.5 text-sm font-bold">Allgemeine Betriebsdaten (globale Standardwerte)</div>
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
           {BETRIEBSDATEN_FELDER.map((f) => (
-            <label key={f.key} className="block text-xs">
+            <label key={f.key} className="block text-xs" title={f.hinweis}>
               <span className="mb-0.5 block text-muted-foreground">{f.label}</span>
               <BlurInput
                 numeric
                 value={werte[f.key] ?? ""}
                 onCommit={(v) => setWerte((p) => ({ ...p, [f.key]: v }))}
               />
+              {f.hinweis && <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{f.hinweis}</span>}
             </label>
           ))}
         </div>

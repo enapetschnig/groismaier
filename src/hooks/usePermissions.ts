@@ -5,7 +5,7 @@ export const FEATURES = [
   'zeiterfassung','projekte','meine_stunden','regieberichte','rechnungen',
   'plantafel',
   'kunden','materialien','admin','stundenauswertung','eingangsrechnungen',
-  'nachkalkulation'
+  'nachkalkulation','fahrzeuge'
 ] as const;
 export type FeatureKey = typeof FEATURES[number];
 
@@ -22,6 +22,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   stundenauswertung: "Stundenauswertung",
   eingangsrechnungen: "Eingangsrechnungen",
   nachkalkulation: "Nachkalkulation",
+  fahrzeuge: "KFZ-Manager",
 };
 
 // Map routes to features for ProtectedRoute

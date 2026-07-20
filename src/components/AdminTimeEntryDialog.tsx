@@ -95,7 +95,8 @@ export function AdminTimeEntryDialog({
       try {
         const [projRes, vehRes] = await Promise.all([
           supabase.from("projects").select("id, name, adresse").not("status", "eq", "Abgeschlossen").order("name"),
-          (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen").eq("is_active", true).order("bezeichnung"),
+          // Spalte heißt `aktiv` (nicht is_active) — sonst bleibt die Auswahl leer.
+          (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen").eq("aktiv", true).order("bezeichnung"),
         ]);
         setProjects(((projRes.data as any[]) || []).map(p => ({ id: p.id, name: p.name, adresse: p.adresse })));
         setVehicles(((vehRes.data as any[]) || []).map((v: any) => ({ id: v.id, bezeichnung: v.bezeichnung, kennzeichen: v.kennzeichen })));

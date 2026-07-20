@@ -17,7 +17,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { FileText, Home, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
+import { AlertTriangle, FileText, Home, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -29,7 +29,7 @@ import {
   KalkulationState, KalkModule, MaterialRow, PaintModule,
   normalizeKalkulationState, newModule, newPaintModule, newMaterialRow, nextId,
   resolveBetriebsdaten, resolveLackSaetze, calcProjekt, calcPaintProjekt,
-  buildAngebotItems, globalFaktor,
+  buildAngebotItems, globalFaktor, margeUnterSchwelle,
   LackPreisResolver, AufpreisResolver,
   AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
   fmt, fmtEuro, round2, num,
@@ -307,6 +307,7 @@ export default function KalkulationEditor() {
   }
 
   const faktor = globalFaktor(state.surchargePercent, state.discontPercent);
+  const margeWarnung = margeUnterSchwelle(projekt.verdienst, projekt.warnMargeProzent);
 
   return (
     <div className="kb-page min-h-screen pb-10">
@@ -373,7 +374,36 @@ export default function KalkulationEditor() {
             <div className="text-xs text-muted-foreground">Projektsumme (netto)</div>
             <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.totalGesamt)}</div>
           </div>
+          <div className="pb-1 text-right">
+            <div className="text-xs text-muted-foreground">Deckungsbeitrag</div>
+            <div className={`text-lg font-bold tabular-nums ${margeWarnung ? "text-destructive" : "text-kb-green"}`}>
+              {fmtEuro(projekt.verdienst.deckungsbeitrag)}
+              {projekt.verdienst.erloes > 0 && (
+                <span className="ml-1.5 text-xs font-semibold">({fmt(projekt.verdienst.margeProzent)} %)</span>
+              )}
+            </div>
+          </div>
         </div>
+
+        {/* Margen-Warnung — der Chef soll sie nicht übersehen können. */}
+        {margeWarnung && (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded border-2 border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+            <div>
+              <div className="font-bold">
+                ⚠ Marge {fmt(projekt.verdienst.margeProzent)} % liegt unter der Warnschwelle von {fmt(projekt.warnMargeProzent)} %
+              </div>
+              <div className="mt-0.5 text-xs">
+                Deckungsbeitrag {fmtEuro(projekt.verdienst.deckungsbeitrag)} bei {fmtEuro(projekt.verdienst.erloes)} Erlös
+                {projekt.verdienst.unsicher && " (enthält geschätzte Material-EK)"}
+                {" — "}Details im Panel „Verdienst (Deckungsbeitrag)“.
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Tabs */}
         <div className="flex flex-wrap gap-2">

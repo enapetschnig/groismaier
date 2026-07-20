@@ -119,6 +119,14 @@ export interface Betriebsdaten {
   kranSatz: number;          // € / h
   riegelAbstand: number;     // Lattungsabstand Riegelkonstruktion in cm
   riegelBrettDicke: number;  // Dicke der Riegelbretter in cm
+  /**
+   * Deckungsbeitrags-Rechnung: echte Lohn-SELBSTKOSTEN je Stunde inkl.
+   * Lohnnebenkosten. NICHT der verrechnete Mittellohn (der ist Erlös-Seite) —
+   * die Differenz Mittellohn − Selbstkosten ist genau der Lohn-Verdienst.
+   */
+  selbstkostenLohn: number;  // €/h
+  /** Warnschwelle: liegt die Marge darunter, warnt der Editor. */
+  warnMargeProzent: number;  // %
 }
 
 /** Excel-Letztstand (gewinnt vor den HTML-Defaults 47/150). */
@@ -134,6 +142,8 @@ export const DEFAULT_BETRIEBSDATEN: Betriebsdaten = {
   kranSatz: 180,
   riegelAbstand: 62.5,
   riegelBrettDicke: 6,
+  selbstkostenLohn: 38,
+  warnMargeProzent: 35,
 };
 
 export interface LackSaetze {
@@ -167,6 +177,8 @@ const SETTINGS_KEY_MAP: Record<string, keyof Betriebsdaten> = {
   kalk_kran_stundensatz: "kranSatz",
   kalk_riegel_abstand: "riegelAbstand",
   kalk_riegel_brett_dicke: "riegelBrettDicke",
+  kalk_selbstkosten_lohn: "selbstkostenLohn",
+  kalk_warn_marge_prozent: "warnMargeProzent",
 };
 
 const LACK_KEY_MAP: Record<string, keyof LackSaetze> = {
@@ -191,6 +203,8 @@ const BUSINESS_DATA_KEYS: Record<keyof Betriebsdaten, string> = {
   kranSatz: "Krankosten pro Stunde",
   riegelAbstand: "Lattungsabstand Riegelkonstruktion",
   riegelBrettDicke: "Dicke der Riegelbretter",
+  selbstkostenLohn: "Selbstkosten Lohn",
+  warnMargeProzent: "Warnschwelle Marge",
 };
 
 export const num = (v: unknown): number => {
@@ -278,6 +292,17 @@ export function calcLohnkosten(workers: number, days: number, bd: Betriebsdaten)
   const w = num(workers); const d = num(days);
   if (w <= 0 || d <= 0) return 0;
   return d * bd.stundenProTag * bd.mittellohn * w;
+}
+
+/**
+ * Lohn-SELBSTKOSTEN: Tage × Stunden/Tag (9) × Selbstkostensatz (38) × Arbeiter.
+ * Gegenstück zu calcLohnkosten(), das mit dem verrechneten Mittellohn (65)
+ * rechnet — die Differenz ist der Verdienst auf der Arbeitsleistung.
+ */
+export function calcLohnSelbstkosten(workers: number, days: number, bd: Betriebsdaten): number {
+  const w = num(workers); const d = num(days);
+  if (w <= 0 || d <= 0) return 0;
+  return d * bd.stundenProTag * bd.selbstkostenLohn * w;
 }
 
 /** Arbeitsstunden: Arbeiter × Tage × Stunden/Tag. */
@@ -385,20 +410,41 @@ export interface MaterialSummen {
   vkAbsolut: number;
   ekTotal: number;   // ekProM2 × Fläche + ekAbsolut
   vkTotal: number;   // vkProM2 × Fläche + vkAbsolut  → Material des Aufbaus (unadjustiert)
+  /**
+   * EK-Summe für die Deckungsbeitrags-Rechnung: wie ekTotal, aber Zeilen ohne
+   * hinterlegten EK (typisch Manuell-Zeilen, wo nur ein VK-Betrag eingetippt
+   * wurde) gehen mit ihrem VK ein. Sonst würde der Verdienst zu hoch
+   * ausgewiesen — lieber vorsichtig rechnen und das Ergebnis als unsicher
+   * kennzeichnen.
+   */
+  ekSelbstkosten: number;
+  /** true, sobald mind. eine Zeile über den VK-Fallback lief. */
+  ekUnsicher: boolean;
 }
 
 export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSummen {
   let ekProM2 = 0, vkProM2 = 0, ekAbsolut = 0, vkAbsolut = 0;
+  let ekSelbstkosten = 0, ekUnsicher = false;
+  const area = num(m.area);
   for (const row of m.materialRows || []) {
     const r = calcMaterialRow(row, m, bd);
     ekProM2 += r.ekProM2; vkProM2 += r.vkProM2;
     ekAbsolut += r.ekAbsolut; vkAbsolut += r.vkAbsolut;
+
+    const ekZeile = r.ekProM2 * area + r.ekAbsolut;
+    const vkZeile = r.vkProM2 * area + r.vkAbsolut;
+    if (ekZeile > 0) {
+      ekSelbstkosten += ekZeile;
+    } else if (vkZeile > 0) {
+      ekSelbstkosten += vkZeile; // VK als EK annehmen
+      ekUnsicher = true;
+    }
   }
-  const area = num(m.area);
   return {
     ekProM2, vkProM2, ekAbsolut, vkAbsolut,
     ekTotal: ekProM2 * area + ekAbsolut,
     vkTotal: vkProM2 * area + vkAbsolut,
+    ekSelbstkosten, ekUnsicher,
   };
 }
 
@@ -478,6 +524,103 @@ export function globalFaktor(surchargePercent: number | null, discontPercent: nu
   return 1 + num(surchargePercent) / 100 - num(discontPercent) / 100;
 }
 
+// ----------------------------------------------------------------------------
+// Verdienst / Deckungsbeitrag
+// ----------------------------------------------------------------------------
+//
+// Die Kalkulation liefert den ERLÖS (was der Kunde zahlt). Was davon im Betrieb
+// hängen bleibt, zeigt erst die Gegenüberstellung mit den echten Kosten:
+//
+//   Erlös          = (Material-VK + Lohn zu Mittellohn + Fahrten + DL) × Faktor
+//   − Material-EK  = Σ EK-Spalte × Fläche (VK-Fallback bei EK-losen Zeilen)
+//   − Lohn-SK      = Tage × 9 h × Arbeiter × Selbstkosten-Lohn (38 €/h)
+//   − Fahrten      = Bus + LKW (Selbstkosten = verrechnete Kosten)
+//   − DL           = Kran + Spedition + Lohnabdunst + Sonstiges (Fremdleistung)
+//   = Deckungsbeitrag €
+//     Marge %      = DB / Erlös × 100
+//
+// Bewusste Entscheidungen:
+//   - Der Aufschlag/Skonto-Faktor wirkt NUR auf den Erlös. Die Selbstkosten
+//     sind reale Ausgaben und werden nicht mitskaliert; ein Skonto schmälert
+//     also direkt den Deckungsbeitrag (genau das soll die Warnung zeigen).
+//   - Fahrten und eingekaufte Dienstleistungen werden 1:1 als Kosten geführt
+//     (Durchläufer). Verdient wird daran nur über den globalen Faktor.
+//   - Die Lohnlackierung (Tab 2) bleibt außen vor — sie ist wie in beiden
+//     Referenzen eine eigenständige Rechnung außerhalb der Projektsumme.
+
+export interface VerdienstErgebnis {
+  erloes: number;
+  materialEk: number;
+  lohnSelbstkosten: number;
+  fahrtkosten: number;
+  dienstleistungen: number;
+  selbstkosten: number;      // Σ der vier Kostenblöcke
+  deckungsbeitrag: number;   // Erlös − Selbstkosten
+  margeProzent: number;      // DB / Erlös × 100 (0, wenn kein Erlös)
+  /** true, wenn mindestens ein Material-EK geschätzt werden musste. */
+  unsicher: boolean;
+}
+
+export const leererVerdienst = (): VerdienstErgebnis => ({
+  erloes: 0, materialEk: 0, lohnSelbstkosten: 0, fahrtkosten: 0, dienstleistungen: 0,
+  selbstkosten: 0, deckungsbeitrag: 0, margeProzent: 0, unsicher: false,
+});
+
+/** Marge % aus DB und Erlös — ohne Erlös gibt es keine sinnvolle Marge (0 %). */
+export function calcMargeProzent(deckungsbeitrag: number, erloes: number): number {
+  return num(erloes) > 0 ? (num(deckungsbeitrag) / num(erloes)) * 100 : 0;
+}
+
+/** Verdienst-Rechnung für einen Aufbau (Erlös adjustiert, Kosten roh). */
+export function calcVerdienst(
+  m: KalkModule, erg: ModulErgebnis, faktor: number, bd: Betriebsdaten,
+): VerdienstErgebnis {
+  const erloes = erg.grandTotal * faktor;
+  const materialEk = erg.material.ekSelbstkosten;
+  const lohnSelbstkosten = calcLohnSelbstkosten(m.workers, m.days, bd);
+  const fahrtkosten = erg.transport.total;
+  const dienstleistungen = erg.servicesTotal;
+  const selbstkosten = materialEk + lohnSelbstkosten + fahrtkosten + dienstleistungen;
+  const deckungsbeitrag = erloes - selbstkosten;
+  return {
+    erloes, materialEk, lohnSelbstkosten, fahrtkosten, dienstleistungen,
+    selbstkosten, deckungsbeitrag,
+    margeProzent: calcMargeProzent(deckungsbeitrag, erloes),
+    unsicher: erg.material.ekUnsicher,
+  };
+}
+
+/** Addiert Verdienst-Ergebnisse (für Gesamt/Optional/ohne Optional). */
+export function addVerdienst(ziel: VerdienstErgebnis, q: VerdienstErgebnis): void {
+  ziel.erloes += q.erloes;
+  ziel.materialEk += q.materialEk;
+  ziel.lohnSelbstkosten += q.lohnSelbstkosten;
+  ziel.fahrtkosten += q.fahrtkosten;
+  ziel.dienstleistungen += q.dienstleistungen;
+  ziel.selbstkosten += q.selbstkosten;
+  ziel.deckungsbeitrag += q.deckungsbeitrag;
+  ziel.unsicher = ziel.unsicher || q.unsicher;
+  ziel.margeProzent = calcMargeProzent(ziel.deckungsbeitrag, ziel.erloes);
+}
+
+export type MargeAmpel = "gruen" | "gelb" | "rot";
+
+/**
+ * Ampel für die Marge: grün ab Schwelle+10 Punkten, gelb ab Schwelle,
+ * darunter rot. Ohne Erlös (leerer Aufbau) gibt es nichts zu bewerten → gelb
+ * wäre irreführend, daher "gruen" erst ab echtem Erlös prüfen (siehe UI).
+ */
+export function margeAmpel(margeProzent: number, schwelle: number): MargeAmpel {
+  if (margeProzent >= num(schwelle) + 10) return "gruen";
+  if (margeProzent >= num(schwelle)) return "gelb";
+  return "rot";
+}
+
+/** Warnung nötig? Nur bei echtem Erlös (leere Aufbauten warnen nicht). */
+export function margeUnterSchwelle(v: VerdienstErgebnis, schwelle: number): boolean {
+  return v.erloes > 0 && v.margeProzent < num(schwelle);
+}
+
 export interface ProjektZeile {
   module: KalkModule;
   ergebnis: ModulErgebnis;
@@ -487,6 +630,7 @@ export interface ProjektZeile {
   proQmAdj: number;    // gesamtAdj / Fläche
   pctMaterial: number; // Material / (Material+Arbeit) × 100
   pctArbeit: number;
+  verdienst: VerdienstErgebnis;
 }
 
 /** Auswertungs-Panel (Excel-Überblick N3): eine Wertespalte. */
@@ -514,6 +658,12 @@ export interface ProjektErgebnis {
   gesamt: AuswertungSpalte;
   optional: AuswertungSpalte;
   ohneOptional: AuswertungSpalte;
+  /** Deckungsbeitrag in denselben drei Sichten. */
+  verdienst: VerdienstErgebnis;
+  verdienstOptional: VerdienstErgebnis;
+  verdienstOhneOptional: VerdienstErgebnis;
+  /** Warnschwelle aus den Betriebsdaten (durchgereicht für die UI). */
+  warnMargeProzent: number;
 }
 
 const leereSpalte = (): AuswertungSpalte => ({
@@ -531,9 +681,16 @@ export function calcProjekt(state: KalkulationState, bd: Betriebsdaten): Projekt
   const faktor = globalFaktor(state.surchargePercent, state.discontPercent);
   const gesamt = leereSpalte();
   const optional = leereSpalte();
+  const verdienst = leererVerdienst();
+  const verdienstOptional = leererVerdienst();
+  // Direkt akkumuliert statt Gesamt − Optional: nur so trägt jede Sicht ihr
+  // eigenes "unsicher"-Flag (ein EK-loser Optional-Aufbau darf die Sicht
+  // "ohne Optional" nicht als unsicher markieren).
+  const verdienstOhneOptional = leererVerdienst();
 
   const zeilen: ProjektZeile[] = (state.modules || []).map((m) => {
     const erg = calcModule(m, bd);
+    const verd = calcVerdienst(m, erg, faktor, bd);
     const materialAdj = erg.material.vkTotal * faktor;
     const laborAdj = erg.laborTotal * faktor;
     const gesamtAdj = materialAdj + laborAdj;
@@ -552,13 +709,16 @@ export function calcProjekt(state: KalkulationState, bd: Betriebsdaten): Projekt
       s.gesamtAdj += gesamtAdj;
     };
     add(gesamt);
-    if (m.isOptional) add(optional);
+    addVerdienst(verdienst, verd);
+    if (m.isOptional) { add(optional); addVerdienst(verdienstOptional, verd); }
+    else addVerdienst(verdienstOhneOptional, verd);
 
     return {
       module: m, ergebnis: erg, materialAdj, laborAdj, gesamtAdj,
       proQmAdj: area > 0 ? gesamtAdj / area : 0,
       pctMaterial: getPercentage(materialAdj, laborAdj),
       pctArbeit: getPercentage(laborAdj, materialAdj),
+      verdienst: verd,
     };
   });
 
@@ -575,6 +735,8 @@ export function calcProjekt(state: KalkulationState, bd: Betriebsdaten): Projekt
     pctMaterial: getPercentage(gesamt.material, gesamt.arbeitAdj),
     pctArbeit: getPercentage(gesamt.arbeitAdj, gesamt.material),
     gesamt, optional, ohneOptional,
+    verdienst, verdienstOptional, verdienstOhneOptional,
+    warnMargeProzent: bd.warnMargeProzent,
   };
 }
 

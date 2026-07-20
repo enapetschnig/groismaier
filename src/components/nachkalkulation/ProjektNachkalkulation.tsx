@@ -17,6 +17,7 @@ import { formatDateShort } from "@/lib/dateFormat";
 import { istArbeitszeitZeile } from "@/lib/stunden";
 import { cn } from "@/lib/utils";
 import {
+  AMPEL,
   PAYABLE_INVOICE_TYPES,
   ampelClass,
   ampelLabel,
@@ -70,6 +71,23 @@ interface TimeEntryRaw {
 interface EmployeeRaw {
   user_id: string | null;
   stundenlohn: number | null;
+  vorname: string | null;
+  nachname: string | null;
+}
+
+/** Eine Zeile der Mitarbeiter-Aufschlüsselung eines Projekts. */
+interface MitarbeiterStunden {
+  userId: string;
+  name: string;
+  stunden: number;
+  lohnkosten: number;
+}
+
+/** profiles ist (noch) nicht in den generierten Supabase-Typen → Cast beim Query. */
+interface ProfileRaw {
+  id: string;
+  vorname: string | null;
+  nachname: string | null;
 }
 
 interface MaterialRaw {
@@ -134,6 +152,8 @@ interface ProjectRow {
   rechnungDocs: DocRef[]; // Rechnungen + Gutschriften (Gutschrift-Netto negativ)
   istStunden: number;
   lohnkosten: number;
+  /** Ist-Stunden je Mitarbeiter, absteigend nach Stunden. */
+  mitarbeiter: MitarbeiterStunden[];
   materialkosten: number;
   fremdkosten: number;
   purchaseDocs: PurchaseRef[];
@@ -212,6 +232,8 @@ export function ProjektNachkalkulation() {
   const [purchases, setPurchases] = useState<PurchaseRaw[]>([]);
   const [allocations, setAllocations] = useState<AllocationRaw[]>([]);
   const [lohnByUser, setLohnByUser] = useState<Record<string, number>>({});
+  // Anzeigenamen je user_id (employees) für die Mitarbeiter-Aufschlüsselung
+  const [nameByUser, setNameByUser] = useState<Record<string, string>>({});
   // Lohnnebenkosten-Faktor (app_settings, Admin → Einstellungen), Default 1,8
   const [faktor, setFaktor] = useState(1.8);
 
@@ -230,7 +252,7 @@ export function ProjektNachkalkulation() {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [projs, invs, entries, mats, purch, allocs, emps, factRes] = await Promise.all([
+      const [projs, invs, entries, mats, purch, allocs, emps, profs, factRes] = await Promise.all([
         fetchAllRows<ProjectRaw>((f, t) =>
           supabase.from("projects").select("id, name, projektnummer, status").order("name").order("id").range(f, t),
         ),
@@ -277,8 +299,15 @@ export function ProjektNachkalkulation() {
             .range(f, t),
         ).catch(() => [] as AllocationRaw[]),
         fetchAllRows<EmployeeRaw>((f, t) =>
-          supabase.from("employees").select("user_id, stundenlohn").order("id").range(f, t),
+          supabase.from("employees").select("user_id, stundenlohn, vorname, nachname").order("id").range(f, t),
         ),
+        // Namens-Fallback für Zeitbucher ohne employees-Datensatz.
+        fetchAllRows<ProfileRaw>((f, t) =>
+          (supabase.from("profiles" as never) as any)
+            .select("id, vorname, nachname")
+            .order("id")
+            .range(f, t),
+        ).catch(() => [] as ProfileRaw[]),
         supabase.from("app_settings").select("value").eq("key", "lohnnebenkosten_faktor").maybeSingle(),
       ]);
 
@@ -311,8 +340,17 @@ export function ProjektNachkalkulation() {
       }
 
       const wages: Record<string, number> = {};
+      const names: Record<string, string> = {};
+      // profiles zuerst, employees gewinnt (Personalstamm ist die Leitquelle).
+      for (const p of profs) {
+        const name = `${p.vorname || ""} ${p.nachname || ""}`.trim();
+        if (p.id && name) names[p.id] = name;
+      }
       for (const e of emps) {
-        if (e.user_id) wages[e.user_id] = Number(e.stundenlohn) || 0;
+        if (!e.user_id) continue;
+        wages[e.user_id] = Number(e.stundenlohn) || 0;
+        const name = `${e.vorname || ""} ${e.nachname || ""}`.trim();
+        if (name) names[e.user_id] = name;
       }
 
       setProjects(projs);
@@ -322,6 +360,7 @@ export function ProjektNachkalkulation() {
       setPurchases(purch);
       setAllocations(allocs);
       setLohnByUser(wages);
+      setNameByUser(names);
       setFaktor(Number(factRes.data?.value) || 1.8);
       setSollStundenByInvoice(hours);
     } catch (e) {
@@ -356,12 +395,21 @@ export function ProjektNachkalkulation() {
     // Abwesenheits-Tätigkeiten ausgefiltert.
     const hoursByProject = new Map<string, number>();
     const lohnByProject = new Map<string, number>();
+    // Zusätzlich je Projekt die Stunden je Mitarbeiter (user_id → Stunden) —
+    // im selben Durchlauf, damit kein zweiter Pass über alle Buchungen nötig ist.
+    const perUserByProject = new Map<string, Map<string, number>>();
     for (const te of timeEntries) {
+      // Buchungen ohne Projekt (z.B. Kostenstelle Werkstatt/Büro ohne
+      // Projektbezug) tauchen nirgends auf; die Kostenstelle selbst spielt
+      // keine Rolle — projektbezogene Werkstattstunden gehören zum Projekt.
       if (!te.project_id || !inRange(te.datum)) continue;
       if (te.taetigkeit && ABWESENHEIT.has(te.taetigkeit)) continue;
       const std = Number(te.stunden) || 0;
       hoursByProject.set(te.project_id, (hoursByProject.get(te.project_id) || 0) + std);
       lohnByProject.set(te.project_id, (lohnByProject.get(te.project_id) || 0) + std * (lohnByUser[te.user_id] || 0) * faktor);
+      const perUser = perUserByProject.get(te.project_id) || new Map<string, number>();
+      perUser.set(te.user_id, (perUser.get(te.user_id) || 0) + std);
+      perUserByProject.set(te.project_id, perUser);
     }
 
     // Materialkosten: Entnahme + Verbrauch − Rückgabe, jeweils Menge × EK.
@@ -445,6 +493,15 @@ export function ProjektNachkalkulation() {
       const lohnkosten = lohnByProject.get(proj.id) || 0;
       const materialkosten = materialByProject.get(proj.id) || 0;
 
+      const mitarbeiter: MitarbeiterStunden[] = [...(perUserByProject.get(proj.id) || new Map())]
+        .map(([userId, stunden]) => ({
+          userId,
+          name: nameByUser[userId] || "Unbekannt",
+          stunden,
+          lohnkosten: stunden * (lohnByUser[userId] || 0) * faktor,
+        }))
+        .sort((a, b) => b.stunden - a.stunden);
+
       const purchaseDocs = purchasesByProject.get(proj.id) || [];
       const fremdkosten = purchaseDocs.reduce((s, p) => s + p.netto, 0);
 
@@ -473,6 +530,7 @@ export function ProjektNachkalkulation() {
         rechnungDocs,
         istStunden,
         lohnkosten,
+        mitarbeiter,
         materialkosten,
         fremdkosten,
         purchaseDocs,
@@ -483,7 +541,7 @@ export function ProjektNachkalkulation() {
       });
     }
     return result;
-  }, [projects, invoices, sollStundenByInvoice, timeEntries, materialEntries, purchases, allocations, lohnByUser, faktor, statusFilter, zeitraum]);
+  }, [projects, invoices, sollStundenByInvoice, timeEntries, materialEntries, purchases, allocations, lohnByUser, nameByUser, faktor, statusFilter, zeitraum]);
 
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
@@ -694,7 +752,6 @@ function ProjectTableRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const stundenDiff = row.istStunden - row.sollStunden;
   return (
     <>
       <TableRow className="cursor-pointer" onClick={onToggle}>
@@ -751,21 +808,29 @@ function ProjectTableRow({
 
       {expanded && (
         <TableRow className="bg-muted/30 hover:bg-muted/30">
-          <TableCell colSpan={12} className="p-4">
+          {/* Die Detailzelle erbt die Breite der 12-spaltigen Tabelle, die am
+              Handy breiter als der Viewport ist. Der Inhalt wird daher auf
+              Viewport-Breite begrenzt und mitgescrollt fixiert (sticky), damit
+              am Handy nichts rechts abgeschnitten liegt. Ab md normale Breite. */}
+          <TableCell colSpan={12} className="p-0">
+            <div className="sticky left-0 w-[calc(100vw-2rem)] p-4 md:static md:w-auto">
+            {/* Soll/Ist-Stunden + Aufschlüsselung je Mitarbeiter — zuoberst,
+                weil das die meistgestellte Frage der Nachkalkulation ist. */}
+            <StundenAufschluesselung row={row} />
+
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              {/* Stunden-Vergleich */}
+              {/* Kosten-Ist (Stunden-Soll/Ist steht oben im Stunden-Block) */}
               <div>
-                <p className="font-semibold mb-2">Stunden & Kosten (Soll/Ist)</p>
+                <p className="font-semibold mb-2">Kosten (Ist)</p>
                 <div className="space-y-1">
-                  <DetailLine label="Soll-Stunden (Angebot/AB)" value={row.sollStunden > 0 ? formatStunden(row.sollStunden) : "—"} />
-                  <DetailLine label="Ist-Stunden (Zeiterfassung)" value={formatStunden(row.istStunden)} />
+                  <DetailLine label="Lohnkosten (Lohn × Faktor)" value={formatEUR(row.lohnkosten)} />
+                  <DetailLine label="Materialkosten" value={formatEUR(row.materialkosten)} />
+                  <DetailLine label="Fremdkosten" value={formatEUR(row.fremdkosten)} />
                   <DetailLine
-                    label="Abweichung"
-                    value={`${stundenDiff > 0 ? "+" : ""}${formatStunden(stundenDiff)}`}
-                    valueClass={row.sollStunden > 0 ? (stundenDiff > 0 ? "text-red-600" : "text-green-600") : undefined}
+                    label="Deckungsbeitrag"
+                    value={formatEUR(row.db)}
+                    valueClass={row.db < 0 ? "text-red-600" : undefined}
                   />
-                  <DetailLine label="Lohnkosten Ist (Lohn × Faktor)" value={formatEUR(row.lohnkosten)} />
-                  <DetailLine label="Materialkosten Ist" value={formatEUR(row.materialkosten)} />
                 </div>
               </div>
 
@@ -815,10 +880,137 @@ function ProjectTableRow({
 
             {/* Alle Positionen der Angebots-/Rechnungsbelege mit Soll-Stunden */}
             <PositionenDetail row={row} />
+            </div>
           </TableCell>
         </TableRow>
       )}
     </>
+  );
+}
+
+/**
+ * Stunden-Block des Projekt-Details:
+ *   1. Soll/Ist-Zeile „Angeboten · Gebucht · Abweichung" mit Auslastungs-Ampel
+ *      (grün ≤ 100 %, gelb ≤ 110 %, rot > 110 %).
+ *   2. Tabelle „Stunden je Mitarbeiter" — wer wie viele Stunden auf das Projekt
+ *      gebucht hat, samt Lohnkosten (Std × Stundenlohn × Faktor) und Anteil.
+ * Rendert nur im aufgeklappten Zustand; die Zahlen stammen aus den bereits
+ * geladenen Zeitbuchungen, es ist also kein Nachladen nötig.
+ */
+function StundenAufschluesselung({ row }: { row: ProjectRow }) {
+  const { sollStunden, istStunden, mitarbeiter } = row;
+  const diff = istStunden - sollStunden;
+  const auslastung = sollStunden > 0 ? (istStunden / sollStunden) * 100 : null;
+  const diffProzent = sollStunden > 0 ? (diff / sollStunden) * 100 : null;
+
+  // Ampel der Stunden-Auslastung (eigene Skala, NICHT die Marge-Ampel).
+  const ampel =
+    auslastung === null
+      ? { dot: AMPEL.neutral, text: "", box: "border-border bg-background/60" }
+      : auslastung <= 100
+        ? { dot: AMPEL.gruen, text: "text-[#0ca30c]", box: "border-[#0ca30c]/40 bg-[#0ca30c]/5" }
+        : auslastung <= 110
+          ? { dot: AMPEL.gelb, text: "text-[#a97a0a]", box: "border-[#fab219]/50 bg-[#fab219]/10" }
+          : { dot: AMPEL.rot, text: "text-[#d03b3b]", box: "border-[#d03b3b]/40 bg-[#d03b3b]/5" };
+
+  const summeStunden = mitarbeiter.reduce((s, m) => s + m.stunden, 0);
+  const summeLohn = mitarbeiter.reduce((s, m) => s + m.lohnkosten, 0);
+  const vz = (n: number) => (n > 0 ? "+" : n < 0 ? "−" : "");
+
+  return (
+    <div className="mb-4 text-sm">
+      {/* Soll/Ist prominent */}
+      <div className={cn("rounded-md border px-3 py-2.5", ampel.box)}>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          <span className={cn("h-3 w-3 rounded-full shrink-0", ampel.dot)} />
+          <span className="whitespace-nowrap">
+            <span className="text-muted-foreground">Angeboten: </span>
+            <span className="font-semibold tabular-nums">{sollStunden > 0 ? formatStunden(sollStunden) : "—"}</span>
+          </span>
+          <span className="text-muted-foreground/50">·</span>
+          <span className="whitespace-nowrap">
+            <span className="text-muted-foreground">Gebucht: </span>
+            <span className="font-semibold tabular-nums">{formatStunden(istStunden)}</span>
+          </span>
+          {sollStunden > 0 && (
+            <>
+              <span className="text-muted-foreground/50">·</span>
+              <span className={cn("whitespace-nowrap font-semibold", ampel.text)}>
+                <span className="font-normal text-muted-foreground">Abweichung: </span>
+                <span className="tabular-nums">
+                  {vz(diff)}{formatStunden(Math.abs(diff))}
+                </span>
+                {diffProzent !== null && (
+                  <span className="tabular-nums"> ({vz(diffProzent)}{formatProzent(Math.abs(diffProzent))})</span>
+                )}
+              </span>
+            </>
+          )}
+        </div>
+        {auslastung !== null && (
+          <div className="mt-2 h-1.5 rounded-full bg-muted overflow-hidden">
+            <div className={cn("h-full rounded-full", ampel.dot)} style={{ width: `${Math.min(100, auslastung)}%` }} />
+          </div>
+        )}
+        {sollStunden <= 0 && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            Kein Angebot/keine Auftragsbestätigung mit kalkulierten Stunden — nur Ist-Stunden verfügbar.
+          </p>
+        )}
+      </div>
+
+      {/* Stunden je Mitarbeiter */}
+      <p className="font-semibold mt-3 mb-1.5">Stunden je Mitarbeiter</p>
+      {mitarbeiter.length === 0 ? (
+        <p className="text-muted-foreground text-xs">Keine Stunden auf dieses Projekt gebucht.</p>
+      ) : (
+        <div className="overflow-x-auto rounded-md border bg-background/60">
+          {/* table-fixed: die Namensspalte nimmt den Rest und kürzt bei Bedarf,
+              damit Stunden/Lohn/Anteil am Handy immer sichtbar bleiben. */}
+          <table className="w-full min-w-[300px] table-fixed text-xs">
+            <thead>
+              <tr className="border-b text-muted-foreground">
+                <th className="text-left font-medium px-2 py-1.5">Mitarbeiter</th>
+                <th className="text-right font-medium px-2 py-1.5 whitespace-nowrap w-[64px]">Stunden</th>
+                <th className="text-right font-medium px-2 py-1.5 whitespace-nowrap w-[86px]">Lohn&shy;kosten</th>
+                <th className="text-right sm:text-left font-medium px-2 py-1.5 w-[56px] sm:w-[150px]">Anteil</th>
+              </tr>
+            </thead>
+            <tbody>
+              {mitarbeiter.map((m) => {
+                const anteil = summeStunden > 0 ? (m.stunden / summeStunden) * 100 : 0;
+                return (
+                  <tr key={m.userId} className="border-b border-border/50 last:border-0">
+                    <td className="px-2 py-1.5 truncate" title={m.name}>{m.name}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap font-medium">{formatStunden(m.stunden)}</td>
+                    <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{formatEUR(m.lohnkosten)}</td>
+                    <td className="px-2 py-1.5">
+                      {/* Balken erst ab sm — am Handy zählt die reine Prozentzahl. */}
+                      <div className="flex items-center justify-end sm:justify-start gap-1.5">
+                        <div className="hidden sm:block h-1.5 flex-1 min-w-[40px] rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-primary/60" style={{ width: `${anteil}%` }} />
+                        </div>
+                        <span className="tabular-nums text-muted-foreground text-right shrink-0 whitespace-nowrap">
+                          {formatProzent(anteil)}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t font-semibold">
+                <td className="px-2 py-1.5">Summe ({mitarbeiter.length} Mitarbeiter)</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{formatStunden(summeStunden)}</td>
+                <td className="px-2 py-1.5 text-right tabular-nums whitespace-nowrap">{formatEUR(summeLohn)}</td>
+                <td className="px-2 py-1.5" />
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 

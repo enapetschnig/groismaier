@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
@@ -57,6 +57,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getDocConfig } from "@/lib/documentTypes";
+import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
+import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
 
 interface InvoiceItem {
@@ -363,6 +365,7 @@ export default function InvoiceDetail() {
   const [fromAngebotId, setFromAngebotId] = useState<string | null>(null);
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
+  const [priceAdjustOpen, setPriceAdjustOpen] = useState(false);
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
   const [stornoDialogOpen, setStornoDialogOpen] = useState(false);
   const [stornoGrund, setStornoGrund] = useState("");
@@ -1223,6 +1226,43 @@ export default function InvoiceDetail() {
     const r = Number(it.rabatt_prozent) || 0;
     const t = m * (Number(it.einzelpreis) || 0) * (1 - r / 100);
     return isFinite(t) ? Math.round(t * 100) / 100 : 0;
+  };
+
+  // ── Preise anpassen (Rabatt/Aufschlag + KI) ───────────────────────────────
+  // Positionen, auf die eine Preisanpassung überhaupt wirken kann. Ausgenommen
+  // sind mwst_exempt-Zeilen (Anzahlungs-Abzüge sind Brutto-Verrechnungszeilen
+  // und dürfen nicht angefasst werden).
+  const priceAdjustLines = useMemo<AdjustLine[]>(
+    () =>
+      items
+        .map((it, idx) => ({ it, idx }))
+        .filter(({ it }) => !it.mwst_exempt)
+        .map(({ it, idx }) => ({
+          index: idx,
+          beschreibung: it.beschreibung || it.kurztext || "",
+          menge: Number(it.menge) || 0,
+          einheit: it.einheit || "",
+          einzelpreis: Number(it.einzelpreis) || 0,
+          rabatt_prozent: Number(it.rabatt_prozent) || 0,
+          gesamtpreis: Number(it.gesamtpreis) || 0,
+        })),
+    [items]
+  );
+
+  // Übernimmt neue Einzelpreise aus dem Dialog. Gesamtpreise laufen über
+  // computeItemTotal (gleiche Formel wie überall im Editor), die Belegsummen
+  // werden davon abgeleitet neu berechnet.
+  const applyPriceAdjust = (neuePreise: Record<number, number>) => {
+    setItems(prev =>
+      prev.map((it, idx) => {
+        const neu = neuePreise[idx];
+        if (neu === undefined || !isFinite(neu)) return it;
+        const next = { ...it, einzelpreis: Math.max(0, Math.round(neu * 100) / 100) };
+        next.gesamtpreis = computeItemTotal(next);
+        return next;
+      })
+    );
+    setIsDirty(true);
   };
 
   // Setzt die Kalkulationsfelder einer Position und berechnet Einzel-/Gesamtpreis neu.
@@ -4257,6 +4297,13 @@ export default function InvoiceDetail() {
                       Preise aktualisieren
                     </Button>
                   )}
+                  {!hidePrices && (
+                    <Button onClick={() => setPriceAdjustOpen(true)} disabled={isLocked} variant="outline" size="sm" className="gap-1"
+                      title="Rabatt/Aufschlag auf ausgewählte Positionen — oder die KI eine Ziel-Differenz verteilen lassen">
+                      <Percent className="w-4 h-4" />
+                      Preise anpassen
+                    </Button>
+                  )}
                   <Button onClick={addItem} variant="outline" size="sm" className="gap-1">
                     <Plus className="w-4 h-4" />
                     Position
@@ -4947,6 +4994,17 @@ export default function InvoiceDetail() {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        {/* Preise anpassen (Rabatt/Aufschlag + KI-Verteilung) */}
+        {!hidePrices && (
+          <PriceAdjustDialog
+            open={priceAdjustOpen}
+            onClose={() => setPriceAdjustOpen(false)}
+            lines={priceAdjustLines}
+            mwstSatz={(form as any).reverse_charge ? 0 : Number(form.mwst_satz) || 0}
+            onApply={applyPriceAdjust}
+          />
+        )}
 
         {/* Import Materials Dialog */}
         <ImportMaterialsDialog

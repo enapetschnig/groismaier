@@ -707,24 +707,36 @@ const ProjectOverview = () => {
                 <p className="text-sm text-muted-foreground">Keine Stunden gebucht</p>
               ) : (
                 <div className="space-y-2">
+                  {/* Stunden je Mitarbeiter: Balken relativ zum Spitzenreiter,
+                      daneben die Zahlen (Stunden + Anteil an der Projektsumme). */}
+                  <p className="text-xs font-medium text-muted-foreground">Stunden je Mitarbeiter</p>
                   {(() => {
                     const max = Math.max(...projectHours.map(h => h.total), 1);
-                    return projectHours.map((h) => (
-                      <div key={h.user_id} className="text-sm">
-                        <div className="flex justify-between mb-0.5">
-                          <span>{h.name}</span>
-                          <span className="font-medium tabular-nums">{h.total.toFixed(1)} Std.</span>
+                    const summe = projectHours.reduce((s, h) => s + h.total, 0);
+                    return projectHours.map((h) => {
+                      const anteil = summe > 0 ? (h.total / summe) * 100 : 0;
+                      return (
+                        <div key={h.user_id} className="text-sm">
+                          <div className="flex justify-between gap-2 mb-0.5">
+                            <span className="truncate">{h.name}</span>
+                            <span className="whitespace-nowrap shrink-0">
+                              <span className="font-medium tabular-nums">{h.total.toFixed(1)} Std.</span>
+                              <span className="text-xs text-muted-foreground tabular-nums ml-1.5">
+                                {anteil.toFixed(1).replace(".", ",")} %
+                              </span>
+                            </span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+                            <div className="h-full rounded-full bg-primary/60" style={{ width: `${Math.round((h.total / max) * 100)}%` }} />
+                          </div>
                         </div>
-                        <div className="h-1.5 rounded-full bg-muted overflow-hidden">
-                          <div className="h-full rounded-full bg-primary/60" style={{ width: `${Math.round((h.total / max) * 100)}%` }} />
-                        </div>
-                      </div>
-                    ));
+                      );
+                    });
                   })()}
                   <Separator />
-                  <div className="flex justify-between font-medium">
+                  <div className="flex justify-between gap-2 font-medium">
                     <span>Gesamt</span>
-                    <span className="tabular-nums">{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
+                    <span className="tabular-nums whitespace-nowrap">{projectHours.reduce((s, h) => s + h.total, 0).toFixed(1)} Std.</span>
                   </div>
                 </div>
               )}

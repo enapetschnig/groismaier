@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Download, FileSpreadsheet, Building2, Hammer, ChevronDown, Pencil, Trash2, Save, Plus, UserCog, CalendarOff } from "lucide-react";
+import { ArrowLeft, Download, FileSpreadsheet, Building2, Hammer, ChevronDown, ChevronRight, Pencil, Trash2, Save, Plus, UserCog, CalendarOff, Truck } from "lucide-react";
 import { AdminAbsenceDialog } from "@/components/AdminAbsenceDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -61,6 +61,47 @@ interface Project {
   plz?: string;
 }
 
+/** Kostenstelle aus admin_config_options (kategorie='kostenstelle'). */
+interface KostenstelleOption {
+  wert: string;
+  label: string;
+}
+
+/** Rohzeile für die Kostenstellen-Auswertung. */
+interface KostenstelleRow {
+  user_id: string;
+  stunden: number;
+  kostenstelle: string;
+}
+
+/** Aggregierte Fahrzeug-Kennzahlen für den gewählten Zeitraum. */
+interface VehicleStat {
+  vehicleId: string;
+  bezeichnung: string;
+  kennzeichen: string | null;
+  stunden: number;
+  km: number;
+  kostenGesamt: number;
+  kostenNachKategorie: Record<string, number>;
+}
+
+const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
+  { wert: "baustelle", label: "Baustelle" },
+  { wert: "werkstatt", label: "Werkstatt" },
+  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerplatz", label: "Lagerplatz" },
+];
+
+const KOSTEN_KATEGORIEN: { wert: string; label: string }[] = [
+  { wert: "reparatur", label: "Reparatur" },
+  { wert: "service", label: "Service" },
+  { wert: "treibstoff", label: "Treibstoff" },
+  { wert: "sonstiges", label: "Sonstiges" },
+];
+
+const formatEuro = (v: number) =>
+  v.toLocaleString("de-AT", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
+
 const monthNames = [
   "Jänner", "Februar", "März", "April", "Mai", "Juni",
   "Juli", "August", "September", "Oktober", "November", "Dezember"
@@ -92,13 +133,202 @@ export default function HoursReport() {
   const openAdminCreate = (dateIso: string) => setAdminDialog({ open: true, entryId: null, datum: dateIso });
   const closeAdminDialog = () => setAdminDialog({ open: false, entryId: null, datum: "" });
 
+  // ---- Kostenstellen-Auswertung -------------------------------------
+  const [ksOptions, setKsOptions] = useState<KostenstelleOption[]>(KOSTENSTELLEN_FALLBACK);
+  const [ksFilter, setKsFilter] = useState<string>("alle");
+  const [ksRows, setKsRows] = useState<KostenstelleRow[]>([]);
+  const [ksLoading, setKsLoading] = useState(false);
+  const [expandedKs, setExpandedKs] = useState<Set<string>>(new Set());
+
+  // ---- Fahrzeug-Auswertung ------------------------------------------
+  const [vehicleStats, setVehicleStats] = useState<VehicleStat[]>([]);
+  const [vehicleLoading, setVehicleLoading] = useState(false);
+
+  const periodStart = format(new Date(year, month - 1, 1), "yyyy-MM-dd");
+  const periodEnd = format(new Date(year, month, 0), "yyyy-MM-dd");
+
   const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i);
 
   useEffect(() => {
     checkAdminStatus();
     fetchProfiles();
     fetchProjects();
+    fetchKostenstellenOptions();
   }, []);
+
+  useEffect(() => {
+    fetchKostenstellenRows();
+    fetchVehicleStats();
+  }, [month, year]);
+
+  const fetchKostenstellenOptions = async () => {
+    const { data } = await (supabase.from("admin_config_options" as never) as any)
+      .select("wert, label, sort_order")
+      .eq("kategorie", "kostenstelle")
+      .eq("is_active", true)
+      .order("sort_order");
+    const list = ((data as any[]) || []).map((o) => ({ wert: o.wert as string, label: o.label as string }));
+    if (list.length > 0) setKsOptions(list);
+  };
+
+  // Alle Zeiteinträge des Zeitraums — RLS begrenzt Nicht-Admins
+  // automatisch auf die eigenen Einträge.
+  const fetchKostenstellenRows = async () => {
+    setKsLoading(true);
+    const { data, error } = await (supabase.from("time_entries" as never) as any)
+      .select("user_id, stunden, kostenstelle")
+      .gte("datum", periodStart)
+      .lte("datum", periodEnd);
+    if (error) {
+      console.error("Kostenstellen-Auswertung:", error);
+      setKsRows([]);
+    } else {
+      setKsRows(((data as any[]) || []).map((r) => ({
+        user_id: r.user_id,
+        stunden: Number(r.stunden) || 0,
+        kostenstelle: r.kostenstelle || "baustelle",
+      })));
+    }
+    setKsLoading(false);
+  };
+
+  // Fahrzeugstunden + km aus time_entry_vehicles (Join auf time_entries
+  // für den Datumsfilter) sowie Kosten aus vehicle_costs.
+  const fetchVehicleStats = async () => {
+    setVehicleLoading(true);
+    const [{ data: vehData }, { data: tevData }, { data: costData }] = await Promise.all([
+      (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen")
+        .order("bezeichnung"),
+      (supabase.from("time_entry_vehicles" as never) as any)
+        .select("vehicle_id, stunden, modus, km_gefahren, km_start, km_ende, time_entries!inner(datum, stunden)")
+        .gte("time_entries.datum", periodStart)
+        .lte("time_entries.datum", periodEnd),
+      (supabase.from("vehicle_costs" as never) as any)
+        .select("vehicle_id, betrag, kategorie")
+        .gte("datum", periodStart)
+        .lte("datum", periodEnd),
+    ]);
+
+    const statMap = new Map<string, VehicleStat>();
+    const ensure = (id: string): VehicleStat => {
+      let s = statMap.get(id);
+      if (!s) {
+        const v = ((vehData as any[]) || []).find((x) => x.id === id);
+        s = {
+          vehicleId: id,
+          bezeichnung: v?.bezeichnung || "Unbekanntes Fahrzeug",
+          kennzeichen: v?.kennzeichen ?? null,
+          stunden: 0,
+          km: 0,
+          kostenGesamt: 0,
+          kostenNachKategorie: {},
+        };
+        statMap.set(id, s);
+      }
+      return s;
+    };
+
+    for (const row of ((tevData as any[]) || [])) {
+      if (!row.vehicle_id) continue;
+      const s = ensure(row.vehicle_id);
+      // Fallback auf die Stunden des Zeiteintrags (Altbestand ohne
+      // eigene Fahrzeugstunden).
+      const h = row.stunden != null ? Number(row.stunden) : Number(row.time_entries?.stunden) || 0;
+      s.stunden += isFinite(h) ? h : 0;
+      const km = row.km_gefahren != null
+        ? Number(row.km_gefahren)
+        : (row.km_start != null && row.km_ende != null ? Number(row.km_ende) - Number(row.km_start) : 0);
+      s.km += isFinite(km) && km > 0 ? km : 0;
+    }
+
+    for (const c of ((costData as any[]) || [])) {
+      if (!c.vehicle_id) continue;
+      const s = ensure(c.vehicle_id);
+      const betrag = Number(c.betrag) || 0;
+      s.kostenGesamt += betrag;
+      const kat = c.kategorie || "sonstiges";
+      s.kostenNachKategorie[kat] = (s.kostenNachKategorie[kat] || 0) + betrag;
+    }
+
+    // Fahrzeuge ohne Bewegung im Zeitraum trotzdem anzeigen
+    for (const v of ((vehData as any[]) || [])) ensure(v.id);
+
+    setVehicleStats(
+      Array.from(statMap.values()).sort((a, b) => a.bezeichnung.localeCompare(b.bezeichnung, "de"))
+    );
+    setVehicleLoading(false);
+  };
+
+  const ksLabel = (wert: string) =>
+    ksOptions.find((o) => o.wert === wert)?.label || wert;
+
+  const employeeName = (userId: string) =>
+    profiles[userId] ? `${profiles[userId].vorname} ${profiles[userId].nachname}` : "Unbekannt";
+
+  // Kostenstellen-Aggregation: Summe je Kostenstelle + je Mitarbeiter
+  const kostenstellenAggregat = useMemo(() => {
+    const filtered = ksFilter === "alle" ? ksRows : ksRows.filter((r) => r.kostenstelle === ksFilter);
+    const map = new Map<string, { kostenstelle: string; stunden: number; perUser: Map<string, number> }>();
+    for (const r of filtered) {
+      let e = map.get(r.kostenstelle);
+      if (!e) {
+        e = { kostenstelle: r.kostenstelle, stunden: 0, perUser: new Map() };
+        map.set(r.kostenstelle, e);
+      }
+      e.stunden += r.stunden;
+      e.perUser.set(r.user_id, (e.perUser.get(r.user_id) || 0) + r.stunden);
+    }
+    const order = ksOptions.map((o) => o.wert);
+    return Array.from(map.values())
+      .map((e) => ({
+        kostenstelle: e.kostenstelle,
+        stunden: e.stunden,
+        perUser: Array.from(e.perUser.entries())
+          .map(([user_id, stunden]) => ({ user_id, stunden }))
+          .sort((a, b) => b.stunden - a.stunden),
+      }))
+      .sort((a, b) => {
+        const ia = order.indexOf(a.kostenstelle);
+        const ib = order.indexOf(b.kostenstelle);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+  }, [ksRows, ksFilter, ksOptions]);
+
+  const kostenstellenGesamt = useMemo(
+    () => kostenstellenAggregat.reduce((s, e) => s + e.stunden, 0),
+    [kostenstellenAggregat]
+  );
+
+  const toggleKs = (wert: string) => {
+    setExpandedKs((prev) => {
+      const next = new Set(prev);
+      if (next.has(wert)) next.delete(wert); else next.add(wert);
+      return next;
+    });
+  };
+
+  // Kompakter Monats-/Jahres-Wähler für die neuen Auswertungs-Tabs
+  const renderPeriodPicker = () => (
+    <div className="flex flex-col sm:flex-row gap-3">
+      <Select value={month.toString()} onValueChange={(v) => setMonth(parseInt(v))}>
+        <SelectTrigger className="h-11 kb-input"><SelectValue /></SelectTrigger>
+        <SelectContent position="popper">
+          {monthNames.map((name, i) => (
+            <SelectItem key={i} value={(i + 1).toString()}>{name}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <Select value={year.toString()} onValueChange={(v) => setYear(parseInt(v))}>
+        <SelectTrigger className="h-11 kb-input"><SelectValue /></SelectTrigger>
+        <SelectContent position="popper">
+          {years.map((y) => (
+            <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
 
   useEffect(() => {
     if (selectedUserId) {
@@ -645,14 +875,22 @@ export default function HoursReport() {
       </div>
 
       <Tabs defaultValue="mitarbeiter" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto">
           <TabsTrigger value="mitarbeiter">
             <FileSpreadsheet className="w-4 h-4 mr-2" />
-            Arbeitszeiterfassung
+            <span className="truncate">Arbeitszeit</span>
           </TabsTrigger>
           <TabsTrigger value="projekte">
             <Building2 className="w-4 h-4 mr-2" />
-            Projektzeiterfassung
+            <span className="truncate">Projekte</span>
+          </TabsTrigger>
+          <TabsTrigger value="kostenstellen">
+            <Hammer className="w-4 h-4 mr-2" />
+            <span className="truncate">Kostenstellen</span>
+          </TabsTrigger>
+          <TabsTrigger value="fahrzeuge">
+            <Truck className="w-4 h-4 mr-2" />
+            <span className="truncate">Fahrzeuge</span>
           </TabsTrigger>
         </TabsList>
 
@@ -1020,6 +1258,212 @@ export default function HoursReport() {
 
         <TabsContent value="projekte">
           <ProjectHoursReport />
+        </TabsContent>
+
+        {/* ---------------- Kostenstellen ---------------- */}
+        <TabsContent value="kostenstellen" className="space-y-4">
+          <Card className="kb-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Hammer className="w-5 h-5" />
+                Kostenstellen
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Stunden je Kostenstelle im gewählten Zeitraum — zum Aufklappen je Mitarbeiter antippen
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                {renderPeriodPicker()}
+                <Select value={ksFilter} onValueChange={setKsFilter}>
+                  <SelectTrigger className="h-11 kb-input">
+                    <SelectValue placeholder="Alle Kostenstellen" />
+                  </SelectTrigger>
+                  <SelectContent position="popper">
+                    <SelectItem value="alle">Alle Kostenstellen</SelectItem>
+                    {ksOptions.map((o) => (
+                      <SelectItem key={o.wert} value={o.wert}>Nur {o.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="bg-muted/50 p-4 rounded-lg flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-muted-foreground">
+                    Gesamtstunden {ksFilter !== "alle" ? `(${ksLabel(ksFilter)})` : ""}
+                  </p>
+                  <p className="text-2xl font-bold">{kostenstellenGesamt.toFixed(2)} h</p>
+                </div>
+                <Badge variant="secondary">
+                  {monthNames[month - 1]} {year}
+                </Badge>
+              </div>
+
+              <div className="overflow-x-auto">
+                <Table className="min-w-[420px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-8"></TableHead>
+                      <TableHead>Kostenstelle</TableHead>
+                      <TableHead className="text-right">Stunden</TableHead>
+                      <TableHead className="text-right w-[80px]">Anteil</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {ksLoading ? (
+                      <TableRow><TableCell colSpan={4} className="text-center">Lade...</TableCell></TableRow>
+                    ) : kostenstellenAggregat.length === 0 ? (
+                      <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground">Keine Buchungen im Zeitraum</TableCell></TableRow>
+                    ) : (
+                      kostenstellenAggregat.map((e) => {
+                        const open = expandedKs.has(e.kostenstelle);
+                        const anteil = kostenstellenGesamt > 0 ? (e.stunden / kostenstellenGesamt) * 100 : 0;
+                        return (
+                          <Fragment key={e.kostenstelle}>
+                            <TableRow
+                              className="cursor-pointer hover:bg-muted/50"
+                              onClick={() => toggleKs(e.kostenstelle)}
+                            >
+                              <TableCell>
+                                {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </TableCell>
+                              <TableCell className="font-medium">{ksLabel(e.kostenstelle)}</TableCell>
+                              <TableCell className="text-right font-bold">{e.stunden.toFixed(2)} h</TableCell>
+                              <TableCell className="text-right text-muted-foreground text-xs">{anteil.toFixed(0)} %</TableCell>
+                            </TableRow>
+                            {open && e.perUser.map((u) => (
+                              <TableRow key={`${e.kostenstelle}-${u.user_id}`} className="bg-muted/30">
+                                <TableCell></TableCell>
+                                <TableCell className="pl-6 text-sm">{employeeName(u.user_id)}</TableCell>
+                                <TableCell className="text-right text-sm">{u.stunden.toFixed(2)} h</TableCell>
+                                <TableCell></TableCell>
+                              </TableRow>
+                            ))}
+                          </Fragment>
+                        );
+                      })
+                    )}
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell colSpan={2} className="font-bold text-right">Gesamt:</TableCell>
+                      <TableCell className="text-right font-bold">{kostenstellenGesamt.toFixed(2)} h</TableCell>
+                      <TableCell></TableCell>
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ---------------- Fahrzeuge ---------------- */}
+        <TabsContent value="fahrzeuge" className="space-y-4">
+          <Card className="kb-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Truck className="w-5 h-5" />
+                Fahrzeuge
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Fahrzeugstunden, gefahrene Kilometer und Kosten im gewählten Zeitraum
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {renderPeriodPicker()}
+
+              <div className="bg-muted/50 p-4 rounded-lg grid grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-sm text-muted-foreground">Fahrzeugstunden</p>
+                  <p className="text-2xl font-bold">
+                    {vehicleStats.reduce((s, v) => s + v.stunden, 0).toFixed(2)} h
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Gefahrene km</p>
+                  <p className="text-2xl font-bold">
+                    {vehicleStats.reduce((s, v) => s + v.km, 0).toLocaleString("de-AT")}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-sm text-muted-foreground">Kosten</p>
+                  <p className="text-2xl font-bold">
+                    {formatEuro(vehicleStats.reduce((s, v) => s + v.kostenGesamt, 0))}
+                  </p>
+                </div>
+              </div>
+
+              <div className="overflow-x-auto">
+                <Table className="min-w-[720px]">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Fahrzeug</TableHead>
+                      <TableHead className="text-right">Stunden</TableHead>
+                      <TableHead className="text-right">km</TableHead>
+                      {KOSTEN_KATEGORIEN.map((k) => (
+                        <TableHead key={k.wert} className="text-right">{k.label}</TableHead>
+                      ))}
+                      <TableHead className="text-right">Kosten gesamt</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {vehicleLoading ? (
+                      <TableRow><TableCell colSpan={8} className="text-center">Lade...</TableCell></TableRow>
+                    ) : vehicleStats.length === 0 ? (
+                      <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground">Keine Fahrzeuge vorhanden</TableCell></TableRow>
+                    ) : (
+                      vehicleStats.map((v) => (
+                        <TableRow key={v.vehicleId}>
+                          <TableCell>
+                            <div className="flex flex-col">
+                              <span className="font-medium">{v.bezeichnung}</span>
+                              {v.kennzeichen && (
+                                <span className="text-xs text-muted-foreground">{v.kennzeichen}</span>
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">{v.stunden.toFixed(2)} h</TableCell>
+                          <TableCell className="text-right">{v.km.toLocaleString("de-AT")}</TableCell>
+                          {KOSTEN_KATEGORIEN.map((k) => (
+                            <TableCell key={k.wert} className="text-right text-xs">
+                              {v.kostenNachKategorie[k.wert]
+                                ? formatEuro(v.kostenNachKategorie[k.wert])
+                                : <span className="text-muted-foreground">—</span>}
+                            </TableCell>
+                          ))}
+                          <TableCell className="text-right font-bold">{formatEuro(v.kostenGesamt)}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                  <TableFooter>
+                    <TableRow>
+                      <TableCell className="font-bold">Gesamt</TableCell>
+                      <TableCell className="text-right font-bold">
+                        {vehicleStats.reduce((s, v) => s + v.stunden, 0).toFixed(2)} h
+                      </TableCell>
+                      <TableCell className="text-right font-bold">
+                        {vehicleStats.reduce((s, v) => s + v.km, 0).toLocaleString("de-AT")}
+                      </TableCell>
+                      {KOSTEN_KATEGORIEN.map((k) => (
+                        <TableCell key={k.wert} className="text-right text-xs font-bold">
+                          {formatEuro(vehicleStats.reduce((s, v) => s + (v.kostenNachKategorie[k.wert] || 0), 0))}
+                        </TableCell>
+                      ))}
+                      <TableCell className="text-right font-bold">
+                        {formatEuro(vehicleStats.reduce((s, v) => s + v.kostenGesamt, 0))}
+                      </TableCell>
+                    </TableRow>
+                  </TableFooter>
+                </Table>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Fahrzeugstunden ohne eigenen Wert (Altbestand) werden mit den Stunden des
+                zugehörigen Zeiteintrags gerechnet.
+              </p>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
 

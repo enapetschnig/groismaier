@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import {
   Clock, FolderKanban, BarChart3, LogOut, FileText, ArrowRight, Info,
   User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown,
-  Calculator, Plus, TrendingUp, CalendarRange, HardHat, Shield, Banknote,
+  Calculator, Plus, TrendingUp, CalendarRange, HardHat, Shield, Banknote, Truck,
   type LucideIcon,
 } from "lucide-react";
 import { useOnboarding } from "@/contexts/OnboardingContext";
@@ -453,6 +453,9 @@ export default function Index() {
               />
             )}
             <KBButton className="w-full" icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
+            {canView("fahrzeuge") && (
+              <KBButton className="w-full" icon={Truck} label="Fahrzeuge" onClick={() => navigate("/fahrzeuge")} />
+            )}
             <KBButton className="w-full" icon={BarChart3} label="Meine Stunden" onClick={() => navigate("/my-hours")} />
             {!isAdmin && (
               <KBButton className="w-full" icon={FileText} label="Meine Dokumente" onClick={() => navigate("/my-documents")} />
