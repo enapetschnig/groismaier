@@ -75,22 +75,22 @@ export function LackierungTab({
           <div className="space-y-2 p-3 text-xs">
             <label className="grid grid-cols-[1fr_90px_70px] items-center gap-2">
               <span>Farbwechsel (á {fmtEuro(saetze.farbwechsel)})</span>
-              <NumInput value={state.paintColorChanges} onCommit={(n) => onPatchState({ paintColorChanges: n ?? 0 })} />
+              <NumInput min={0} value={state.paintColorChanges} onCommit={(n) => onPatchState({ paintColorChanges: n ?? 0 })} />
               <span className="text-right tabular-nums">{fmtEuro(paintProjekt.extras.farbwechsel)}</span>
             </label>
             <label className="grid grid-cols-[1fr_90px_70px] items-center gap-2">
               <span>Dimension / Farbton &gt;50mm (á {fmtEuro(saetze.dimension)})</span>
-              <NumInput value={state.paintDimChanges} onCommit={(n) => onPatchState({ paintDimChanges: n ?? 0 })} />
+              <NumInput min={0} value={state.paintDimChanges} onCommit={(n) => onPatchState({ paintDimChanges: n ?? 0 })} />
               <span className="text-right tabular-nums">{fmtEuro(paintProjekt.extras.dimension)}</span>
             </label>
             <label className="grid grid-cols-[1fr_90px_70px] items-center gap-2">
               <span>Anfahrt PKW/Anhänger in km (á {fmtEuro(saetze.anfahrtKm)})</span>
-              <NumInput value={state.paintDistance} onCommit={(n) => onPatchState({ paintDistance: n ?? 0 })} />
+              <NumInput min={0} value={state.paintDistance} onCommit={(n) => onPatchState({ paintDistance: n ?? 0 })} />
               <span className="text-right tabular-nums">{fmtEuro(paintProjekt.extras.anfahrt)}</span>
             </label>
             <label className="grid grid-cols-[1fr_90px_70px] items-center gap-2">
               <span>Fahrzeit Mitarbeiter in h (á {fmtEuro(saetze.fahrzeitH)})</span>
-              <NumInput value={state.paintTravelHours} onCommit={(n) => onPatchState({ paintTravelHours: n ?? 0 })} />
+              <NumInput min={0} value={state.paintTravelHours} onCommit={(n) => onPatchState({ paintTravelHours: n ?? 0 })} />
               <span className="text-right tabular-nums">{fmtEuro(paintProjekt.extras.fahrzeit)}</span>
             </label>
             <div className="flex justify-between border-t pt-2 font-bold">
@@ -109,7 +109,7 @@ export function LackierungTab({
           >
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-kb-blue text-xs font-bold text-white">P.{i + 1}</span>
             <input
-              className="kb-input h-8 min-h-0 max-w-xs flex-1 px-2 py-1 text-sm"
+              className="kb-input h-11 min-h-0 max-w-xs flex-1 px-2 py-1 text-sm sm:h-8"
               value={pm.name}
               placeholder="Bezeichnung (z.B. Fassade Ost)"
               onClick={(e) => e.stopPropagation()}
@@ -126,7 +126,7 @@ export function LackierungTab({
                 <div className="space-y-2">
                   <label className="block text-xs">
                     <span className="mb-0.5 block text-muted-foreground">Kategorie</span>
-                    <select className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={pm.category}
+                    <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-8" value={pm.category}
                       onChange={(e) => onPatchPaint(pm.id, { category: e.target.value, product: "" })}>
                       <option value="">—</option>
                       {lackKategorien.map((k) => <option key={k.id} value={k.name}>{k.name}</option>)}
@@ -134,7 +134,7 @@ export function LackierungTab({
                   </label>
                   <label className="block text-xs">
                     <span className="mb-0.5 block text-muted-foreground">Produkt</span>
-                    <select className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={pm.product} disabled={!pm.category}
+                    <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-8" value={pm.product} disabled={!pm.category}
                       onChange={(e) => onPatchPaint(pm.id, { product: e.target.value })}>
                       <option value="">—</option>
                       {(lackKategorien.find((k) => k.name === pm.category)?.artikel || []).map((a) => (
@@ -145,7 +145,7 @@ export function LackierungTab({
                   <div className="grid grid-cols-2 gap-2">
                     <label className="block text-xs">
                       <span className="mb-0.5 block text-muted-foreground">Variante</span>
-                      <select className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={pm.sides}
+                      <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-8" value={pm.sides}
                         onChange={(e) => onPatchPaint(pm.id, { sides: e.target.value as PaintModule["sides"] })}>
                         <option value="3-seitig">3-seitig</option>
                         <option value="4-seitig">4-seitig (×{fmt(saetze.vierseitigFaktor)})</option>
@@ -155,8 +155,8 @@ export function LackierungTab({
                     <label className="block text-xs">
                       <span className="mb-0.5 block text-muted-foreground">Menge</span>
                       <div className="flex gap-1">
-                        <NumInput value={pm.area} onCommit={(n) => onPatchPaint(pm.id, { area: n ?? 0 })} />
-                        <select className="kb-input h-8 min-h-0 w-16 px-1 py-1 text-sm" value={pm.amountMode}
+                        <NumInput min={0} value={pm.area} onCommit={(n) => onPatchPaint(pm.id, { area: n ?? 0 })} />
+                        <select className="kb-input h-11 min-h-0 w-16 px-1 py-1 text-sm sm:h-8" value={pm.amountMode}
                           onChange={(e) => onPatchPaint(pm.id, { amountMode: e.target.value as PaintModule["amountMode"] })}>
                           <option value="qm">m²</option>
                           <option value="lfm">lfm</option>
@@ -199,7 +199,7 @@ export function LackierungTab({
                   <input type="checkbox" checked={pm.isOptional} onChange={(e) => onPatchPaint(pm.id, { isOptional: e.target.checked })} />
                   optional
                 </label>
-                <button type="button" onClick={() => onRemovePaint(pm.id)} className="kb-btn h-7 min-h-0 px-2 py-1 text-xs text-destructive">
+                <button type="button" onClick={() => onRemovePaint(pm.id)} className="kb-btn h-11 min-h-0 px-3 py-1 text-xs text-destructive sm:h-7 sm:px-2">
                   <Trash2 className="h-3.5 w-3.5 text-destructive" /> Entfernen
                 </button>
               </div>
@@ -212,7 +212,7 @@ export function LackierungTab({
         type="button"
         onClick={onAddPaint}
         disabled={paintProjekt.positionen.length >= MAX_PAINT_MODULE}
-        className="kb-btn"
+        className="kb-btn h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
         title={paintProjekt.positionen.length >= MAX_PAINT_MODULE ? `Maximal ${MAX_PAINT_MODULE} Positionen` : undefined}
       >
         <Plus className="h-4 w-4 text-kb-green" /> Lackier-Position hinzufügen

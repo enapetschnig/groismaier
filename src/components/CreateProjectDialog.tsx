@@ -9,7 +9,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, UserPlus, Building, Upload, Trash2, CheckCircle, FileText, Image, Map } from "lucide-react";
+import { Search, UserPlus, Building, Upload, Trash2, CheckCircle, FileText, Image, Map, Plus } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { buildProjectFilePath } from "@/lib/projectFiles";
 import { useToast } from "@/hooks/use-toast";
@@ -702,10 +702,31 @@ export function CreateProjectDialog({
                         {composeCustomerName(customerForm) || customerForm.name || "Kunde suchen..."}
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-[350px] p-0" align="start">
+                    <PopoverContent className="w-[min(350px,calc(100vw-2.5rem))] p-0" align="start">
                       <Command>
                         <CommandInput placeholder="Kunde suchen..." />
                         <CommandList>
+                          {/*
+                            „+ Neuer Kunde" IMMER als erster Eintrag ganz oben —
+                            gleiches Verhalten wie in CustomerSelect. forceMount hält
+                            den Eintrag auch beim Tippen/Filtern sichtbar.
+                          */}
+                          <CommandGroup forceMount>
+                            <CommandItem
+                              forceMount
+                              value="__neuer_kunde__"
+                              onSelect={() => {
+                                setCustomerPopoverOpen(false);
+                                setSelectedCustomerId(null);
+                                setCustomerForm(EMPTY_CUSTOMER_FORM);
+                                setCustomerTab("new");
+                              }}
+                              className="font-medium text-primary aria-selected:text-primary"
+                            >
+                              <Plus className="w-4 h-4 mr-2 shrink-0" />
+                              Neuer Kunde
+                            </CommandItem>
+                          </CommandGroup>
                           <CommandEmpty>Kein Kunde gefunden</CommandEmpty>
                           <CommandGroup>
                             {customers.map((c) => (

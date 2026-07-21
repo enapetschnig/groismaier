@@ -339,10 +339,33 @@ export function calcRiegelPreisProM2(
   const abstand = bd.riegelAbstand / 100;
   const laenge = area / h;
   const staenderAnzahl = Math.ceil(laenge / abstand) + 1;
-  const staenderLaenge = h - 2 * brett;
+  // Bei unplausibel niedriger Wandhöhe (h < 2 × Brettdicke) wäre die
+  // Ständerlänge negativ und die Zeile käme mit einem NEGATIVEN Betrag in die
+  // Summe. Auf 0 klemmen; die Oberfläche warnt zusätzlich am Feld
+  // (siehe wandhoeheWarnung()).
+  const staenderLaenge = Math.max(0, h - 2 * brett);
   const gesamtLaenge = staenderAnzahl * staenderLaenge + 2 * laenge;
   const volumen = gesamtLaenge * daemm * brett;
   return (volumen * preis) / area;
+}
+
+/**
+ * Plausibilitätsprüfung der Wandhöhe für die Riegelkonstruktion.
+ * Liefert einen Klartext-Hinweis oder null (alles in Ordnung).
+ * Ohne Wandhöhe (0) greift die dokumentierte Näherung — das ist keine Warnung,
+ * sondern wird an der Materialzeile eigens angezeigt.
+ */
+export function wandhoeheWarnung(wandhoehe: number, bd: Betriebsdaten): string | null {
+  const h = num(wandhoehe);
+  if (h <= 0) return null; // 0 = dokumentierte Näherung, wird an der Zeile angezeigt
+  const mindest = (2 * bd.riegelBrettDicke) / 100;
+  if (h < mindest) {
+    return `Wandhöhe ${fmt(h)} m ist kleiner als 2 × Brettdicke (${fmt(mindest)} m) — ` +
+      "die Riegelkonstruktion ergibt so keinen sinnvollen Wert. Bitte prüfen.";
+  }
+  if (h < 1.5) return `Wandhöhe ${fmt(h)} m ist ungewöhnlich niedrig — bitte prüfen (Angabe in Metern).`;
+  if (h > 12) return `Wandhöhe ${fmt(h)} m ist ungewöhnlich hoch — bitte prüfen (Angabe in Metern).`;
+  return null;
 }
 
 // ----------------------------------------------------------------------------
@@ -356,6 +379,30 @@ export interface MaterialRowErgebnis {
   /** absolute €-Beträge (manuell + berechnet; 0 im DB-Modus) */
   ekAbsolut: number;
   vkAbsolut: number;
+  /**
+   * true, wenn die Zeile keinen eigenen VK hatte und der Verkaufspreis aus dem
+   * EK × VK-Faktor abgeleitet wurde. Die Oberfläche muss das sichtbar machen —
+   * stillschweigend darf so eine Zeile weder mit 0 € im Angebot landen (alter
+   * Fehler) noch unbemerkt kalkuliert werden.
+   */
+  vkAbgeleitet: boolean;
+}
+
+/**
+ * VK einer Materialzeile: eingetragener Wert, sonst EK × VK-Faktor (1,35).
+ *
+ * HINTERGRUND (Edge-Case-Review 2026-07-21): Eine Zeile mit EK, aber ohne VK
+ * ging mit 0 € in den Erlös und mit vollem Betrag in die Kosten — das Material
+ * verschwand lautlos aus der Angebotssumme und drückte gleichzeitig die Marge.
+ * Jetzt gilt dieselbe Regel wie im Katalog ("VK leer → EK × 1,35"), und die
+ * Zeile wird als abgeleitet gekennzeichnet.
+ */
+export function vkAusEk(ekRoh: number, vkRoh: number, bd: Betriebsdaten): { vk: number; abgeleitet: boolean } {
+  const ek = num(ekRoh);
+  const vk = num(vkRoh);
+  if (vk !== 0) return { vk, abgeleitet: false };
+  if (ek <= 0) return { vk: 0, abgeleitet: false };
+  return { vk: ek * (bd.vkFaktor > 0 ? bd.vkFaktor : 1), abgeleitet: true };
 }
 
 /**
@@ -380,9 +427,10 @@ export function calcMaterialRow(
   m: Pick<KalkModule, "area" | "wallHeight" | "insulationThickness" | "aufbauKategorie">,
   bd: Betriebsdaten,
 ): MaterialRowErgebnis {
-  const leer: MaterialRowErgebnis = { ekProM2: 0, vkProM2: 0, ekAbsolut: 0, vkAbsolut: 0 };
+  const leer: MaterialRowErgebnis = { ekProM2: 0, vkProM2: 0, ekAbsolut: 0, vkAbsolut: 0, vkAbgeleitet: false };
   if (row.manual) {
-    return { ...leer, ekAbsolut: num(row.ekPrice), vkAbsolut: num(row.vkPrice) };
+    const { vk, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
+    return { ...leer, ekAbsolut: num(row.ekPrice), vkAbsolut: vk, vkAbgeleitet: abgeleitet };
   }
   if (row.calc) {
     const betrag = num(m.area) * num(row.lmPerQm) * (num(row.dimension) / 100) * (num(row.dimension2) / 100) * num(row.ekPrice);
@@ -395,12 +443,19 @@ export function calcMaterialRow(
   }
   if (row.category === "Dämmstoffe") {
     const dicke = num(m.insulationThickness) / 100;
-    if (num(m.area) <= 0 || dicke <= 0 || num(row.ekPrice) <= 0) return leer;
-    const ek = dicke * num(row.ekPrice);
-    const vk = dicke * (num(row.vkPrice) > 0 ? num(row.vkPrice) : num(row.ekPrice));
-    return { ...leer, ekProM2: ek, vkProM2: vk };
+    const ekRoh = num(row.ekPrice);
+    const vkRoh = num(row.vkPrice);
+    // BUGFIX: früher war ein EK > 0 Pflicht — wer im Katalog-Modus nur den
+    // Verkaufspreis kannte und den EK leer ließ, verlor die ganze Zeile
+    // (Dämmung fehlte lautlos im Angebot). Jetzt genügt einer der beiden
+    // Preise; der Flächen-Check entfällt, damit die €/m²-Vorschau schon vor
+    // dem Eintragen der Fläche stimmt (×0 passiert ohnehin in der Summe).
+    if (dicke <= 0 || (ekRoh <= 0 && vkRoh <= 0)) return leer;
+    const { vk: vkBasis, abgeleitet } = vkAusEk(ekRoh, vkRoh, bd);
+    return { ...leer, ekProM2: dicke * ekRoh, vkProM2: dicke * vkBasis, vkAbgeleitet: abgeleitet };
   }
-  return { ...leer, ekProM2: num(row.ekPrice), vkProM2: num(row.vkPrice) };
+  const { vk, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
+  return { ...leer, ekProM2: num(row.ekPrice), vkProM2: vk, vkAbgeleitet: abgeleitet };
 }
 
 export interface MaterialSummen {
@@ -420,16 +475,19 @@ export interface MaterialSummen {
   ekSelbstkosten: number;
   /** true, sobald mind. eine Zeile über den VK-Fallback lief. */
   ekUnsicher: boolean;
+  /** Anzahl Zeilen, deren VK aus dem EK abgeleitet wurde (EK gesetzt, VK leer). */
+  vkAbgeleitetAnzahl: number;
 }
 
 export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSummen {
   let ekProM2 = 0, vkProM2 = 0, ekAbsolut = 0, vkAbsolut = 0;
-  let ekSelbstkosten = 0, ekUnsicher = false;
+  let ekSelbstkosten = 0, ekUnsicher = false, vkAbgeleitetAnzahl = 0;
   const area = num(m.area);
   for (const row of m.materialRows || []) {
     const r = calcMaterialRow(row, m, bd);
     ekProM2 += r.ekProM2; vkProM2 += r.vkProM2;
     ekAbsolut += r.ekAbsolut; vkAbsolut += r.vkAbsolut;
+    if (r.vkAbgeleitet) vkAbgeleitetAnzahl += 1;
 
     const ekZeile = r.ekProM2 * area + r.ekAbsolut;
     const vkZeile = r.vkProM2 * area + r.vkAbsolut;
@@ -444,7 +502,7 @@ export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSu
     ekProM2, vkProM2, ekAbsolut, vkAbsolut,
     ekTotal: ekProM2 * area + ekAbsolut,
     vkTotal: vkProM2 * area + vkAbsolut,
-    ekSelbstkosten, ekUnsicher,
+    ekSelbstkosten, ekUnsicher, vkAbgeleitetAnzahl,
   };
 }
 
@@ -616,9 +674,35 @@ export function margeAmpel(margeProzent: number, schwelle: number): MargeAmpel {
   return "rot";
 }
 
-/** Warnung nötig? Nur bei echtem Erlös (leere Aufbauten warnen nicht). */
+/**
+ * Bewertung eines Verdienst-Ergebnisses.
+ *
+ * HINTERGRUND (Edge-Case-Review 2026-07-21): Ein Aufbau mit 0 € Erlös und
+ * 5.000 € Kosten wurde als "–" dargestellt und löste KEINE Warnung aus — eine
+ * reine Verlustkalkulation sah unauffällig aus. "keinErloes" und "verlust"
+ * sind daher eigene, rot gekennzeichnete Zustände.
+ *
+ *   leer         — nichts kalkuliert (kein Erlös, keine Kosten)
+ *   keinErloes   — Kosten, aber kein Erlös → immer Verlust
+ *   verlust      — Erlös da, Deckungsbeitrag aber negativ
+ *   unterSchwelle— positiv, aber unter der Warnschwelle
+ *   ok           — alles im grünen Bereich
+ */
+export type MargeStatus = "leer" | "keinErloes" | "verlust" | "unterSchwelle" | "ok";
+
+export function margeStatus(v: VerdienstErgebnis, schwelle: number): MargeStatus {
+  const erloes = num(v.erloes);
+  const kosten = num(v.selbstkosten);
+  if (erloes <= 0) return kosten > 0 ? "keinErloes" : "leer";
+  if (num(v.deckungsbeitrag) < 0) return "verlust";
+  if (num(v.margeProzent) < num(schwelle)) return "unterSchwelle";
+  return "ok";
+}
+
+/** Warnung nötig? Auch dann, wenn es Kosten ohne jeden Erlös gibt. */
 export function margeUnterSchwelle(v: VerdienstErgebnis, schwelle: number): boolean {
-  return v.erloes > 0 && v.margeProzent < num(schwelle);
+  const s = margeStatus(v, schwelle);
+  return s === "keinErloes" || s === "verlust" || s === "unterSchwelle";
 }
 
 export interface ProjektZeile {
@@ -833,18 +917,33 @@ export interface AngebotItem {
  */
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
   const items: AngebotItem[] = [];
-  for (const z of projekt.zeilen) {
+  projekt.zeilen.forEach((z, i) => {
     const gesamt = round2(z.gesamtAdj);
-    if (gesamt <= 0) continue;
-    const name = z.module.name || `Aufbau ${projekt.zeilen.indexOf(z) + 1}`;
-    const beschreibung = z.module.note ? `${name}\n${z.module.note}` : name;
-    const proQm = round2(z.proQmAdj);
-    if (proQm > 0) {
-      items.push({ beschreibung, menge: round2(z.gesamtAdj / z.proQmAdj), einheit: "m²", einzelpreis: proQm, gesamtpreis: gesamt });
-    } else {
-      items.push({ beschreibung, menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt });
+    if (gesamt <= 0) return;
+    // Optionale Aufbauten sind im Angebot als solche zu erkennen (sie stecken
+    // — wie in der Projektsumme — mit vollem Betrag drin).
+    const name = (z.module.name || `Aufbau ${i + 1}`) + (z.module.isOptional ? " (optional)" : "");
+    const mitNotiz = (titel: string) => (z.module.note ? `${titel}\n${z.module.note}` : titel);
+    // Die Angebotszeile MUSS aufgehen: Menge × Einzelpreis = Gesamt.
+    // (Edge-Case-Review 2026-07-21: früher wurden Menge und Einzelpreis
+    // unabhängig gerundet — im Angebot stand dann z.B. 12,34 m² × 88,88 € und
+    // daneben eine Summe, die dazu nicht passte. Geht die m²-Zeile nicht
+    // centgenau auf, wird sie als Pauschale ausgewiesen.)
+    const menge = round2(num(z.module.area));
+    if (menge > 0) {
+      const einzelpreis = round2(gesamt / menge);
+      if (Math.abs(round2(menge * einzelpreis) - gesamt) < 0.005) {
+        items.push({ beschreibung: mitNotiz(name), menge, einheit: "m²", einzelpreis, gesamtpreis: gesamt });
+        return;
+      }
     }
-  }
+    // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
+    // stehen, damit im Angebot nichts an Information verlorengeht.
+    items.push({
+      beschreibung: mitNotiz(menge > 0 ? `${name} (${fmt(menge)} m²)` : name),
+      menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
+    });
+  });
   const projektGesamt = round2(projekt.totalGesamt);
   const summe = items.reduce((s, i) => s + i.gesamtpreis, 0);
   const nebenkosten = round2(projektGesamt - summe);

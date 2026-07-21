@@ -7,16 +7,16 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { format } from "date-fns";
-import { de } from "date-fns/locale";
+import { useEinheiten } from "@/hooks/useEinheiten";
 
 type Material = {
   id: string;
   material: string;
   menge: string | null;
+  einheit: string | null;
   notizen: string | null;
   created_at: string;
 };
@@ -28,6 +28,7 @@ type DisturbanceMaterialsProps = {
 
 export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMaterialsProps) => {
   const { toast } = useToast();
+  const einheiten = useEinheiten();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -38,6 +39,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
   const [formData, setFormData] = useState({
     material: "",
     menge: "",
+    einheit: "Stk.",
     notizen: "",
   });
 
@@ -67,7 +69,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
 
   const openAddForm = () => {
     setEditingMaterial(null);
-    setFormData({ material: "", menge: "", notizen: "" });
+    setFormData({ material: "", menge: "", einheit: "Stk.", notizen: "" });
     setShowForm(true);
   };
 
@@ -76,6 +78,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
     setFormData({
       material: material.material,
       menge: material.menge || "",
+      einheit: material.einheit || "Stk.",
       notizen: material.notizen || "",
     });
     setShowForm(true);
@@ -103,6 +106,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
       user_id: user.id,
       material: formData.material.trim(),
       menge: formData.menge.trim() || null,
+      einheit: formData.einheit || "Stk.",
       notizen: formData.notizen.trim() || null,
     };
 
@@ -112,6 +116,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
         .update({
           material: materialData.material,
           menge: materialData.menge,
+          einheit: materialData.einheit,
           notizen: materialData.notizen,
         })
         .eq("id", editingMaterial.id);
@@ -160,16 +165,16 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
 
   return (
     <>
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
+      <Card className="kb-panel">
+        <CardHeader className="flex flex-row items-center justify-between gap-2 pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
             <Package className="h-5 w-5" />
-            Verwendete Materialien
+            Material
           </CardTitle>
           {canEdit && (
-            <Button size="sm" onClick={openAddForm}>
+            <Button size="sm" className="h-11 shrink-0" onClick={openAddForm}>
               <Plus className="h-4 w-4 mr-1" />
-              Material hinzufügen
+              Material
             </Button>
           )}
         </CardHeader>
@@ -190,66 +195,68 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
               )}
             </div>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Material</TableHead>
-                  <TableHead>Menge</TableHead>
-                  <TableHead>Notizen</TableHead>
-                  {canEdit && <TableHead className="w-[100px]">Aktionen</TableHead>}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {materials.map((material) => (
-                  <TableRow key={material.id}>
-                    <TableCell className="font-medium">{material.material}</TableCell>
-                    <TableCell>{material.menge || "-"}</TableCell>
-                    <TableCell className="max-w-[200px] truncate">{material.notizen || "-"}</TableCell>
-                    {canEdit && (
-                      <TableCell>
-                        <div className="flex gap-1">
+            /* Karten — am Handy lesbar, keine Mini-Tabelle */
+            <div className="space-y-2">
+              {materials.map((material) => (
+                <div
+                  key={material.id}
+                  className="flex items-start gap-3 rounded-lg border p-3 bg-muted/20"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium break-words">{material.material}</p>
+                    <p className="text-sm text-muted-foreground">
+                      {material.menge ? `${material.menge} ${material.einheit || ""}`.trim() : "Menge nicht erfasst"}
+                    </p>
+                    {material.notizen && (
+                      <p className="text-sm text-muted-foreground break-words mt-1">{material.notizen}</p>
+                    )}
+                  </div>
+                  {canEdit && (
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Material bearbeiten"
+                        className="h-11 w-11"
+                        onClick={() => openEditForm(material)}
+                      >
+                        <Edit className="h-5 w-5" />
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => openEditForm(material)}
+                            aria-label="Material löschen"
+                            className="h-11 w-11"
+                            disabled={deleting === material.id}
                           >
-                            <Edit className="h-4 w-4" />
+                            <Trash2 className="h-5 w-5 text-destructive" />
                           </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                disabled={deleting === material.id}
-                              >
-                                <Trash2 className="h-4 w-4 text-destructive" />
-                              </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Material löschen?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Möchten Sie "{material.material}" wirklich löschen?
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                                <AlertDialogAction
-                                  onClick={() => handleDelete(material.id)}
-                                  className="bg-destructive text-destructive-foreground"
-                                >
-                                  Löschen
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </TableCell>
-                    )}
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>Material löschen?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Möchten Sie "{material.material}" wirklich löschen?
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDelete(material.id)}
+                              className="bg-destructive text-destructive-foreground"
+                            >
+                              Löschen
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </CardContent>
       </Card>
@@ -277,14 +284,29 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
                 required
               />
             </div>
-            <div>
-              <Label htmlFor="menge">Menge</Label>
-              <Input
-                id="menge"
-                value={formData.menge}
-                onChange={(e) => setFormData({ ...formData, menge: e.target.value })}
-                placeholder="z.B. 2 Stück, 5m, 1 Karton"
-              />
+            <div className="flex gap-2">
+              <div className="flex-1 min-w-0">
+                <Label htmlFor="menge">Menge</Label>
+                <Input
+                  id="menge"
+                  className="h-11"
+                  inputMode="decimal"
+                  value={formData.menge}
+                  onChange={(e) => setFormData({ ...formData, menge: e.target.value })}
+                  placeholder="z.B. 2"
+                />
+              </div>
+              <div className="w-28 shrink-0">
+                <Label htmlFor="einheit">Einheit</Label>
+                <Select value={formData.einheit} onValueChange={(v) => setFormData({ ...formData, einheit: v })}>
+                  <SelectTrigger id="einheit" className="h-11"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {einheiten.map((e) => (
+                      <SelectItem key={e} value={e}>{e}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div>
               <Label htmlFor="notizen">Notizen</Label>
@@ -297,12 +319,12 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
               />
             </div>
 
-            <div className="flex gap-3 justify-end pt-2">
-              <Button type="button" variant="outline" onClick={() => setShowForm(false)}>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3 sm:justify-end pt-2">
+              <Button type="button" variant="outline" className="h-11 sm:h-10" onClick={() => setShowForm(false)}>
                 Abbrechen
               </Button>
-              <Button type="submit" disabled={saving}>
-                {saving ? "Speichern..." : editingMaterial ? "Aktualisieren" : "Hinzufügen"}
+              <Button type="submit" className="h-12 sm:h-10 text-base sm:text-sm" disabled={saving}>
+                {saving ? "Speichern…" : editingMaterial ? "Aktualisieren" : "Hinzufügen"}
               </Button>
             </div>
           </form>

@@ -124,12 +124,33 @@ export function MobilePhotoCapture({ open, onClose, onPhotoCapture }: MobilePhot
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Gleiche Datei erneut wählbar machen (input feuert sonst kein change).
+    if (fileInputRef.current) fileInputRef.current.value = "";
     if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        variant: "destructive",
+        title: "Kein Bild",
+        description: "Bitte ein Foto (JPG/PNG/HEIC) auswählen.",
+      });
+      return;
+    }
+
+    // Kamera stoppen, sonst läuft der Stream im Hintergrund weiter.
+    stopCamera();
 
     // Zeige Vorschau
     const reader = new FileReader();
     reader.onload = (event) => {
       setCapturedPhoto(event.target?.result as string);
+    };
+    reader.onerror = () => {
+      toast({
+        variant: "destructive",
+        title: "Fehler",
+        description: "Foto konnte nicht gelesen werden.",
+      });
     };
     reader.readAsDataURL(file);
   };
@@ -176,22 +197,24 @@ export function MobilePhotoCapture({ open, onClose, onPhotoCapture }: MobilePhot
                 {!cameraStream ? (
                   <>
                     <div className="flex flex-col sm:flex-row gap-2">
-                      <Button onClick={startCamera} className="flex-1">
-                        <Camera className="w-4 h-4 mr-2" />
+                      <Button onClick={startCamera} className="flex-1 h-12">
+                        <Camera className="w-5 h-5 mr-2" />
                         Kamera starten
                       </Button>
+                      {/* KEIN capture-Attribut: sonst öffnet Android/iOS auch hier
+                          die Kamera statt der Galerie — der Button heißt aber
+                          „Fotomediathek". */}
                       <input
                         ref={fileInputRef}
                         type="file"
                         accept="image/*"
-                        capture="environment"
                         className="hidden"
                         onChange={handleFileSelect}
                       />
-                      <Button 
-                        variant="outline" 
+                      <Button
+                        variant="outline"
                         onClick={() => fileInputRef.current?.click()}
-                        className="flex-1"
+                        className="flex-1 h-12"
                       >
                         <Upload className="w-4 h-4 mr-2" />
                         Fotomediathek
@@ -208,19 +231,20 @@ export function MobilePhotoCapture({ open, onClose, onPhotoCapture }: MobilePhot
                     </div>
                   </>
                 ) : (
-                  <>
-                    <Button onClick={capturePhoto} className="flex-1">
-                      <Camera className="w-4 h-4 mr-2" />
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Button onClick={capturePhoto} className="flex-1 h-12">
+                      <Camera className="w-5 h-5 mr-2" />
                       Foto aufnehmen
                     </Button>
-                    <Button 
-                      variant="outline" 
+                    <Button
+                      variant="outline"
                       onClick={handleClose}
+                      className="h-12"
                     >
                       <X className="w-4 h-4 mr-2" />
                       Abbrechen
                     </Button>
-                  </>
+                  </div>
                 )}
               </div>
             </>
@@ -235,10 +259,10 @@ export function MobilePhotoCapture({ open, onClose, onPhotoCapture }: MobilePhot
               </div>
               
               <div className="sticky bottom-0 bg-card/95 border-t p-3 flex flex-col sm:flex-row gap-2">
-                <Button 
-                  onClick={handleUpload} 
+                <Button
+                  onClick={handleUpload}
                   disabled={uploading}
-                  className="flex-1"
+                  className="flex-1 h-12"
                 >
                   <Check className="w-4 h-4 mr-2" />
                   {uploading ? "Lädt hoch..." : "Hochladen"}
@@ -252,15 +276,16 @@ export function MobilePhotoCapture({ open, onClose, onPhotoCapture }: MobilePhot
                     }
                   }}
                   disabled={uploading}
-                  className="flex-1"
+                  className="flex-1 h-12"
                 >
                   <RotateCcw className="w-4 h-4 mr-2" />
                   Neu aufnehmen
                 </Button>
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   onClick={handleClose}
                   disabled={uploading}
+                  className="h-12"
                 >
                   <X className="w-4 h-4 mr-2" />
                   Abbrechen

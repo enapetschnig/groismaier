@@ -7,11 +7,11 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
-import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X, Split, Plus } from "lucide-react";
+import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X, Split, Plus, Percent, AlertTriangle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/usePermissions";
+import { parseDecimal, formatForInput } from "@/lib/num";
 
 const FALLBACK_KATEGORIEN = [
   { value: "material", label: "Material" },
@@ -46,6 +46,7 @@ type Allocation = {
 };
 
 const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: Props) {
   const { toast } = useToast();
@@ -67,6 +68,10 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const [allocBulkProject, setAllocBulkProject] = useState("");
   const [newAlloc, setNewAlloc] = useState({ beschreibung: "", betrag: "", project_id: "" });
   const [allocSaving, setAllocSaving] = useState(false);
+  // Nachträglicher Rabatt/Skonto-Abzug (kein DB-Feld — wird einmalig auf
+  // Brutto/Netto angewendet und in den Notizen dokumentiert).
+  const [rabattTyp, setRabattTyp] = useState<"prozent" | "euro">("prozent");
+  const [rabattWert, setRabattWert] = useState("");
 
   useEffect(() => {
     (supabase.from("admin_config_options" as never) as any)
@@ -119,7 +124,13 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       return;
     }
     if (inv) {
-      setForm(inv);
+      // Beträge als Rohtext in österreichischer Schreibweise ins Formular —
+      // die Felder sind Textfelder, damit „12,50" tippbar bleibt.
+      setForm({
+        ...inv,
+        betrag_brutto: (inv as any).betrag_brutto != null ? formatForInput(Number((inv as any).betrag_brutto), 2) : "",
+        betrag_netto: (inv as any).betrag_netto != null ? formatForInput(Number((inv as any).betrag_netto), 2) : "",
+      });
       // Wenn bereits verrechnet, referenzierte Ausgangsrechnung laden
       const verId = (inv as any).verrechnet_in_invoice_id;
       if (verId) {
@@ -195,27 +206,110 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   // Teilbeträgen (der Kopf-Betrag der Rechnung wird ignoriert, um
   // Doppelzählung zu vermeiden).
 
+  /** Bruttobetrag laut Rechnung — die harte Obergrenze für alles Weitere. */
+  const invoiceBrutto = (): number => {
+    const b = parseDecimal(form?.betrag_brutto);
+    return b !== null && b > 0 ? b : 0;
+  };
+
+  /** Netto aus dem Bruttobetrag + USt-Satz abgeleitet. */
+  const nettoAusBrutto = (): number => {
+    const u = parseDecimal(form?.ust_satz);
+    const satz = u !== null && u >= 0 ? u : 20;
+    return round2(invoiceBrutto() / (1 + satz / 100));
+  };
+
+  /** true, sobald das frei editierbare Netto-Feld über dem Brutto liegt. */
+  const nettoUeberBrutto = (): boolean => {
+    const n = parseDecimal(form?.betrag_netto);
+    return n !== null && invoiceBrutto() > 0 && n - invoiceBrutto() > 0.005;
+  };
+
+  // Zuordnungs-Obergrenze. WICHTIG: Das Netto-Feld ist frei editierbar —
+  // wird nur dagegen geprüft, kann man durch Hochsetzen des Nettos beliebig
+  // viel auf Projekte buchen. Deshalb gilt der tatsächliche Rechnungsbetrag
+  // (Brutto) als Deckel.
   const invoiceNetto = (): number => {
-    const n = parseFloat(form?.betrag_netto);
-    if (Number.isFinite(n) && n > 0) return n;
-    const b = parseFloat(form?.betrag_brutto);
-    const u = parseFloat(form?.ust_satz);
-    if (Number.isFinite(b) && b > 0) return b / (1 + (Number.isFinite(u) ? u : 20) / 100);
+    const n = parseDecimal(form?.betrag_netto);
+    const deckel = invoiceBrutto();
+    if (n !== null && n > 0) return deckel > 0 ? Math.min(n, deckel) : n;
+    if (deckel > 0) return nettoAusBrutto();
     return 0;
   };
 
   const zugeordnetSumme = allocations.reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
   const restBetrag = Math.round((invoiceNetto() - zugeordnetSumme) * 100) / 100;
 
+  /**
+   * Rabatt/Skonto einmalig vom aktuellen Bruttobetrag abziehen.
+   * Es gibt (noch) keine DB-Spalte dafür — der Abzug wird direkt in
+   * Brutto/Netto eingerechnet und in den Notizen dokumentiert.
+   */
+  const applyRabatt = () => {
+    const brutto = parseDecimal(form?.betrag_brutto);
+    const w = parseDecimal(rabattWert);
+    if (brutto === null || brutto <= 0) {
+      toast({ variant: "destructive", title: "Kein Betrag", description: "Bitte zuerst einen Bruttobetrag erfassen." });
+      return;
+    }
+    if (w === null || w <= 0) {
+      toast({ variant: "destructive", title: "Rabatt fehlt", description: "Bitte einen Rabatt-/Skontowert > 0 eingeben." });
+      return;
+    }
+    const abzug = round2(Math.min(rabattTyp === "prozent" ? (brutto * w) / 100 : w, brutto));
+    const neuBrutto = round2(brutto - abzug);
+    if (neuBrutto <= 0) {
+      toast({ variant: "destructive", title: "Rabatt zu hoch", description: "Nach Abzug bleibt kein Zahlbetrag übrig." });
+      return;
+    }
+    const ustW = parseDecimal(form?.ust_satz);
+    const ust = ustW !== null && ustW >= 0 ? ustW : 20;
+    const neuNetto = round2(neuBrutto / (1 + ust / 100));
+    const notiz = `Rabatt/Skonto: ${rabattTyp === "prozent" ? `${w} %` : eur(abzug)} auf ${eur(brutto)} = −${eur(abzug)} → Zahlbetrag ${eur(neuBrutto)} brutto`;
+    setForm((prev: any) => ({
+      ...prev,
+      betrag_brutto: formatForInput(neuBrutto, 2),
+      betrag_netto: formatForInput(neuNetto, 2),
+      notizen: [String(prev.notizen || "").trim(), notiz].filter(Boolean).join("\n"),
+    }));
+    setRabattWert("");
+    toast({
+      title: "Rabatt abgezogen",
+      description: `−${eur(abzug)} → ${eur(neuBrutto)} brutto. Zum Übernehmen unten auf „Speichern" tippen.`,
+    });
+  };
+
   const addAllocation = async () => {
     if (!form) return;
-    const betrag = parseFloat(newAlloc.betrag);
+    const betrag = parseDecimal(newAlloc.betrag);
     if (!newAlloc.project_id) {
       toast({ variant: "destructive", title: "Projekt fehlt", description: "Bitte ein Projekt für den Teilbetrag wählen." });
       return;
     }
-    if (!Number.isFinite(betrag) || betrag <= 0) {
+    if (betrag === null || betrag <= 0) {
       toast({ variant: "destructive", title: "Betrag ungültig", description: "Bitte einen Teilbetrag (netto, > 0) eingeben." });
+      return;
+    }
+    // Ohne gültigen Rechnungsbetrag gibt es keine belastbare Obergrenze —
+    // dann lieber gar nicht zuordnen lassen.
+    if (invoiceBrutto() <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Rechnungsbetrag fehlt",
+        description: "Bitte zuerst einen Bruttobetrag erfassen und speichern — sonst lässt sich die Aufteilung nicht begrenzen.",
+      });
+      return;
+    }
+    // Überzuordnung verhindern — sonst zeigt die Nachkalkulation mehr
+    // Fremdkosten, als die Rechnung überhaupt hergibt. Grundlage ist der
+    // Rechnungsbetrag (Brutto), NICHT das frei editierbare Netto-Feld.
+    if (betrag - restBetrag > 0.01) {
+      toast({
+        variant: "destructive",
+        title: "Teilbetrag zu hoch",
+        description: `Es sind nur noch ${eur(Math.max(0, restBetrag))} von ${eur(invoiceNetto())} netto frei (Rechnung: ${eur(invoiceBrutto())} brutto).`,
+        duration: 8000,
+      });
       return;
     }
     setAllocSaving(true);
@@ -283,10 +377,10 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   // Netto aus Brutto + USt-Satz ableiten (wie im Upload-Dialog) — hält
   // betrag_netto konsistent, damit die Projekt-Nachkalkulation stimmt.
   const deriveNetto = (brutto: any, ust: any): string | null => {
-    const b = parseFloat(brutto);
-    const u = parseFloat(ust);
-    if (!Number.isFinite(b) || !Number.isFinite(u)) return null;
-    return (b / (1 + u / 100)).toFixed(2);
+    const b = parseDecimal(brutto);
+    const u = parseDecimal(ust);
+    if (b === null || u === null) return null;
+    return (b / (1 + u / 100)).toFixed(2).replace(".", ",");
   };
 
   const handleSave = async () => {
@@ -296,18 +390,42 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       toast({ variant: "destructive", title: "Lieferant fehlt", description: "Bitte einen Lieferanten eingeben." });
       return;
     }
-    const brutto = parseFloat(form.betrag_brutto);
-    if (!Number.isFinite(brutto) || brutto <= 0) {
+    const brutto = parseDecimal(form.betrag_brutto);
+    if (brutto === null || brutto <= 0) {
       toast({ variant: "destructive", title: "Betrag ungültig", description: "Bitte einen gültigen Bruttobetrag (> 0) eingeben." });
       return;
     }
-    const toNumOrNull = (v: any) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+    const toNumOrNull = (v: any) => parseDecimal(v);
+    const ustSatz = toNumOrNull(form.ust_satz) ?? 20;
     // Netto: fehlend/ungültig/negativ → aus Brutto+USt ableiten, damit die
     // Nachkalkulation nicht auf den pauschalen Brutto/1,2-Fallback fällt.
     let netto = toNumOrNull(form.betrag_netto);
     if (netto === null || netto <= 0) {
-      const ust = toNumOrNull(form.ust_satz) ?? 20;
-      netto = parseFloat((brutto / (1 + ust / 100)).toFixed(2));
+      netto = round2(brutto / (1 + ustSatz / 100));
+    }
+    // Netto darf das Brutto nicht übersteigen — sonst ist die
+    // Nachkalkulation um den Faktor (1 + USt) daneben.
+    if (netto - brutto > 0.005) {
+      const korrigiert = round2(brutto / (1 + ustSatz / 100));
+      update("betrag_netto", formatForInput(korrigiert, 2));
+      toast({
+        variant: "destructive",
+        title: "Netto größer als Brutto",
+        description: `Das Netto (${eur(netto)}) kann nicht größer sein als der Bruttobetrag (${eur(brutto)}). Korrigiert auf ${eur(korrigiert)} — bitte prüfen und erneut speichern.`,
+        duration: 9000,
+      });
+      return;
+    }
+    // Harte Sperre: bereits gebuchte Teilbeträge dürfen den Rechnungsbetrag
+    // nicht übersteigen (z. B. wenn der Betrag nachträglich gesenkt wird).
+    if (allocations.length > 0 && zugeordnetSumme - netto > 0.01) {
+      toast({
+        variant: "destructive",
+        title: "Zu viel auf Projekte gebucht",
+        description: `Den Projekten sind ${eur(zugeordnetSumme)} zugeordnet, die Rechnung ergibt aber nur ${eur(netto)} netto. Bitte zuerst die Projekt-Aufteilung oben korrigieren.`,
+        duration: 9000,
+      });
+      return;
     }
     setSaving(true);
     const { error } = await supabase.from("purchase_invoices").update({
@@ -318,7 +436,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       bezahlt_am: form.bezahlt_am || null,
       betrag_brutto: brutto,
       betrag_netto: netto,
-      ust_satz: toNumOrNull(form.ust_satz),
+      ust_satz: ustSatz,
       kategorie: form.kategorie,
       project_id: form.project_id || null,
       status: form.status,
@@ -347,9 +465,9 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
   return (
     <Dialog open={!!invoiceId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle>Eingangsrechnung bearbeiten</DialogTitle>
+          <DialogTitle className="pr-6 text-base sm:text-lg">Eingangsrechnung bearbeiten</DialogTitle>
         </DialogHeader>
 
         {loading || !form ? (
@@ -365,18 +483,18 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                     <iframe
                       src={fileUrl}
                       title={form.file_name || "Rechnung"}
-                      className="w-full h-[420px] bg-white"
+                      className="w-full h-[260px] sm:h-[420px] bg-white"
                     />
                   ) : (
                     <img
                       src={fileUrl}
                       alt={form.file_name || "Rechnung"}
-                      className="w-full max-h-[420px] object-contain bg-white"
+                      className="w-full max-h-[260px] sm:max-h-[420px] object-contain bg-white"
                     />
                   )}
                 </div>
-                <div className="flex gap-2">
-                  <Button variant="outline" onClick={openFile} className="flex-1 gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" onClick={openFile} className="h-11 flex-1 gap-2">
                     <ExternalLink className="h-4 w-4" />
                     In neuem Tab öffnen
                   </Button>
@@ -432,18 +550,18 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                     )}
                   </div>
                   {isAdmin && (
-                    <Button variant="outline" size="sm" onClick={unsetVerrechnet} className="gap-1">
+                    <Button variant="outline" size="sm" onClick={unsetVerrechnet} className="h-10 gap-1">
                       <X className="h-3.5 w-3.5" />
                       Verrechnung aufheben
                     </Button>
                   )}
                 </div>
               ) : (
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="text-xs text-muted-foreground">
                     Noch nicht an Kunden verrechnet.
                   </span>
-                  <Button variant="outline" size="sm" onClick={openVerrechnen} className="gap-1">
+                  <Button variant="outline" size="sm" onClick={openVerrechnen} className="h-10 gap-1">
                     <Receipt className="h-3.5 w-3.5" />
                     Als verrechnet markieren
                   </Button>
@@ -469,38 +587,48 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </p>
 
               {allocSelected.size > 0 && (
-                <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
                   <span className="text-xs whitespace-nowrap font-medium">{allocSelected.size} ausgewählt</span>
                   <Select value={allocBulkProject || "none"} onValueChange={v => setAllocBulkProject(v === "none" ? "" : v)}>
-                    <SelectTrigger className="h-8 text-xs flex-1"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
+                    <SelectTrigger className="h-11 text-xs flex-1 min-w-[8rem]"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Projekt wählen...</SelectItem>
                       {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                  <Button type="button" size="sm" className="h-8" onClick={assignAllocBulk} disabled={!allocBulkProject}>
+                  <Button type="button" size="sm" className="h-11" onClick={assignAllocBulk} disabled={!allocBulkProject}>
                     Auswahl zuordnen
                   </Button>
                 </div>
               )}
 
               {allocations.length > 0 && (
-                <div className="space-y-1 max-h-56 overflow-y-auto">
+                <div className="space-y-1.5 max-h-72 overflow-y-auto">
                   {allocations.map(a => (
-                    <div key={a.id} className="flex items-center gap-2 rounded-md border bg-background px-2 py-1.5">
-                      <Checkbox
-                        checked={allocSelected.has(a.id)}
-                        onCheckedChange={() => toggleAllocSelected(a.id)}
-                        className="shrink-0"
-                      />
-                      <span className="flex-1 min-w-0 text-xs truncate" title={a.beschreibung || undefined}>
+                    <div key={a.id} className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-2 py-2">
+                      {/* 44px-Tap-Ziel um die Checkbox — am Handy sonst kaum treffbar. */}
+                      <button
+                        type="button"
+                        role="checkbox"
+                        aria-checked={allocSelected.has(a.id)}
+                        aria-label="Teilbetrag auswählen"
+                        onClick={() => toggleAllocSelected(a.id)}
+                        className="flex h-11 w-9 shrink-0 items-center justify-center rounded hover:bg-muted"
+                      >
+                        <span className={`flex h-5 w-5 items-center justify-center rounded-sm border ${
+                          allocSelected.has(a.id) ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                        }`}>
+                          {allocSelected.has(a.id) && <Check className="h-4 w-4" />}
+                        </span>
+                      </button>
+                      <span className="flex-1 min-w-[7rem] text-xs truncate" title={a.beschreibung || undefined}>
                         {a.beschreibung || `Teilbetrag${a.position_index != null ? ` (Position ${a.position_index + 1})` : ""}`}
                       </span>
                       <span className="text-xs font-mono tabular-nums whitespace-nowrap">
                         {eur(Number(a.betrag_netto) || 0)}
                       </span>
                       <Select value={a.project_id} onValueChange={v => reassignAllocation(a.id, v)}>
-                        <SelectTrigger className="h-7 w-[140px] text-xs shrink-0">
+                        <SelectTrigger className="h-11 flex-1 min-w-[8rem] text-xs">
                           <SelectValue placeholder="Projekt" />
                         </SelectTrigger>
                         <SelectContent>
@@ -509,11 +637,12 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                       </Select>
                       <button
                         type="button"
-                        className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-destructive shrink-0"
+                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded hover:bg-muted text-muted-foreground hover:text-destructive"
                         onClick={() => deleteAllocation(a.id)}
                         title="Teilbetrag entfernen"
+                        aria-label="Teilbetrag entfernen"
                       >
-                        <X className="h-3.5 w-3.5" />
+                        <X className="h-4 w-4" />
                       </button>
                     </div>
                   ))}
@@ -521,26 +650,28 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               )}
 
               {/* Neuer Teilbetrag */}
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   placeholder="Beschreibung (optional)"
                   value={newAlloc.beschreibung}
                   onChange={e => setNewAlloc(prev => ({ ...prev, beschreibung: e.target.value }))}
-                  className="h-8 text-xs flex-1"
+                  className="h-11 text-xs flex-1 min-w-[7rem]"
                 />
                 <Input
-                  type="number"
-                  step="0.01"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="€ netto"
+                  aria-label="Teilbetrag netto"
+                  data-testid="det-alloc-betrag"
                   value={newAlloc.betrag}
                   onChange={e => setNewAlloc(prev => ({ ...prev, betrag: e.target.value }))}
-                  className="h-8 text-xs w-24 shrink-0"
+                  className="h-11 text-xs w-24 shrink-0"
                 />
                 <Select
                   value={newAlloc.project_id || "none"}
                   onValueChange={v => setNewAlloc(prev => ({ ...prev, project_id: v === "none" ? "" : v }))}
                 >
-                  <SelectTrigger className="h-8 w-[140px] text-xs shrink-0">
+                  <SelectTrigger className="h-11 flex-1 min-w-[8rem] text-xs">
                     <SelectValue placeholder="Projekt" />
                   </SelectTrigger>
                   <SelectContent>
@@ -552,16 +683,17 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                   type="button"
                   size="sm"
                   variant="outline"
-                  className="h-8 px-2 shrink-0"
+                  className="h-11 w-11 px-0 shrink-0"
                   onClick={addAllocation}
                   disabled={allocSaving}
                   title="Teilbetrag hinzufügen"
+                  aria-label="Teilbetrag hinzufügen"
                 >
-                  {allocSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Plus className="h-3.5 w-3.5" />}
+                  {allocSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
                 </Button>
               </div>
 
-              <div className={`flex items-center justify-between text-xs pt-1 border-t ${restBetrag < -0.005 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
+              <div className={`flex flex-wrap items-center justify-between gap-2 text-xs pt-1 border-t ${restBetrag < -0.005 ? "text-destructive font-medium" : "text-muted-foreground"}`}>
                 <span>
                   Zugeordnet: <span className="font-mono tabular-nums">{eur(zugeordnetSumme)}</span> von{" "}
                   <span className="font-mono tabular-nums">{eur(invoiceNetto())}</span>{" "}
@@ -571,8 +703,13 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                 {restBetrag > 0.005 && allocations.length > 0 && (
                   <button
                     type="button"
-                    className="text-primary underline-offset-2 hover:underline shrink-0 ml-2"
-                    onClick={() => setNewAlloc(prev => ({ ...prev, betrag: String(restBetrag) }))}
+                    className="text-primary underline-offset-2 hover:underline shrink-0"
+                    onClick={() => setNewAlloc(prev => ({
+                      ...prev,
+                      betrag: formatForInput(restBetrag, 2),
+                      project_id: prev.project_id || form.project_id || "",
+                      beschreibung: prev.beschreibung || "Restbetrag (Hauptprojekt)",
+                    }))}
                     title="Restbetrag in das Betragsfeld übernehmen"
                   >
                     Rest übernehmen
@@ -581,8 +718,51 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="col-span-2">
+            {/* Rabatt / Skonto nachträglich abziehen */}
+            <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
+              <div className="flex items-center gap-2">
+                <Percent className="h-4 w-4 text-muted-foreground" />
+                <Label className="text-sm font-medium">Rabatt / Skonto abziehen</Label>
+              </div>
+              <p className="text-[11px] text-muted-foreground">
+                Zieht den Rabatt einmalig vom Bruttobetrag ab, rechnet das Netto neu und
+                vermerkt den Abzug in den Notizen. Danach unten „Speichern".
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  aria-label="Rabatt"
+                  value={rabattWert}
+                  onChange={e => setRabattWert(e.target.value)}
+                  className="h-10 w-24 shrink-0 text-right font-mono"
+                />
+                <Select value={rabattTyp} onValueChange={(v: any) => setRabattTyp(v)}>
+                  <SelectTrigger className="h-10 w-20 shrink-0" aria-label="Rabatt-Art"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="prozent">%</SelectItem>
+                    <SelectItem value="euro">€</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button type="button" variant="outline" size="sm" className="h-10 px-2 text-xs" onClick={() => { setRabattTyp("prozent"); setRabattWert("3"); }}>
+                  3 % Skonto
+                </Button>
+                <Button type="button" size="sm" className="h-10" onClick={applyRabatt} disabled={!rabattWert}>
+                  Abziehen
+                </Button>
+              </div>
+              {allocations.length > 0 && (
+                <p className="flex items-start gap-1.5 text-[11px] text-amber-700">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" />
+                  Achtung: Teilbeträge werden nicht automatisch gekürzt — nach dem Abzug bitte
+                  die Projekt-Aufteilung oben prüfen.
+                </p>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="sm:col-span-2">
                 <Label>Lieferant *</Label>
                 <Input value={form.lieferant || ""} onChange={e => update("lieferant", e.target.value)} />
               </div>
@@ -597,9 +777,10 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               <div>
                 <Label>Betrag Brutto * (€)</Label>
                 <Input
-                  type="number"
-                  step="0.01"
-                  value={form.betrag_brutto || ""}
+                  type="text"
+                  inputMode="decimal"
+                  data-testid="det-brutto"
+                  value={form.betrag_brutto ?? ""}
                   onChange={e => {
                     const v = e.target.value;
                     setForm((prev: any) => ({
@@ -608,11 +789,50 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                       betrag_netto: deriveNetto(v, prev.ust_satz) ?? prev.betrag_netto,
                     }));
                   }}
+                  onBlur={() => {
+                    const n = parseDecimal(form.betrag_brutto);
+                    if (n === null) return;
+                    update("betrag_brutto", formatForInput(round2(Math.max(0, n)), 2));
+                  }}
                 />
               </div>
               <div>
                 <Label>Betrag Netto (€)</Label>
-                <Input type="number" step="0.01" value={form.betrag_netto || ""} onChange={e => update("betrag_netto", e.target.value)} />
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  data-testid="det-netto"
+                  value={form.betrag_netto ?? ""}
+                  onChange={e => update("betrag_netto", e.target.value)}
+                  onBlur={() => {
+                    // Leer → aus Brutto/USt ableiten; größer als Brutto → klemmen.
+                    if (!String(form.betrag_netto ?? "").trim()) {
+                      if (invoiceBrutto() > 0) update("betrag_netto", formatForInput(nettoAusBrutto(), 2));
+                      return;
+                    }
+                    const n = parseDecimal(form.betrag_netto);
+                    if (n === null) {
+                      if (invoiceBrutto() > 0) update("betrag_netto", formatForInput(nettoAusBrutto(), 2));
+                      return;
+                    }
+                    if (invoiceBrutto() > 0 && n - invoiceBrutto() > 0.005) {
+                      update("betrag_netto", formatForInput(nettoAusBrutto(), 2));
+                      toast({
+                        variant: "destructive",
+                        title: "Netto größer als Brutto",
+                        description: `Netto ${eur(n)} ist größer als der Bruttobetrag ${eur(invoiceBrutto())} — korrigiert auf ${eur(nettoAusBrutto())}.`,
+                        duration: 7000,
+                      });
+                      return;
+                    }
+                    update("betrag_netto", formatForInput(round2(Math.max(0, n)), 2));
+                  }}
+                />
+                {nettoUeberBrutto() && (
+                  <p className="text-[11px] font-medium text-destructive mt-0.5" data-testid="det-netto-warnung">
+                    Netto darf nicht größer sein als Brutto ({eur(invoiceBrutto())}).
+                  </p>
+                )}
               </div>
               <div>
                 <Label>USt-Satz (%)</Label>
@@ -685,7 +905,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                   </SelectContent>
                 </Select>
               </div>
-              <div className="col-span-2">
+              <div className="sm:col-span-2">
                 <Label>Notizen</Label>
                 <Textarea value={form.notizen || ""} onChange={e => update("notizen", e.target.value)} rows={3} />
               </div>
@@ -693,9 +913,9 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
           </div>
         )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Abbrechen</Button>
-          <Button onClick={handleSave} disabled={saving || !form}>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" className="h-11" onClick={onClose}>Abbrechen</Button>
+          <Button className="h-11" onClick={handleSave} disabled={saving || !form}>
             {saving ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Speichert...</> : <><Save className="h-4 w-4 mr-2" /> Speichern</>}
           </Button>
         </DialogFooter>
@@ -703,7 +923,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
       {/* Verrechnen-Picker */}
       <Dialog open={verrechnenOpen} onOpenChange={(o) => !o && setVerrechnenOpen(false)}>
-        <DialogContent className="max-w-md max-h-[80vh] flex flex-col">
+        <DialogContent className="w-[calc(100vw-1rem)] max-w-md max-h-[80vh] flex flex-col p-4 sm:p-6">
           <DialogHeader>
             <DialogTitle>In welcher Rechnung verrechnet?</DialogTitle>
             <DialogDescription>
@@ -732,7 +952,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                   key={o.id}
                   type="button"
                   onClick={() => confirmVerrechnen(o.id)}
-                  className="w-full text-left flex items-center gap-2 px-2 py-2 rounded-md text-sm hover:bg-accent"
+                  className="w-full min-h-[44px] text-left flex items-center gap-2 px-2 py-2 rounded-md text-sm hover:bg-accent"
                 >
                   <div className="flex-1">
                     <div className="font-medium">{o.nummer}</div>

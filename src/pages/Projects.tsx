@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from "react";
-import { ArrowLeft, FolderOpen, Plus, FileText, Image, Package, Lock, Search, Upload, Camera, Trash2, ChevronDown, Home } from "lucide-react";
+import { FolderOpen, Plus, FileText, Image, Package, Lock, Search, Upload, Camera, Trash2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -19,6 +19,7 @@ import { QuickUploadDialog } from "@/components/QuickUploadDialog";
 import { MobilePhotoCapture } from "@/components/MobilePhotoCapture";
 import { useProjectStatuses, type ProjectStatus } from "@/hooks/useProjectStatuses";
 import { mergeDuplicateProjects } from "@/lib/mergeDuplicateProjects";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 
 type Project = {
   id: string;
@@ -353,38 +354,25 @@ const Projects = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
-                <Home className="h-5 w-5" />
-              </Button>
-              <h1 className="text-lg sm:text-xl font-bold">Projekte</h1>
-            </div>
-            <Button size="sm" className="gap-1 sm:gap-2" onClick={() => setShowNewDialog(true)}>
-              <Plus className="h-3 w-3 sm:h-4 sm:w-4" />
-              <span className="hidden sm:inline">Neues Projekt</span>
-              <span className="sm:hidden">Neu</span>
-            </Button>
-            <CreateProjectDialog
-              open={showNewDialog}
-              onClose={() => setShowNewDialog(false)}
-              onCreated={() => { setShowNewDialog(false); fetchProjects(); }}
-            />
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      {/* KingBill-Werkzeugleiste — gleiche Optik wie Kunden-/Artikel-/Belegmaske. */}
+      <KBToolbar onBack={() => navigate("/")} title="Projekte">
+        <KBToolbarButton
+          icon={Plus}
+          iconClassName="text-kb-green"
+          label="Neues Projekt"
+          onClick={() => setShowNewDialog(true)}
+        />
+      </KBToolbar>
+      <CreateProjectDialog
+        open={showNewDialog}
+        onClose={() => setShowNewDialog(false)}
+        onCreated={() => { setShowNewDialog(false); fetchProjects(); }}
+      />
 
       <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 max-w-6xl">
-        <div className="mb-4 sm:mb-6">
-          <h1 className="text-2xl sm:text-3xl font-bold mb-1 sm:mb-2">Projekte</h1>
-          <p className="text-sm sm:text-base text-muted-foreground">
-            Bauvorhaben verwalten und dokumentieren
-          </p>
-        </div>
-
+        {/* Filter & Suche im kb-panel — gleiche Optik wie Kunden-/Artikelmaske. */}
+        <div className="kb-panel mb-4 p-3">
         {/* Status-Filter */}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <Badge
@@ -416,7 +404,7 @@ const Projects = () => {
             );
           })}
         </div>
-        <div className="mb-4 flex flex-col sm:flex-row gap-2">
+        <div className="flex flex-col sm:flex-row gap-2">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
@@ -424,11 +412,11 @@ const Projects = () => {
               placeholder="Projekte durchsuchen..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-10"
+              className="kb-input h-11 pl-10"
             />
           </div>
           <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
-            <SelectTrigger className="w-full sm:w-[260px]">
+            <SelectTrigger className="kb-input h-11 w-full sm:w-[260px]">
               <SelectValue placeholder="Sortierung" />
             </SelectTrigger>
             <SelectContent>
@@ -438,6 +426,7 @@ const Projects = () => {
               <SelectItem value="name_asc">Projektname (A–Z)</SelectItem>
             </SelectContent>
           </Select>
+        </div>
         </div>
 
         <div className="grid gap-3 sm:gap-4 lg:gap-6">
@@ -475,7 +464,7 @@ const Projects = () => {
 
             if (filtered.length === 0) {
               return (
-                <Card>
+                <Card className="kb-panel border-0">
                   <CardContent className="py-12 text-center">
                     <FolderOpen className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
                     <p className="text-lg font-semibold mb-2">
@@ -501,10 +490,10 @@ const Projects = () => {
               return (
                 <Card
                   key={project.id}
-                  className="border-2 hover:shadow-lg transition-all cursor-pointer"
+                  className="kb-panel border-0 hover:shadow-lg transition-all cursor-pointer"
                   onClick={() => navigate(`/projects/${project.id}`)}
                 >
-                  <CardHeader className="bg-primary/5 pb-3 sm:pb-4">
+                  <CardHeader className="rounded-t-[6px] bg-primary/5 pb-3 sm:pb-4">
                     <div className="flex flex-col sm:flex-row sm:justify-between gap-3">
                       <div className="flex gap-2 sm:gap-3">
                         <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">

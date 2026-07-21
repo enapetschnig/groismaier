@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2 } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, Save, Lock } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,9 @@ type DisturbanceFormProps = {
     kunde_telefon: string | null;
     beschreibung: string;
     notizen: string | null;
+    status?: string;
+    project_id?: string | null;
+    customer_id?: string | null;
   } | null;
   /** Wenn gesetzt: Projekt beim Öffnen des Formulars vorselektieren (Quick-Action aus ProjectOverview) */
   prefillProjectId?: string | null;
@@ -50,6 +53,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   const einheiten = useEinheiten();
   const navigate = useNavigate();
   const [saving, setSaving] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  const isLocked = editData?.status === "abgeschlossen";
 
   const [formData, setFormData] = useState({
     datum: format(new Date(), "yyyy-MM-dd"),
@@ -130,6 +135,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         beschreibung: editData.beschreibung,
         notizen: editData.notizen || "",
       });
+      // Bestehende Projekt-/Kundenzuordnung übernehmen — sonst würde ein
+      // "Aktualisieren" die Zuordnung auf null zurücksetzen.
+      setSelectedProjectId(editData.project_id ?? null);
+      setSelectedCustomerId(editData.customer_id ?? null);
       // Load existing workers and materials when editing
       loadExistingWorkers(editData.id);
       loadExistingMaterials(editData.id);
@@ -207,8 +216,38 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
     setMaterials(materials.map(m => m.id === id ? { ...m, [field]: value } : m));
   };
 
+  /**
+   * Die Stunden werden zusätzlich in die Zeiterfassung gebucht. Schlägt das
+   * fehl (z. B. weil für den Zeitblock schon ein Eintrag existiert), darf das
+   * den Regiebericht NICHT kippen — der Chef muss es aber erfahren, sonst
+   * fehlen die Stunden unbemerkt.
+   */
+  const warnIfTimeEntriesFailed = (res: { data?: any; error?: any }) => {
+    const failed = !!res?.error || res?.data?.success === false;
+    if (!failed) return;
+    const msg: string = res?.data?.error || res?.error?.message || "";
+    const duplicate = msg.includes("unique") || msg.includes("duplicate");
+    toast({
+      title: "Stunden nicht gebucht",
+      description: duplicate
+        ? "Für diesen Zeitraum gibt es bereits einen Zeiteintrag — die Regiestunden wurden NICHT zusätzlich gebucht."
+        : "Die Regiestunden konnten nicht automatisch in die Zeiterfassung übernommen werden.",
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Abgeschlossene Regieberichte sind gesperrt (Wieder-Öffnen nur für Admin).
+    if (editData?.status === "abgeschlossen") {
+      toast({
+        variant: "destructive",
+        title: "Abgeschlossen",
+        description: "Dieser Regiebericht ist abgeschlossen und kann nicht mehr bearbeitet werden.",
+      });
+      return;
+    }
+
     setSaving(true);
 
     const { data: { user } } = await supabase.auth.getUser();
@@ -296,9 +335,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         notizen: `Regie-Zuordnung: ${editData.id}`,
       }));
 
-      await supabase.functions.invoke("create-team-time-entries", {
+      const teRes = await supabase.functions.invoke("create-team-time-entries", {
         body: { entries: timeEntries, deleteDisturbanceId: editData.id },
       });
+      warnIfTimeEntriesFailed(teRes);
 
       toast({ title: "Erfolg", description: "Regiebericht wurde aktualisiert" });
     } else {
@@ -362,17 +402,23 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         notizen: `Regie-Zuordnung: ${newDisturbance.id}`,
       }));
 
-      await supabase.functions.invoke("create-team-time-entries", {
+      const teRes = await supabase.functions.invoke("create-team-time-entries", {
         body: { entries: timeEntries },
       });
+      warnIfTimeEntriesFailed(teRes);
 
-      toast({ title: "Erfolg", description: "Regiebericht wurde erfasst" });
+      toast({
+        title: "Gespeichert",
+        description: "Regiebericht als Entwurf gespeichert. Die Unterschrift kann jederzeit später geholt werden.",
+      });
 
       setSaving(false);
       onOpenChange(false);
 
-      // Navigate to detail page with signature dialog open
-      navigate(`/disturbances/${newDisturbance.id}?openSignature=true`);
+      // Bewusst OHNE Unterschrifts-Dialog: Speichern und Unterschreiben sind
+      // getrennte Schritte. Auf der Detailseite gibt es den Button
+      // „Zur Unterschrift".
+      navigate(`/disturbances/${newDisturbance.id}`);
       return;
     }
 
@@ -447,73 +493,75 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
             {editData ? "Regiebericht bearbeiten" : "Neuen Regiebericht erfassen"}
           </DialogTitle>
           <DialogDescription>
-            Erfassen Sie einen Service-Einsatz beim Kunden.
+            Erfassen Sie einen Service-Einsatz beim Kunden. Speichern geht jederzeit —
+            die Unterschrift wird später mit einem eigenen Button geholt.
           </DialogDescription>
         </DialogHeader>
 
+        {isLocked && (
+          <div className="flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 flex-shrink-0">
+            <Lock className="h-4 w-4 shrink-0" />
+            Dieser Regiebericht ist abgeschlossen und kann nicht mehr geändert werden.
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto pr-1">
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Date and Time Section */}
-          <div className="space-y-4">
-            <h3 className="font-medium flex items-center gap-2">
-              <Calendar className="h-4 w-4" />
-              Datum & Uhrzeit
-            </h3>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="col-span-2">
-                <Label htmlFor="datum">Datum</Label>
-                <Input
-                  id="datum"
-                  type="date"
-                  value={formData.datum}
-                  onChange={(e) => setFormData({ ...formData, datum: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="startTime">Startzeit</Label>
-                <Input
-                  id="startTime"
-                  type="time"
-                  step={900}
-                  value={formData.startTime}
-                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="endTime">Endzeit</Label>
-                <Input
-                  id="endTime"
-                  type="time"
-                  step={900}
-                  value={formData.endTime}
-                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
-                  required
-                />
-              </div>
-              <div>
-                <Label htmlFor="pauseMinutes">Pause (Minuten)</Label>
-                <Input
-                  id="pauseMinutes"
-                  type="number"
-                  min="0"
-                  value={formData.pauseMinutes}
-                  onChange={(e) => setFormData({ ...formData, pauseMinutes: parseInt(e.target.value) || 0 })}
-                />
-              </div>
-              <div className="flex items-end">
-                <div className="bg-muted rounded-md px-3 py-2 w-full text-center">
-                  <span className="text-sm text-muted-foreground">Stunden: </span>
-                  <span className="font-bold text-primary">{calculateHours().toFixed(2)}</span>
+        <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
+          {/* 1. Kunde — steht ganz oben, weil er am Bau zuerst gewählt wird */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2 font-medium">
+              <User className="h-4 w-4" />
+              Kunde *
+            </Label>
+            <CustomerSelect
+              value={selectedCustomerId}
+              onChange={(id, customer) => {
+                setSelectedCustomerId(id);
+                if (customer) {
+                  setFormData(prev => ({
+                    ...prev,
+                    kundeName: customer.name,
+                    kundeEmail: customer.email || "",
+                    kundeAdresse: customer.adresse || "",
+                    kundePlz: customer.plz || "",
+                    kundeOrt: customer.ort || "",
+                    kundeTelefon: customer.telefon || "",
+                  }));
+                } else {
+                  setFormData(prev => ({
+                    ...prev,
+                    kundeName: "",
+                    kundeEmail: "",
+                    kundeAdresse: "",
+                    kundePlz: "",
+                    kundeOrt: "",
+                    kundeTelefon: "",
+                  }));
+                }
+              }}
+              placeholder="Kunde auswählen"
+              className="h-11 w-full"
+            />
+            {formData.kundeName ? (
+              <div className="rounded-lg border p-3 bg-muted/30 space-y-1 text-sm">
+                <div className="font-medium">{formData.kundeName}</div>
+                {formData.kundeAdresse && <div className="text-muted-foreground">{formData.kundeAdresse}</div>}
+                {(formData.kundePlz || formData.kundeOrt) && <div className="text-muted-foreground">{formData.kundePlz} {formData.kundeOrt}</div>}
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {formData.kundeEmail && <span className="text-muted-foreground flex items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{formData.kundeEmail}</span>}
+                  {formData.kundeTelefon && <span className="text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3 shrink-0" />{formData.kundeTelefon}</span>}
                 </div>
               </div>
-            </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Kunde oben auswählen oder im Dropdown „Neuer Kunde" anlegen.
+              </p>
+            )}
           </div>
 
-          {/* Projekt-Zuordnung */}
+          {/* 2. Projekt-Zuordnung (bestimmt den Projektordner für das PDF) */}
           <div className="space-y-2">
-            <Label>Projekt (optional)</Label>
+            <Label>Projekt (optional — Bericht landet im Projektordner)</Label>
             <Select value={selectedProjectId || "none"} onValueChange={async (v) => {
               const projId = v === "none" ? null : v;
               setSelectedProjectId(projId);
@@ -538,7 +586,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                 }
               }
             }}>
-              <SelectTrigger><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">Kein Projekt</SelectItem>
                 {projects.map(p => (
@@ -548,57 +596,67 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
             </Select>
           </div>
 
-          {/* Customer Section */}
+          {/* 3. Datum & Uhrzeit */}
           <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-medium flex items-center gap-2">
-                <User className="h-4 w-4" />
-                Kundendaten
-              </h3>
-              <div className="w-[260px]">
-                <CustomerSelect
-                  value={selectedCustomerId}
-                  onChange={(id, customer) => {
-                    setSelectedCustomerId(id);
-                    if (customer) {
-                      setFormData(prev => ({
-                        ...prev,
-                        kundeName: customer.name,
-                        kundeEmail: customer.email || "",
-                        kundeAdresse: customer.adresse || "",
-                        kundePlz: customer.plz || "",
-                        kundeOrt: customer.ort || "",
-                        kundeTelefon: customer.telefon || "",
-                      }));
-                    } else {
-                      setFormData(prev => ({
-                        ...prev,
-                        kundeName: "",
-                        kundeEmail: "",
-                        kundeAdresse: "",
-                        kundePlz: "",
-                        kundeOrt: "",
-                        kundeTelefon: "",
-                      }));
-                    }
-                  }}
-                  placeholder="Kunde auswählen"
+            <h3 className="font-medium flex items-center gap-2">
+              <Calendar className="h-4 w-4" />
+              Datum & Uhrzeit
+            </h3>
+            <div className="grid grid-cols-2 gap-3 sm:gap-4">
+              <div className="col-span-2">
+                <Label htmlFor="datum">Datum</Label>
+                <Input
+                  id="datum"
+                  type="date"
+                  className="h-11"
+                  value={formData.datum}
+                  onChange={(e) => setFormData({ ...formData, datum: e.target.value })}
+                  required
                 />
               </div>
-            </div>
-            {formData.kundeName ? (
-              <div className="rounded-lg border p-3 bg-muted/30 space-y-1 text-sm">
-                <div className="font-medium">{formData.kundeName}</div>
-                {formData.kundeAdresse && <div className="text-muted-foreground">{formData.kundeAdresse}</div>}
-                {(formData.kundePlz || formData.kundeOrt) && <div className="text-muted-foreground">{formData.kundePlz} {formData.kundeOrt}</div>}
-                <div className="flex gap-4">
-                  {formData.kundeEmail && <span className="text-muted-foreground flex items-center gap-1"><Mail className="h-3 w-3" />{formData.kundeEmail}</span>}
-                  {formData.kundeTelefon && <span className="text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3" />{formData.kundeTelefon}</span>}
+              <div>
+                <Label htmlFor="startTime">Startzeit</Label>
+                <Input
+                  id="startTime"
+                  type="time"
+                  step={900}
+                  className="h-11"
+                  value={formData.startTime}
+                  onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="endTime">Endzeit</Label>
+                <Input
+                  id="endTime"
+                  type="time"
+                  step={900}
+                  className="h-11"
+                  value={formData.endTime}
+                  onChange={(e) => setFormData({ ...formData, endTime: e.target.value })}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="pauseMinutes">Pause (Minuten)</Label>
+                <Input
+                  id="pauseMinutes"
+                  type="number"
+                  min="0"
+                  inputMode="numeric"
+                  className="h-11"
+                  value={formData.pauseMinutes}
+                  onChange={(e) => setFormData({ ...formData, pauseMinutes: parseInt(e.target.value) || 0 })}
+                />
+              </div>
+              <div className="flex items-end">
+                <div className="bg-muted rounded-md px-3 h-11 w-full flex items-center justify-center">
+                  <span className="text-sm text-muted-foreground">Stunden:&nbsp;</span>
+                  <span className="font-bold text-primary">{calculateHours().toFixed(2)}</span>
                 </div>
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">Bitte wählen Sie oben einen Kunden aus oder erstellen Sie einen neuen.</p>
-            )}
+            </div>
           </div>
 
           {/* Multi-Employee Selection */}
@@ -620,7 +678,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
               <div>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="beschreibung">Durchgeführte Arbeit *</Label>
-                  <DictateButton value={formData.beschreibung} onResult={(t) => setFormData({ ...formData, beschreibung: t })} />
+                  <DictateButton className="h-11 px-3" value={formData.beschreibung} onResult={(t) => setFormData({ ...formData, beschreibung: t })} />
                 </div>
                 <Textarea
                   id="beschreibung"
@@ -634,7 +692,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
               <div>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="notizen">Notizen (optional)</Label>
-                  <DictateButton value={formData.notizen} onResult={(t) => setFormData({ ...formData, notizen: t })} />
+                  <DictateButton className="h-11 px-3" value={formData.notizen} onResult={(t) => setFormData({ ...formData, notizen: t })} />
                 </div>
                 <Textarea
                   id="notizen"
@@ -654,47 +712,51 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                 <Package className="h-4 w-4" />
                 Verwendetes Material (optional)
               </h3>
-              <Button type="button" variant="outline" size="sm" onClick={addMaterial}>
+              <Button type="button" variant="outline" className="h-11" onClick={addMaterial}>
                 <Plus className="h-4 w-4 mr-1" />
                 Material
               </Button>
             </div>
             
             {materials.length > 0 && (
-              <div className="space-y-2" data-materials-list>
+              <div className="space-y-3" data-materials-list>
                 {materials.map((mat) => (
-                  <div key={mat.id} className="flex gap-2 items-start">
+                  <div key={mat.id} className="rounded-lg border p-2 space-y-2 bg-muted/20">
                     <Input
-                      placeholder="Material"
+                      placeholder="Material / Bezeichnung"
                       value={mat.material}
                       onChange={(e) => updateMaterial(mat.id, "material", e.target.value)}
-                      className="flex-1"
+                      className="h-11 w-full"
                     />
-                    <Input
-                      placeholder="Menge"
-                      value={mat.menge}
-                      onChange={(e) => updateMaterial(mat.id, "menge", e.target.value)}
-                      className="w-20"
-                      type="number"
-                      step="0.1"
-                    />
-                    <Select value={mat.einheit} onValueChange={(v) => updateMaterial(mat.id, "einheit", v)}>
-                      <SelectTrigger className="w-20"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {einheiten.map(e => (
-                          <SelectItem key={e} value={e}>{e}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeMaterial(mat.id)}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                    <div className="flex gap-2 items-center">
+                      <Input
+                        placeholder="Menge"
+                        value={mat.menge}
+                        onChange={(e) => updateMaterial(mat.id, "menge", e.target.value)}
+                        className="h-11 flex-1 min-w-0"
+                        type="number"
+                        inputMode="decimal"
+                        step="0.1"
+                      />
+                      <Select value={mat.einheit} onValueChange={(v) => updateMaterial(mat.id, "einheit", v)}>
+                        <SelectTrigger className="h-11 w-24 shrink-0"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {einheiten.map(e => (
+                            <SelectItem key={e} value={e}>{e}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Material entfernen"
+                        onClick={() => removeMaterial(mat.id)}
+                        className="h-11 w-11 shrink-0 text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -703,17 +765,22 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         </form>
         </div>
 
-        {/* Sticky Actions */}
-        <div className="flex gap-3 justify-end pt-4 border-t bg-background flex-shrink-0">
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+        {/* Sticky Actions — Speichern ist ein EIGENER Schritt, die Unterschrift
+            wird erst später auf der Detailseite geholt. */}
+        <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3 sm:justify-end pt-3 border-t bg-background flex-shrink-0">
+          <Button type="button" variant="outline" className="h-11 sm:h-10" onClick={() => onOpenChange(false)}>
             Abbrechen
           </Button>
-          <Button onClick={(e) => { 
-            e.preventDefault();
-            const form = document.querySelector('form');
-            if (form) form.requestSubmit();
-          }} disabled={saving}>
-            {saving ? "Speichern..." : editData ? "Aktualisieren" : "Regiebericht erfassen"}
+          <Button
+            className="h-12 sm:h-10 text-base sm:text-sm"
+            onClick={(e) => {
+              e.preventDefault();
+              formRef.current?.requestSubmit();
+            }}
+            disabled={saving || isLocked}
+          >
+            <Save className="h-4 w-4 mr-2" />
+            {saving ? "Speichern…" : editData ? "Änderungen speichern" : "Speichern (ohne Unterschrift)"}
           </Button>
         </div>
       </DialogContent>

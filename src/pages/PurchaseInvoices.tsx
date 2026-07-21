@@ -1,6 +1,7 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Upload, FileText, Image as ImageIcon, Search, Filter, Trash2, Download, Euro, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock } from "lucide-react";
+import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil } from "lucide-react";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,9 @@ type PurchaseInvoice = {
   verrechnet_in_invoice_id?: string | null;
   beleg_locked?: boolean | null;
 };
+
+// Österreichische Geldformatierung (1.047,60) — wie im Rest der App.
+const eur = (n: number) => `€ ${(Number(n) || 0).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const FALLBACK_LABELS: Record<string, string> = {
   material: "Material",
@@ -217,74 +221,90 @@ export default function PurchaseInvoices() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-40 shadow-sm">
-        <div className="container mx-auto px-4 py-3 flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-4 w-4" />
+    <div className="min-h-screen kb-page">
+      <KBToolbar onBack={() => navigate("/")} title="Eingangsrechnungen & Belege">
+        {/* Am Handy stehen die beiden Aktionen als große Buttons im Inhalt
+            (sonst sprengen sie die schmale Toolbar). */}
+        <KBToolbarButton
+          icon={Camera}
+          label="Foto aufnehmen"
+          variant="blue"
+          className="hidden sm:inline-flex"
+          title="Rechnung mit der Handy-Kamera fotografieren"
+          onClick={() => cameraInputRef.current?.click()}
+        />
+        <KBToolbarButton
+          icon={Upload}
+          label="Hochladen"
+          className="hidden sm:inline-flex"
+          onClick={() => { setCameraFile(null); setUploadOpen(true); }}
+        />
+      </KBToolbar>
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        data-testid="camera-input-list"
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) {
+            setCameraFile(f);
+            setUploadOpen(true);
+          }
+          // reset so same file can be selected again
+          if (cameraInputRef.current) cameraInputRef.current.value = "";
+        }}
+      />
+
+      <main className="mx-auto w-full max-w-6xl px-3 sm:px-4 py-4 space-y-4">
+        {/* Handy-Schnellaktionen: das Wichtigste am Bau — Beleg abfotografieren */}
+        <div className="sm:hidden grid grid-cols-1 gap-2">
+          <Button
+            onClick={() => cameraInputRef.current?.click()}
+            className="w-full h-14 gap-2 text-base font-semibold"
+          >
+            <Camera className="h-6 w-6" />
+            Rechnung fotografieren
           </Button>
-          <h1 className="text-xl font-bold flex-1">Eingangsrechnungen & Belege</h1>
           <Button
             variant="outline"
-            onClick={() => cameraInputRef.current?.click()}
-            className="gap-2"
-            title="Rechnung fotografieren"
+            onClick={() => { setCameraFile(null); setUploadOpen(true); }}
+            className="w-full h-12 gap-2 text-sm font-semibold"
           >
-            <Camera className="h-4 w-4" />
-            <span className="hidden sm:inline">Foto</span>
-          </Button>
-          <Button onClick={() => { setCameraFile(null); setUploadOpen(true); }} className="gap-2">
             <Upload className="h-4 w-4" />
-            <span className="hidden sm:inline">Hochladen</span>
+            Datei hochladen (PDF/Foto)
           </Button>
-          <input
-            ref={cameraInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) {
-                setCameraFile(f);
-                setUploadOpen(true);
-              }
-              // reset so same file can be selected again
-              if (cameraInputRef.current) cameraInputRef.current.value = "";
-            }}
-          />
         </div>
-      </header>
-
-      <main className="container mx-auto px-4 py-4 space-y-4">
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card>
             <CardContent className="p-3">
               <p className="text-xs text-muted-foreground">Gesamt</p>
               <p className="text-xl font-bold">{stats.count}</p>
-              <p className="text-xs text-muted-foreground">€ {stats.gesamt.toFixed(2)}</p>
+              <p className="text-xs text-muted-foreground">{eur(stats.gesamt)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3">
               <p className="text-xs text-muted-foreground">Offen</p>
               <p className="text-xl font-bold text-orange-600">{stats.offen}</p>
-              <p className="text-xs text-orange-600">€ {stats.offenSumme.toFixed(2)}</p>
+              <p className="text-xs text-orange-600">{eur(stats.offenSumme)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3">
               <p className="text-xs text-muted-foreground">Bezahlt</p>
               <p className="text-xl font-bold text-green-600">{stats.bezahlt}</p>
-              <p className="text-xs text-green-600">€ {stats.bezahltSumme.toFixed(2)}</p>
+              <p className="text-xs text-green-600">{eur(stats.bezahltSumme)}</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-3">
               <p className="text-xs text-muted-foreground">Verrechnet</p>
               <p className="text-xl font-bold text-blue-600">{stats.verrechnet}</p>
-              <p className="text-xs text-blue-600">€ {stats.verrechnetSumme.toFixed(2)}</p>
+              <p className="text-xs text-blue-600">{eur(stats.verrechnetSumme)}</p>
             </CardContent>
           </Card>
         </div>
@@ -298,18 +318,18 @@ export default function PurchaseInvoices() {
                 placeholder="Lieferant, Nummer, Notiz..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
-                className="pl-8"
+                className="pl-8 h-11"
               />
             </div>
             <Select value={selectedProject} onValueChange={setSelectedProject}>
-              <SelectTrigger><SelectValue placeholder="Projekt" /></SelectTrigger>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Projekt" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="alle">Alle Projekte</SelectItem>
                 {projectOptions.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
               </SelectContent>
             </Select>
             <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger><SelectValue placeholder="Status" /></SelectTrigger>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Status" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="alle">Alle Status</SelectItem>
                 <SelectItem value="offen">Offen</SelectItem>
@@ -319,7 +339,7 @@ export default function PurchaseInvoices() {
               </SelectContent>
             </Select>
             <Select value={kategorieFilter} onValueChange={setKategorieFilter}>
-              <SelectTrigger><SelectValue placeholder="Kategorie" /></SelectTrigger>
+              <SelectTrigger className="h-11"><SelectValue placeholder="Kategorie" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="alle">Alle Kategorien</SelectItem>
                 {Object.entries(kategorieLabels).map(([v, l]) => (
@@ -341,9 +361,14 @@ export default function PurchaseInvoices() {
                 {invoices.length === 0 ? "Noch keine Eingangsrechnungen hochgeladen" : "Keine Rechnungen gefunden"}
               </p>
               {invoices.length === 0 && (
-                <Button onClick={() => setUploadOpen(true)} className="gap-2">
-                  <Upload className="h-4 w-4" /> Erste Rechnung hochladen
-                </Button>
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-center gap-2">
+                  <Button onClick={() => cameraInputRef.current?.click()} className="h-12 gap-2">
+                    <Camera className="h-5 w-5" /> Rechnung fotografieren
+                  </Button>
+                  <Button variant="outline" onClick={() => { setCameraFile(null); setUploadOpen(true); }} className="h-12 gap-2">
+                    <Upload className="h-4 w-4" /> Datei hochladen
+                  </Button>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -356,8 +381,9 @@ export default function PurchaseInvoices() {
                     {/* Icon */}
                     <button
                       onClick={() => openFile(inv)}
-                      className="shrink-0 w-12 h-12 rounded-md bg-muted flex items-center justify-center hover:bg-primary/10 transition-colors"
+                      className="shrink-0 w-11 h-11 rounded-md bg-muted flex items-center justify-center hover:bg-primary/10 transition-colors"
                       title="Datei öffnen"
+                      aria-label="Beleg öffnen"
                     >
                       {inv.mime_type === "application/pdf"
                         ? <FileText className="h-6 w-6 text-red-500" />
@@ -371,7 +397,7 @@ export default function PurchaseInvoices() {
                       onClick={() => setEditId(inv.id)}
                     >
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-semibold truncate">{inv.lieferant}</span>
+                        <span className="font-semibold break-words">{inv.lieferant}</span>
                         {inv.rechnungsnummer && (
                           <span className="text-xs text-muted-foreground">#{inv.rechnungsnummer}</span>
                         )}
@@ -390,50 +416,63 @@ export default function PurchaseInvoices() {
                           </Badge>
                         )}
                         {inv.projects && (
-                          <span className="flex items-center gap-1">
-                            <Building2 className="h-3 w-3" />
-                            {inv.projects.name}
+                          <span className="flex items-center gap-1 min-w-0">
+                            <Building2 className="h-3 w-3 shrink-0" />
+                            <span className="truncate">{inv.projects.name}</span>
                           </span>
                         )}
                       </div>
                     </button>
 
-                    {/* Amount + actions */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      <div className="text-right">
-                        <p className="font-semibold whitespace-nowrap">
-                          € {Number(inv.betrag_brutto).toFixed(2)}
+                    {/* Amount */}
+                    <div className="shrink-0 text-right">
+                      <p className="font-semibold whitespace-nowrap tabular-nums">
+                        {eur(Number(inv.betrag_brutto))}
+                      </p>
+                      {inv.betrag_netto !== null && (
+                        <p className="text-[10px] text-muted-foreground whitespace-nowrap tabular-nums">
+                          netto {eur(Number(inv.betrag_netto))}
                         </p>
-                        {inv.betrag_netto !== null && (
-                          <p className="text-[10px] text-muted-foreground whitespace-nowrap">
-                            netto € {Number(inv.betrag_netto).toFixed(2)}
-                          </p>
-                        )}
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={(e) => { e.stopPropagation(); toggleBezahlt(inv); }}
-                        title={inv.status === "bezahlt" ? "Als offen markieren" : "Als bezahlt markieren"}
-                      >
-                        <CheckCircle2 className={`h-4 w-4 ${inv.status === "bezahlt" ? "text-green-600" : "text-muted-foreground"}`} />
-                      </Button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Aktionen — am Handy mit Beschriftung + 44px Touch-Ziel */}
+                  <div className="mt-2 flex flex-wrap items-center gap-2 border-t pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-11 gap-1.5 text-xs"
+                      onClick={() => setEditId(inv.id)}
+                    >
+                      <Pencil className="h-4 w-4" /> Bearbeiten
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-11 gap-1.5 text-xs"
+                      onClick={() => toggleBezahlt(inv)}
+                      title={inv.status === "bezahlt" ? "Als offen markieren" : "Als bezahlt markieren"}
+                    >
+                      <CheckCircle2 className={`h-4 w-4 ${inv.status === "bezahlt" ? "text-green-600" : "text-muted-foreground"}`} />
+                      {inv.status === "bezahlt" ? "Bezahlt" : "Als bezahlt"}
+                    </Button>
+                    <div className="ml-auto flex items-center gap-2">
                       {inv.verrechnet_am ? (
                         <span
-                          className="h-8 w-8 flex items-center justify-center text-muted-foreground/60"
+                          className="flex h-11 items-center gap-1.5 px-2 text-xs text-muted-foreground/80"
                           title="Verrechneter Beleg — löschen nicht möglich"
                         >
-                          <Lock className="h-4 w-4" />
+                          <Lock className="h-4 w-4" /> gesperrt
                         </span>
                       ) : isAdmin ? (
                         <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={(e) => { e.stopPropagation(); setDeleteId(inv.id); }}
+                          variant="outline"
+                          size="sm"
+                          className="h-11 gap-1.5 text-xs text-destructive"
+                          onClick={() => setDeleteId(inv.id)}
                         >
-                          <Trash2 className="h-4 w-4" />
+                          <Trash2 className="h-4 w-4" /> Löschen
                         </Button>
                       ) : null}
                     </div>

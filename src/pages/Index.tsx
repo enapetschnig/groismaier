@@ -346,16 +346,21 @@ export default function Index() {
           {/* ── Kunden ────────────────────────────────────────── */}
           {canView("kunden") && (
             <KBBereich icon={BookUser} title="Kunden">
-              <KBSearchRow
-                buttonLabel="Kunde suchen"
-                onSearch={(q) => navigate(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
-              />
+              {/*
+                „+ Neuer Kunde" steht bewusst als ERSTE Zeile im Bereich — genau
+                wie „+ Neues Angebot" bei den Dokumenten. Kundenwunsch: das
+                Anlegen soll überall ganz oben und sofort sichtbar sein.
+              */}
               <KBButton
                 className="w-full"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neuer Kunde"
                 onClick={() => navigate("/customers?neu=1")}
+              />
+              <KBSearchRow
+                buttonLabel="Kunde suchen"
+                onSearch={(q) => navigate(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
               />
               <KBButton className="w-full" icon={BookUser} label="Kundenliste" onClick={() => navigate("/customers")} />
             </KBBereich>
@@ -364,16 +369,17 @@ export default function Index() {
           {/* ── Artikel ───────────────────────────────────────── */}
           {canView("materialien") && (
             <KBBereich icon={Package} title="Artikel">
-              <KBSearchRow
-                buttonLabel="Artikel suchen"
-                onSearch={(q) => navigate(`/materials${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
-              />
+              {/* „+ Neuer Artikel" ganz oben — gleiche Reihenfolge wie bei Dokumenten/Kunden. */}
               <KBButton
                 className="w-full"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neuer Artikel"
                 onClick={() => navigate("/materials?neu=1")}
+              />
+              <KBSearchRow
+                buttonLabel="Artikel suchen"
+                onSearch={(q) => navigate(`/materials${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
               />
               <KBButton className="w-full" icon={Package} label="Artikelliste" onClick={() => navigate("/materials")} />
             </KBBereich>

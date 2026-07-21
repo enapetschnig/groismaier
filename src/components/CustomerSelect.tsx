@@ -203,10 +203,30 @@ export function CustomerSelect({
             )}
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[320px] p-0" align="start">
+        <PopoverContent className="w-[min(320px,calc(100vw-1.5rem))] p-0" align="start">
           <Command>
             <CommandInput placeholder="Kunde suchen..." />
             <CommandList>
+              {/*
+                „+ Neuer Kunde" steht IMMER als erster Eintrag ganz oben und bleibt
+                dank forceMount auch sichtbar, während der Benutzer tippt und die
+                Liste gefiltert wird (Kundenwunsch: „damit ich das immer sehe").
+              */}
+              <CommandGroup forceMount>
+                <CommandItem
+                  forceMount
+                  value="__neuer_kunde__"
+                  onSelect={() => {
+                    setPopoverOpen(false);
+                    setCustomerForm(EMPTY_CUSTOMER_FORM);
+                    setDialogOpen(true);
+                  }}
+                  className="font-medium text-primary aria-selected:text-primary"
+                >
+                  <Plus className="w-4 h-4 mr-2 shrink-0" />
+                  Neuer Kunde
+                </CommandItem>
+              </CommandGroup>
               <CommandEmpty>Kein Kunde gefunden</CommandEmpty>
               <CommandGroup>
                 {!required && (
@@ -241,20 +261,6 @@ export function CustomerSelect({
                     </div>
                   </CommandItem>
                 ))}
-              </CommandGroup>
-              <CommandGroup>
-                <CommandItem
-                  value="__neuer_kunde__"
-                  onSelect={() => {
-                    setPopoverOpen(false);
-                    setCustomerForm(EMPTY_CUSTOMER_FORM);
-                    setDialogOpen(true);
-                  }}
-                  className="text-primary"
-                >
-                  <Plus className="w-4 h-4 mr-2" />
-                  Neuer Kunde
-                </CommandItem>
               </CommandGroup>
             </CommandList>
           </Command>

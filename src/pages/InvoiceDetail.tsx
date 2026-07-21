@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -60,6 +60,56 @@ import { getDocConfig } from "@/lib/documentTypes";
 import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
 import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
+import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+
+/** Geldbetrag auf Cent runden. */
+const round2 = (v: number): number =>
+  isFinite(v) ? Math.round((v + Number.EPSILON) * 100) / 100 : 0;
+
+/**
+ * Geldbetrag in österreichischer Schreibweise: 1187.5 → "1.187,50".
+ * Vorher stand im Editor überall `toFixed(2)`, also "1187.50" — direkt neben
+ * der Beleg-Vorschau, die korrekt "1.187,50" zeigte. Wer Beträge im Komma-
+ * Format eingibt, muss sie auch im Komma-Format zurückbekommen.
+ */
+const eur = (v: number | null | undefined): string => {
+  const n = Number(v);
+  if (!isFinite(n)) return "0,00";
+  const teile = Math.abs(n).toFixed(2).split(".");
+  teile[0] = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return (n < 0 ? "-" : "") + teile.join(",");
+};
+/** Menge auf 3 Nachkommastellen runden (mehr druckt kein Beleg). */
+const round3 = (v: number): number =>
+  isFinite(v) ? Math.round((v + Number.EPSILON) * 1000) / 1000 : 0;
+
+/**
+ * Belegarten, die wie eine Rechnung behandelt werden: sie sind nach dem
+ * Ausstellen gesperrt, können Zahlungen erfassen und werden storniert
+ * (statt gelöscht). Vorher hing all das an `typ === "rechnung"`, weshalb
+ * Anzahlungs-, Schluss- und Gutschriftbelege nachträglich editierbar blieben
+ * und keine Zahlung annehmen konnten.
+ */
+const RECHNUNGSARTIGE_TYPEN = new Set([
+  "rechnung",
+  "anzahlungsrechnung",
+  "schlussrechnung",
+  "gutschrift",
+]);
+
+/** Belegarten, auf die eine Zahlung gebucht werden kann. */
+const ZAHLBARE_TYPEN = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
+
+/**
+ * Belegarten, von denen es je Vorgänger-Beleg nur EINEN geben darf.
+ * (Anzahlungsrechnungen und Lieferscheine sind bewusst NICHT dabei — davon
+ * gibt es zu einem Auftrag legitim mehrere.)
+ */
+const EINMALIGE_FOLGETYPEN = new Set([
+  "rechnung",
+  "schlussrechnung",
+  "auftragsbestaetigung",
+]);
 
 interface InvoiceItem {
   id?: string;
@@ -259,12 +309,16 @@ function KBWizardTabs({
             key={s.id}
             type="button"
             onClick={() => onStepClick(s)}
-            className={`${active ? "kb-tab-active" : "kb-tab"} min-w-0`}
+            /* min-w-[42px]: am Handy darf der Tab nicht unter die
+               Lesbarkeit der Schrittnummer schrumpfen. */
+            className={`${active ? "kb-tab-active" : "kb-tab"} min-w-[42px] justify-center sm:justify-start`}
             aria-current={active ? "step" : undefined}
           >
-            <Icon className="h-5 w-5 shrink-0 text-kb-blue-dark" />
-            <span className="truncate">
-              {s.num}. <span className="hidden sm:inline">{s.label}</span>
+            {/* Am Handy nur die Schrittnummer — Icon + Text nebeneinander
+                passen in 390 px nicht und würden beide abgeschnitten. */}
+            <Icon className="hidden h-5 w-5 shrink-0 text-kb-blue-dark sm:block" />
+            <span className="truncate font-bold sm:font-semibold">
+              {s.num}.<span className="hidden sm:inline"> {s.label}</span>
             </span>
           </button>
         );
@@ -326,7 +380,57 @@ export default function InvoiceDetail() {
     setActiveStep(step.num);
     document.getElementById(step.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+
+  /**
+   * Positionen: Tabelle oder Karten?
+   *
+   * Nicht am Viewport festgemacht, sondern am tatsächlich verfügbaren Platz —
+   * am Handy ist es immer eng, am Desktop wird der Editor durch die
+   * angedockte Live-Vorschau ebenfalls schmal (auf 1440 px bleiben nur ~770 px
+   * übrig — die acht Tabellenspalten quetschen Mengen- und Preisfeld dann auf
+   * ~46 px zusammen, unlesbar). Unter POS_TABLE_MIN_PX wechselt die Darstellung
+   * deshalb auf eine Karte je Position. Praktische Faustregel: Live-Vorschau
+   * offen → Karten, Vorschau zugeklappt → die gewohnte KingBill-Tabelle.
+   */
+  const POS_TABLE_MIN_PX = 960;
+  const posWrapRef = useRef<HTMLDivElement>(null);
+  const [posNarrow, setPosNarrow] = useState<boolean>(
+    () => typeof window !== "undefined" && window.innerWidth < 1000
+  );
+  // Handy-Erkennung für Toolbar-Beschriftungen (kurze Labels statt Umbruch).
+  const [isMobile, setIsMobile] = useState<boolean>(
+    () => typeof window !== "undefined" && window.matchMedia("(max-width: 639px)").matches
+  );
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    const onChange = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", onChange);
+    return () => mq.removeEventListener("change", onChange);
+  }, []);
+  useEffect(() => {
+    const el = posWrapRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect?.width ?? 0;
+      if (w > 0) setPosNarrow(w < POS_TABLE_MIN_PX);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [loading]);
   const [invoiceId, setInvoiceId] = useState<string | null>(isNew ? null : id || null);
+  /**
+   * Optimistic Locking: der `updated_at`-Stand, den DIESER Tab geladen hat.
+   * Beim Speichern wird er als Bedingung mitgeschickt — hat ein anderer Tab
+   * den Beleg zwischenzeitlich geändert, trifft das Update 0 Zeilen und wir
+   * überschreiben nichts, sondern melden es. Nach jedem eigenen Schreibvorgang
+   * (Zahlung, Storno, Mahnung …) muss der Stand nachgezogen werden.
+   */
+  const [geladenerStand, setGeladenerStand] = useState<string | null>(null);
+  const standNachziehen = useCallback(async (invId: string | null) => {
+    if (!invId) return;
+    const { data } = await supabase.from("invoices").select("updated_at").eq("id", invId).maybeSingle();
+    if ((data as any)?.updated_at) setGeladenerStand((data as any).updated_at as string);
+  }, []);
   const [items, setItems] = useState<InvoiceItem[]>([
     { position: 1, beschreibung: "", menge: 1, einheit: "Stk.", einzelpreis: 0, gesamtpreis: 0 },
   ]);
@@ -369,6 +473,7 @@ export default function InvoiceDetail() {
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
   const [stornoDialogOpen, setStornoDialogOpen] = useState(false);
   const [stornoGrund, setStornoGrund] = useState("");
+  const [stornoLaeuft, setStornoLaeuft] = useState(false);
   // Umwandlungs-Dialoge
   const [anzahlungDialogOpen, setAnzahlungDialogOpen] = useState(false);
   const [anzahlungProzentInput, setAnzahlungProzentInput] = useState<string>("30");
@@ -450,10 +555,51 @@ export default function InvoiceDetail() {
     ansprechpartner_email: "",
   });
 
+  // ── Zahleneingabe (deutsches Komma) ───────────────────────────────────────
+  // Während des Tippens muss der ROHTEXT im Feld stehen bleiben ("12," oder
+  // "12,5"), sonst kann man kein Komma eingeben. Erst beim Verlassen des
+  // Feldes wird geparst, geklemmt und neu formatiert. Für Live-Summen wird
+  // im onChange zusätzlich der Zahlenwert gesetzt — der Rohtext bleibt.
+  const [rohTexte, setRohTexte] = useState<Record<string, string>>({});
+  const setRoh = (key: string, text: string) =>
+    setRohTexte((p) => ({ ...p, [key]: text }));
+  const clearRoh = (key: string) =>
+    setRohTexte((p) => {
+      if (!(key in p)) return p;
+      const n = { ...p };
+      delete n[key];
+      return n;
+    });
+  /** Positions-Rohtexte verwerfen — nötig, sobald sich Zeilen-Indizes verschieben. */
+  const clearPosRoh = () =>
+    setRohTexte((p) => {
+      const e = Object.entries(p).filter(([k]) => !k.startsWith("pos:"));
+      return e.length === Object.keys(p).length ? p : Object.fromEntries(e);
+    });
+  /** Anzeigewert eines Zahlenfeldes: Rohtext (beim Tippen) sonst formatierte Zahl. */
+  const rohOderZahl = (
+    key: string,
+    wert: number,
+    opts?: { nachkomma?: number; leerBeiNull?: boolean },
+  ): string => {
+    if (rohTexte[key] !== undefined) return rohTexte[key];
+    if (opts?.leerBeiNull && !wert) return "";
+    return formatForInput(wert, opts?.nachkomma);
+  };
+
+  // Ändert sich die Zeilenzahl (Position eingefügt/gelöscht/importiert),
+  // verschieben sich die Indizes → Rohtext-Puffer der Positionen verwerfen.
+  const posAnzahl = items.length;
+  useEffect(() => { clearPosRoh(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [posAnzahl]);
+
   // Locked = already saved (not draft) — can only view, download, storno/delete
-  // Rechnungen: komplett locked nach Speichern. Angebote: Positionen + Kundendaten editierbar
-  const isLocked = !isNew && id !== "new" && !!invoiceId && form.typ === "rechnung";
-  const isKundeLocked = !isNew && id !== "new" && !!invoiceId && form.typ === "rechnung";
+  // Rechnungsartige Belege (Rechnung, Anzahlungs-, Schlussrechnung, Gutschrift)
+  // sind nach dem Ausstellen gesperrt; Entwürfe und Angebote bleiben editierbar.
+  const isLocked =
+    !isNew && id !== "new" && !!invoiceId
+    && RECHNUNGSARTIGE_TYPEN.has(form.typ)
+    && form.status !== "entwurf";
+  const isKundeLocked = isLocked;
 
   // Angebot→Rechnung Vergleichs-Dialog
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
@@ -898,6 +1044,9 @@ export default function InvoiceDetail() {
       return;
     }
 
+    // Ausgangsstand für das Optimistic Locking merken (siehe handleSave).
+    setGeladenerStand(((data as any).updated_at as string) || null);
+
     setForm({
       typ: data.typ,
       nummer: data.nummer,
@@ -1035,20 +1184,34 @@ export default function InvoiceDetail() {
         .maybeSingle();
       parentHop = (hop as any)?.parent_invoice_id || null;
     }
-    const [rootRes, childrenRes] = await Promise.all([
-      supabase
+    const { data: rootData } = await supabase
+      .from("invoices")
+      .select("id, typ, nummer, datum, brutto_summe, status")
+      .eq("id", rootId)
+      .maybeSingle();
+    setChainRoot(rootData ? (rootData as ChainDoc) : null);
+
+    // ALLE Nachfahren der Root einsammeln (Breitensuche, max. 6 Ebenen).
+    // Vorher wurden nur die direkten Kinder geladen — bei der typischen Kette
+    // Angebot → Auftragsbestätigung → Lieferschein → Rechnung fehlten damit
+    // Lieferschein und Rechnung komplett, und der gerade geöffnete Beleg war
+    // in seiner eigenen Kette nicht zu sehen.
+    const alleKinder: ChainDoc[] = [];
+    let ebene: string[] = [rootId];
+    for (let tiefe = 0; tiefe < 6 && ebene.length > 0; tiefe++) {
+      const { data: kinder } = await supabase
         .from("invoices")
         .select("id, typ, nummer, datum, brutto_summe, status")
-        .eq("id", rootId)
-        .maybeSingle(),
-      supabase
-        .from("invoices")
-        .select("id, typ, nummer, datum, brutto_summe, status")
-        .eq("parent_invoice_id", rootId)
-        .order("datum", { ascending: true }),
-    ]);
-    setChainRoot(rootRes.data ? (rootRes.data as ChainDoc) : null);
-    setChainChildren(((childrenRes.data as any[]) || []) as ChainDoc[]);
+        .in("parent_invoice_id", ebene)
+        .order("datum", { ascending: true });
+      const neu = (((kinder as any[]) || []) as ChainDoc[]).filter(
+        k => k.id !== rootId && !alleKinder.some(a => a.id === k.id)
+      );
+      if (neu.length === 0) break;
+      alleKinder.push(...neu);
+      ebene = neu.map(k => k.id);
+    }
+    setChainChildren(alleKinder);
 
     setLoading(false);
   };
@@ -1058,16 +1221,32 @@ export default function InvoiceDetail() {
     if (!loading) setIsDirty(true);
   };
 
+  /**
+   * Positionen ändern UND das Dokument als „ungespeichert" markieren.
+   *
+   * WICHTIG: alle Positions-Mutationen (Menge, Preis, Position hinzufügen /
+   * löschen / verschieben, Import aus Katalog/Angebot/Regie) müssen hierüber
+   * laufen. Sonst greift weder der „Änderungen speichern?"-Dialog beim Zurück
+   * noch die beforeunload-Warnung — der Chef verliert seine Eingaben lautlos.
+   * Nur die Lade-Pfade (loadInvoice / loadFromSourceDoc) setzen setItems direkt.
+   */
+  const setItemsDirty: typeof setItems = (updater) => {
+    setItems(updater);
+    if (!loading) setIsDirty(true);
+  };
+
   // Helper: merge imported items into existing list, replacing empty first row
   const mergeItems = (prev: InvoiceItem[], newItems: InvoiceItem[]): InvoiceItem[] => {
     // Check if first row is empty (default state)
     const firstEmpty = prev.length === 1 && !prev[0].beschreibung.trim() && prev[0].einzelpreis === 0;
     const base = firstEmpty ? [] : prev;
+    // (Der Rohtext-Puffer wird über den useEffect auf items.length verworfen —
+    //  eine setState-Nebenwirkung in diesem reinen Updater wäre unsauber.)
     return [...base, ...newItems].map((item, idx) => ({ ...item, position: idx + 1 }));
   };
 
   const addItem = () => {
-    setItems(prev => [...prev, {
+    setItemsDirty(prev => [...prev, {
       position: prev.length + 1,
       beschreibung: "",
       kurztext: "",
@@ -1098,7 +1277,7 @@ export default function InvoiceDetail() {
         toast({ variant: "destructive", title: "Set ist leer", description: `${t.name} hat keine Komponenten.` });
         return;
       }
-      const vkNetto = Number((t as any).vk_netto ?? (t as any).netto_preis ?? t.einzelpreis) || 0;
+      const vkNetto = round2(Number((t as any).vk_netto ?? (t as any).netto_preis ?? t.einzelpreis) || 0);
       const bezugseinheit = (t as any).bezugseinheit || t.einheit || "Stk.";
       const aufschlag = Number((t as any).aufschlag_prozent) || 0;
       const komponenten = rows.map(r => {
@@ -1119,12 +1298,12 @@ export default function InvoiceDetail() {
         langtext: ((t as any).langbezeichnung && (t as any).langbezeichnung !== ((t as any).kurzbezeichnung || t.name))
           ? (t as any).langbezeichnung
           : "",
-        menge: setMenge,
+        menge: round3(setMenge),
         einheit: bezugseinheit,
         einzelpreis: vkNetto,
         rabatt_prozent: 0,
         produktnummer: (t as any).produktnummer || "",
-        gesamtpreis: Math.round(setMenge * vkNetto * 100) / 100,
+        gesamtpreis: round2(round3(setMenge) * vkNetto),
         set_template_id: t.id,
         set_snapshot: {
           bezugseinheit,
@@ -1132,7 +1311,7 @@ export default function InvoiceDetail() {
           komponenten,
         },
       };
-      setItems(prev => mergeItems(prev, [summaryRow]));
+      setItemsDirty(prev => mergeItems(prev, [summaryRow]));
       toast({
         title: `Set hinzugefügt: ${t.name}`,
         description: `${setMenge} × ${bezugseinheit} (${komponenten.length} Komponenten im Snapshot).`,
@@ -1140,7 +1319,7 @@ export default function InvoiceDetail() {
       return;
     }
 
-    const netto = Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis;
+    const netto = round2(Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
     // Kalkuliertes Material → Kalkulation in die Position übernehmen, damit
     // Aufschlag/Stundensatz im Angebot anpassbar sind (Excel-Modell).
     const isKalk = !!(t as any).ist_kalkuliert;
@@ -1153,9 +1332,9 @@ export default function InvoiceDetail() {
       arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
       stundensatz: Number((t as any).stundensatz) || 52,
     } : null;
-    const einzelpreis = kalk
+    const einzelpreis = round2(kalk
       ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
-      : netto;
+      : netto);
     const newItem: InvoiceItem = {
       position: 1,
       beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
@@ -1171,17 +1350,19 @@ export default function InvoiceDetail() {
       kalkulation_template_id: isKalk ? t.id : null,
       ...(kalk || {}),
     };
-    setItems(prev => mergeItems(prev, [newItem]));
+    setItemsDirty(prev => mergeItems(prev, [newItem]));
     // Dialog bleibt offen
     toast({ title: "Position hinzugefügt", description: t.name });
   };
 
   const removeItem = (index: number) => {
-    setItems(prev => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, position: i + 1 })));
+    clearPosRoh();
+    setItemsDirty(prev => prev.filter((_, i) => i !== index).map((item, i) => ({ ...item, position: i + 1 })));
   };
 
   const moveItem = (index: number, direction: "up" | "down") => {
-    setItems(prev => {
+    clearPosRoh();
+    setItemsDirty(prev => {
       const arr = [...prev];
       const targetIndex = direction === "up" ? index - 1 : index + 1;
       if (targetIndex < 0 || targetIndex >= arr.length) return prev;
@@ -1191,16 +1372,23 @@ export default function InvoiceDetail() {
   };
 
   const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
-    setItems(prev => {
+    setItemsDirty(prev => {
       const updated = [...prev];
-      // Sanitize numeric fields: NaN, Infinity, negative → 0
-      if (field === "menge" || field === "einzelpreis") {
-        const n = Number(value);
+      // Sanitize numeric fields: NaN, Infinity, negative → 0.
+      // Menge auf 3 und Einzelpreis auf 2 Nachkommastellen runden — sonst
+      // steht auf dem PDF eine Zeile, die man nicht nachrechnen kann
+      // (gedruckt "7 × 1,11", gerechnet aber mit 1,1111).
+      if (field === "menge") {
+        const n = round3(Number(value));
+        value = isFinite(n) && n >= 0 ? n : 0;
+      }
+      if (field === "einzelpreis") {
+        const n = round2(Number(value));
         value = isFinite(n) && n >= 0 ? n : 0;
       }
       if (field === "rabatt_prozent") {
         const n = Number(value);
-        value = isFinite(n) ? Math.max(0, Math.min(100, n)) : 0;
+        value = isFinite(n) ? Math.max(0, Math.min(100, round2(n))) : 0;
       }
       (updated[index] as any)[field] = value;
       if (field === "menge" || field === "einzelpreis" || field === "rabatt_prozent") {
@@ -1208,7 +1396,7 @@ export default function InvoiceDetail() {
         const p = Number(updated[index].einzelpreis) || 0;
         const r = Number(updated[index].rabatt_prozent) || 0;
         const total = m * p * (1 - r / 100);
-        updated[index].gesamtpreis = isFinite(total) ? Math.round(total * 100) / 100 : 0;
+        updated[index].gesamtpreis = isFinite(total) ? round2(total) : 0;
       }
       return updated;
     });
@@ -1225,7 +1413,7 @@ export default function InvoiceDetail() {
     const m = Number(it.menge) || 0;
     const r = Number(it.rabatt_prozent) || 0;
     const t = m * (Number(it.einzelpreis) || 0) * (1 - r / 100);
-    return isFinite(t) ? Math.round(t * 100) / 100 : 0;
+    return isFinite(t) ? round2(t) : 0;
   };
 
   // ── Preise anpassen (Rabatt/Aufschlag + KI) ───────────────────────────────
@@ -1253,7 +1441,7 @@ export default function InvoiceDetail() {
   // computeItemTotal (gleiche Formel wie überall im Editor), die Belegsummen
   // werden davon abgeleitet neu berechnet.
   const applyPriceAdjust = (neuePreise: Record<number, number>) => {
-    setItems(prev =>
+    setItemsDirty(prev =>
       prev.map((it, idx) => {
         const neu = neuePreise[idx];
         if (neu === undefined || !isFinite(neu)) return it;
@@ -1267,10 +1455,10 @@ export default function InvoiceDetail() {
 
   // Setzt die Kalkulationsfelder einer Position und berechnet Einzel-/Gesamtpreis neu.
   const applyItemKalkulation = (index: number, kalk: KalkulationInput) => {
-    setItems(prev => {
+    setItemsDirty(prev => {
       const updated = [...prev];
       const eff = docAufschlagOverride ?? kalk.aufschlag_prozent;
-      const ep = calcEinzelpreis({ ...kalk, aufschlag_prozent: eff });
+      const ep = round2(calcEinzelpreis({ ...kalk, aufschlag_prozent: eff }));
       updated[index] = {
         ...updated[index],
         ist_kalkuliert: true,
@@ -1291,13 +1479,14 @@ export default function InvoiceDetail() {
   // Dokumentweiter Aufschlag-Override: setzt den Wert und rechnet ALLE
   // kalkulierten Positionen neu (Ergebnis direkt im Angebot sichtbar).
   const setDocAufschlagOverride = (raw: string) => {
-    const val = raw.trim() === "" ? null : Number(raw.replace(",", "."));
-    const override = val === null || !isFinite(val) ? null : val;
+    // parseDecimal versteht "12,5" ebenso wie "12.5"; leer = kein Override.
+    const val = raw.trim() === "" ? null : parseDecimal(raw);
+    const override = val === null || !isFinite(val) ? null : clamp(val, 0);
     setForm(f => ({ ...f, kalkulation_aufschlag_override: override }));
-    setItems(prev => prev.map(it => {
+    setItemsDirty(prev => prev.map(it => {
       if (!it.ist_kalkuliert) return it;
       const eff = override ?? (Number(it.aufschlag_prozent) || 0);
-      const ep = calcEinzelpreis({
+      const ep = round2(calcEinzelpreis({
         ek_preis: Number(it.ek_preis) || 0,
         verschnitt_prozent: Number(it.verschnitt_prozent) || 0,
         aufschlag_prozent: eff,
@@ -1305,7 +1494,7 @@ export default function InvoiceDetail() {
         sonstiges_preis: Number(it.sonstiges_preis) || 0,
         arbeitszeit_minuten: Number(it.arbeitszeit_minuten) || 0,
         stundensatz: Number(it.stundensatz) || 52,
-      });
+      }));
       const next = { ...it, einzelpreis: ep };
       next.gesamtpreis = computeItemTotal(next);
       return next;
@@ -1359,7 +1548,7 @@ export default function InvoiceDetail() {
         if (!it.ist_kalkuliert || !it.kalkulation_template_id || !map[it.kalkulation_template_id]) return it;
         const k = kalkFromTemplate(map[it.kalkulation_template_id]);
         const eff = docAufschlagOverride ?? k.aufschlag_prozent;
-        const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+        const ep = round2(calcEinzelpreis({ ...k, aufschlag_prozent: eff }));
         oldTotal += Number(it.einzelpreis) || 0;
         newTotal += ep;
         if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) changed++;
@@ -1367,14 +1556,14 @@ export default function InvoiceDetail() {
         updated.gesamtpreis = computeItemTotal(updated);
         return updated;
       });
-      setItems(next);
+      setItemsDirty(next);
       setStaleKalkCount(0);
       if (changed === 0) {
         toast({ title: "Preise sind aktuell", description: "Alle kalkulierten Positionen entsprechen bereits dem Materialkatalog." });
       } else {
         toast({
           title: `${changed} Position(en) aktualisiert`,
-          description: `Einzelpreise gesamt: € ${oldTotal.toFixed(2)} → € ${newTotal.toFixed(2)}. Zum Übernehmen speichern.`,
+          description: `Einzelpreise gesamt: € ${eur(oldTotal)} → € ${eur(newTotal)}. Zum Übernehmen speichern.`,
         });
       }
     } finally {
@@ -1400,7 +1589,7 @@ export default function InvoiceDetail() {
         if (it.ist_kalkuliert && it.kalkulation_template_id && map[it.kalkulation_template_id]) {
           const k = kalkFromTemplate(map[it.kalkulation_template_id]);
           const eff = docAufschlagOverride ?? k.aufschlag_prozent;
-          const ep = calcEinzelpreis({ ...k, aufschlag_prozent: eff });
+          const ep = round2(calcEinzelpreis({ ...k, aufschlag_prozent: eff }));
           if (Math.abs(ep - (Number(it.einzelpreis) || 0)) > 0.005) stale++;
         }
       }
@@ -1502,11 +1691,19 @@ export default function InvoiceDetail() {
       return false;
     }
 
+    // Rabatt-Betrag (Global-Rabatt €) darf NICHT negativ sein. Ein negativer
+    // Rabatt erhöhte die Belegsumme, wurde im PDF aber nicht ausgewiesen —
+    // die gedruckten Positionen passten dann nicht zur Nettosumme.
+    if ((form.rabatt_betrag ?? 0) < 0) {
+      toast({ variant: "destructive", title: "Ungültiger Rabatt", description: "Ein Rabatt kann nicht negativ sein. Bitte 0 oder einen positiven Betrag eintragen." });
+      return false;
+    }
+
     // Rabatt-Betrag (Global-Rabatt €) darf die nicht-steuerbefreite Positions-
     // Netto-Summe nicht überschreiten. positionenNetto (oben) schließt
     // mwst_exempt-Zeilen bereits aus.
     if (form.rabatt_betrag > positionenNetto) {
-      toast({ variant: "destructive", title: "Ungültiger Rabatt", description: `Rabatt-Betrag (€${form.rabatt_betrag.toFixed(2)}) darf die Netto-Summe (€${positionenNetto.toFixed(2)}) nicht überschreiten` });
+      toast({ variant: "destructive", title: "Ungültiger Rabatt", description: `Rabatt-Betrag (€${eur(form.rabatt_betrag)}) darf die Netto-Summe (€${eur(positionenNetto)}) nicht überschreiten` });
       return false;
     }
 
@@ -1535,9 +1732,15 @@ export default function InvoiceDetail() {
             toast({ variant: "destructive", title: "Eigene UID fehlt", description: "Bei Reverse Charge ist die UID-Nummer des Ausstellers Pflicht. Bitte im Admin-Bereich → Rechnungslayout konfigurieren." });
             return false;
           }
-          // Normale Rechnung: nicht blockieren, aber deutlich auf die
-          // finanzamtsrechtliche Pflichtangabe hinweisen.
-          toast({ variant: "destructive", title: "Firmen-UID fehlt", description: "Für eine finanzamtskonforme Rechnung muss die UID-Nummer der Firma hinterlegt sein (Admin → Rechnungslayout). Die Rechnung wird trotzdem gespeichert." });
+          // Normale Rechnung: NICHT blockieren, aber deutlich auf die
+          // finanzamtsrechtliche Pflichtangabe hinweisen. (Vorher scheiterte
+          // jede Rechnung über 400 € hart an dieser fehlenden Einstellung.)
+          toast({
+            variant: "destructive",
+            title: "Firmen-UID fehlt — Beleg wird trotzdem gespeichert",
+            description: "Ab € 400 verlangt § 11 UStG die UID-Nummer des Ausstellers auf der Rechnung. Bitte unter Einstellungen → Admin-Bereich → Rechnungslayout die Firmen-UID hinterlegen und den Beleg danach erneut als PDF erzeugen.",
+            duration: 10000,
+          });
         }
       }
     }
@@ -1547,15 +1750,11 @@ export default function InvoiceDetail() {
     // automatisch auf das Rechnungsdatum (form.datum) — siehe Renderer.
     // Daher hier kein harter Pflicht-Check mehr.
 
-    // Austrian UID requirements
-    if (form.typ === "rechnung" && saveBrutto > 400) {
-      const { data: uidSetting } = await supabase.from("app_settings").select("value").eq("key", "firmen_uid").maybeSingle();
-      if (!uidSetting?.value) {
-        toast({ variant: "destructive", title: "UID-Nummer fehlt", description: "Bei Rechnungen über €400 ist die UID-Nummer des Ausstellers gesetzlich vorgeschrieben. Bitte im Admin-Bereich konfigurieren." });
-        setSaving(false);
-        return false;
-      }
-    }
+    // Austrian UID requirements — die fehlende FIRMEN-UID darf das Speichern
+    // NICHT blockieren: sonst lässt sich keine Rechnung über 400 € anlegen,
+    // solange der Admin-Bereich nicht gepflegt ist, und der Betrieb steht.
+    // Der Hinweis oben (needsUid-Block) weist deutlich darauf hin; hier wird
+    // nur noch gewarnt, gespeichert wird trotzdem.
     if (form.typ === "rechnung" && saveBrutto > 10000 && !form.kunde_uid?.trim()) {
       toast({ variant: "destructive", title: "Kunden-UID fehlt", description: "Bei Rechnungen über €10.000 ist die UID-Nummer des Empfängers gesetzlich vorgeschrieben." });
       setSaving(false);
@@ -1610,8 +1809,15 @@ export default function InvoiceDetail() {
         }
       }
 
-      // Rechnungen sind immer mindestens "offen", Angebote behalten ihren Status (auch "entwurf")
-      const saveStatus = form.typ === "rechnung" ? "offen" : (form.status || "offen");
+      // Rechnungsartige Belege (Rechnung, Anzahlungs-, Schlussrechnung,
+      // Gutschrift) sind mit dem Speichern ausgestellt und damit mindestens
+      // "offen" — sonst blieben sie ewig "entwurf", könnten keine Zahlung
+      // annehmen und wären nachträglich beliebig editierbar.
+      // Bereits gesetzte Zahlungs-/Storno-Stati bleiben unangetastet.
+      const _behaltStatus = new Set(["teilbezahlt", "bezahlt", "storniert", "verrechnet"]);
+      const saveStatus = RECHNUNGSARTIGE_TYPEN.has(form.typ)
+        ? (_behaltStatus.has(form.status) ? form.status : "offen")
+        : (form.status || "offen");
 
       // Defensive Parent-Normalisierung: für AR/SR muss parent_invoice_id
       // auf einen echten Positionsträger (Angebot oder AB) zeigen — niemals
@@ -1736,6 +1942,35 @@ export default function InvoiceDetail() {
       };
 
       if (isNew || !savedId) {
+        // DOPPEL-BELEG-SPERRE: Ein Angebot lässt sich in zwei Tabs öffnen und
+        // zweimal in eine Rechnung wandeln — der Kunde bekäme dieselbe
+        // Leistung zweimal verrechnet. Deshalb unmittelbar vor dem Insert
+        // gegen die DB prüfen, ob zum selben Vorgänger schon ein
+        // nicht-stornierter Beleg dieses Typs existiert.
+        // (Anzahlungsrechnungen und Lieferscheine sind ausgenommen — davon
+        // gibt es zu einem Auftrag legitim mehrere.)
+        if (normalizedParentId && EINMALIGE_FOLGETYPEN.has(form.typ)) {
+          const { data: geschwister } = await supabase
+            .from("invoices")
+            .select("id, nummer, status")
+            .eq("parent_invoice_id", normalizedParentId)
+            .eq("typ", form.typ)
+            .neq("status", "storniert")
+            .limit(1);
+          const vorhanden = ((geschwister as any[]) || [])[0];
+          if (vorhanden) {
+            const quelle = getDocConfig(form.typ).label;
+            toast({
+              variant: "destructive",
+              title: `${quelle} existiert bereits`,
+              description: `Zu diesem Vorgänger-Beleg existiert bereits ${quelle} ${vorhanden.nummer || ""}. Storniere sie zuerst, wenn du sie neu erstellen willst.`,
+              duration: 10000,
+            });
+            setSaving(false);
+            return false;
+          }
+        }
+
         const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
           p_typ: form.typ,
           p_jahr: form.jahr,
@@ -1748,7 +1983,7 @@ export default function InvoiceDetail() {
         const insertOnce = async (payload: any) => supabase
           .from("invoices")
           .insert({ user_id: user.id, typ: form.typ, nummer, laufnummer, jahr: form.jahr, ...payload })
-          .select("id, nummer")
+          .select("id, nummer, updated_at")
           .single();
 
         let { data: insertData, error: insertError } = await insertOnce(invoicePayload);
@@ -1759,19 +1994,35 @@ export default function InvoiceDetail() {
         if (insertError) throw insertError;
         savedId = insertData!.id;
         setInvoiceId(savedId);
+        setGeladenerStand(((insertData as any)?.updated_at as string) || null);
         updateField("nummer", insertData!.nummer);
       } else {
-        const updateOnce = async (payload: any) => supabase
-          .from("invoices")
-          .update(payload)
-          .eq("id", savedId);
+        // LOST UPDATE verhindern: nur schreiben, wenn der Beleg seit dem Laden
+        // unverändert ist. Trifft das Update 0 Zeilen, hat ein anderer Tab /
+        // Kollege zwischenzeitlich gespeichert — dann NICHTS überschreiben.
+        const updateOnce = async (payload: any) => {
+          let q = supabase.from("invoices").update(payload).eq("id", savedId);
+          if (geladenerStand) q = q.eq("updated_at", geladenerStand);
+          return q.select("id, updated_at");
+        };
 
-        let { error: updateError } = await updateOnce(invoicePayload);
+        let { data: updRows, error: updateError } = await updateOnce(invoicePayload);
         if (updateError && isSchemaCacheMiss(updateError)) {
-          ({ error: updateError } = await updateOnce(stripTolerantCols(invoicePayload)));
+          ({ data: updRows, error: updateError } = await updateOnce(stripTolerantCols(invoicePayload)));
         }
 
         if (updateError) throw updateError;
+        if (geladenerStand && (!updRows || (updRows as any[]).length === 0)) {
+          toast({
+            variant: "destructive",
+            title: "Beleg zwischenzeitlich geändert",
+            description: "Der Beleg wurde zwischenzeitlich geändert. Bitte neu laden. Es wurde nichts überschrieben.",
+            duration: 12000,
+          });
+          setSaving(false);
+          return false;
+        }
+        setGeladenerStand(((updRows as any[])?.[0]?.updated_at as string) || null);
       }
 
       await supabase.from("invoice_items").delete().eq("invoice_id", savedId!);
@@ -1941,7 +2192,7 @@ export default function InvoiceDetail() {
 
   const handlePreview = () => {
     // Open preview directly — don't save automatically
-    setPreviewSaved(!isNew && !!invoiceId && form.typ === "rechnung" && form.status !== "entwurf");
+    setPreviewSaved(!isNew && !!invoiceId && RECHNUNGSARTIGE_TYPEN.has(form.typ) && form.status !== "entwurf");
     setPreviewOpen(true);
   };
 
@@ -1975,21 +2226,38 @@ export default function InvoiceDetail() {
 
   const addPayment = async () => {
     if (!invoiceId) return;
-    let betrag = Math.round((Number(newPaymentAmount) || restBetrag) * 100) / 100;
-    // M-7: Negative oder 0-Zahlungen ablehnen mit Toast (nicht silent)
+    // WICHTIG: leeres Feld ≠ 0. Vorher stand hier `Number(x) || restBetrag` —
+    // Number("0") ist falsy, also wurde bei der Eingabe "0" die KOMPLETTE
+    // Rechnung als bezahlt verbucht. parseDecimal liefert bei leerer Eingabe
+    // null (→ Rest als Vorschlag), bei "0" die Zahl 0 (→ Fehlermeldung).
+    const eingabe = parseDecimal(newPaymentAmount);
+    let betrag = round2(eingabe === null ? restBetrag : eingabe);
+
+    if (!isFinite(betrag)) {
+      toast({ variant: "destructive", title: "Ungültiger Betrag", description: "Bitte einen gültigen Zahlungsbetrag eingeben (z.B. 1.250,50)." });
+      return;
+    }
+    // Negative oder 0-Zahlungen ablehnen mit Toast (nicht silent) — die
+    // Datenbank lehnt sie seit Migration 20260721090000 ohnehin ab.
     if (betrag < 0) {
-      toast({ variant: "destructive", title: "Ungültiger Betrag", description: "Zahlungsbetrag darf nicht negativ sein." });
+      toast({ variant: "destructive", title: "Ungültiger Betrag", description: "Der Zahlungsbetrag muss größer als € 0,00 sein." });
       return;
     }
     if (betrag === 0) {
-      toast({ variant: "destructive", title: "Betrag fehlt", description: "Bitte einen Zahlungsbetrag eingeben." });
+      toast({
+        variant: "destructive",
+        title: "Betrag fehlt",
+        description: eingabe === null
+          ? "Bitte einen Zahlungsbetrag eingeben."
+          : "€ 0,00 kann nicht verbucht werden. Bitte den tatsächlich bezahlten Betrag eingeben.",
+      });
       return;
     }
 
     // M-6: Überzahlung ablehnen mit Toast
-    const maxBetrag = Math.round((bruttoSumme - form.bezahlt_betrag) * 100) / 100;
+    const maxBetrag = round2(bruttoSumme - form.bezahlt_betrag);
     if (betrag > maxBetrag) {
-      toast({ variant: "destructive", title: "Betrag zu hoch", description: `Maximal € ${maxBetrag.toFixed(2)} offen` });
+      toast({ variant: "destructive", title: "Betrag zu hoch", description: `Maximal € ${eur(maxBetrag)} offen` });
       return;
     }
 
@@ -2001,23 +2269,36 @@ export default function InvoiceDetail() {
     });
 
     if (error) {
-      toast({ variant: "destructive", title: "Fehler" });
+      // Die DB-CHECK-Constraint (betrag > 0) darf nicht als roher
+      // Postgres-Fehler beim Chef landen.
+      const msg = String(error.message || "");
+      toast({
+        variant: "destructive",
+        title: "Zahlung nicht gespeichert",
+        description: /betrag/i.test(msg) && /check|constraint/i.test(msg)
+          ? "Der Zahlungsbetrag muss größer als € 0,00 sein."
+          : (msg || "Die Zahlung konnte nicht gespeichert werden."),
+      });
       return;
     }
 
     // Update bezahlt_betrag on invoice
-    const newTotal = Math.round((form.bezahlt_betrag + betrag) * 100) / 100;
+    const newTotal = round2(form.bezahlt_betrag + betrag);
     // Preserve storno status — don't override with payment status
-    const newStatus = form.status === "storniert" ? "storniert" : (newTotal >= Math.round(bruttoSumme * 100) / 100 ? "bezahlt" : "teilbezahlt");
+    const newStatus = form.status === "storniert" ? "storniert" : (newTotal >= round2(bruttoSumme) ? "bezahlt" : "teilbezahlt");
     await supabase.from("invoices").update({ bezahlt_betrag: newTotal, status: newStatus }).eq("id", invoiceId);
+    // Eigener Schreibvorgang → updated_at nachziehen, sonst scheitert das
+    // nächste Speichern fälschlich am Optimistic Locking.
+    await standNachziehen(invoiceId);
     updateField("bezahlt_betrag", newTotal);
     updateField("status", newStatus);
 
     setNewPaymentAmount("");
+    clearRoh("zahlung:betrag");
     setNewPaymentNote("");
     setNewPaymentDate(format(new Date(), "yyyy-MM-dd"));
     loadPayments(invoiceId);
-    toast({ title: "Zahlung erfasst", description: `€ ${betrag.toFixed(2)} am ${newPaymentDate}` });
+    toast({ title: "Zahlung erfasst", description: `€ ${eur(betrag)} am ${newPaymentDate}` });
   };
 
   const deletePayment = async (paymentId: string) => {
@@ -2026,10 +2307,11 @@ export default function InvoiceDetail() {
     if (!payment) return;
 
     await supabase.from("invoice_payments").delete().eq("id", paymentId);
-    const newTotal = Math.round(Math.max(0, form.bezahlt_betrag - Number(payment.betrag)) * 100) / 100;
+    const newTotal = round2(Math.max(0, form.bezahlt_betrag - Number(payment.betrag)));
     // Don't overwrite storniert status
-    const newStatus = form.status === "storniert" ? "storniert" : newTotal <= 0 ? "offen" : newTotal >= Math.round(bruttoSumme * 100) / 100 ? "bezahlt" : "teilbezahlt";
+    const newStatus = form.status === "storniert" ? "storniert" : newTotal <= 0 ? "offen" : newTotal >= round2(bruttoSumme) ? "bezahlt" : "teilbezahlt";
     await supabase.from("invoices").update({ bezahlt_betrag: newTotal, status: newStatus }).eq("id", invoiceId);
+    await standNachziehen(invoiceId);
     updateField("bezahlt_betrag", newTotal);
     updateField("status", newStatus);
     loadPayments(invoiceId);
@@ -2447,13 +2729,14 @@ export default function InvoiceDetail() {
         } as any)
         .eq("id", invoiceId);
       if (gErr) throw gErr;
+      await standNachziehen(invoiceId);
 
       // Wenn eine Ziel-Rechnung gewählt wurde: bezahlt_betrag um Gutschrift-
       // Brutto erhöhen (capped auf brutto_summe der Rechnung).
       if (zielId) {
         const ziel = verrechnungZielOptions.find(o => o.id === zielId);
         if (ziel) {
-          const gutschriftBrutto = Math.abs(Number(bruttoSumme) || Number(form.brutto_summe) || 0);
+          const gutschriftBrutto = Math.abs(Number(bruttoSumme) || Number((form as any).brutto_summe) || 0);
           const restRechnung = Math.max(0, ziel.brutto_summe - ziel.bezahlt_betrag);
           const angerechnet = Math.min(gutschriftBrutto, restRechnung);
           const neuerBezahlt = Math.round((ziel.bezahlt_betrag + angerechnet) * 100) / 100;
@@ -2483,16 +2766,37 @@ export default function InvoiceDetail() {
     }
   };
 
-  // Storno-Helper: generisch für Rechnung, Anzahlungsrechnung, Schlussrechnung,
-  // Gutschrift UND Auftragsbestätigung. Grund + PDF-Label sind parametrierbar;
-  // Defaults erhalten die bisherige Rechnungs-Semantik.
-  const handleCancel = async (opts?: { grund?: string; docTypeLabel?: string }) => {
-    if (!invoiceId) return;
+  /**
+   * EINZIGER Storno-Weg für alle Belegarten (Rechnung, Anzahlungs-,
+   * Schlussrechnung, Gutschrift, Auftragsbestätigung).
+   *
+   * Vorher gab es zwei Implementierungen mit widersprüchlichem Verhalten:
+   * diese hier setzte bezahlt_betrag auf 0, der Storno-Dialog nicht — je
+   * nachdem, welchen Knopf man erwischte, zeigte die Statistik andere Zahlen.
+   * Ebenso wurde die Stornonummer einmal lokal gebastelt und einmal atomar
+   * aus der DB gezogen. Jetzt läuft beides ausschließlich hier durch:
+   * atomare Stornonummer, bezahlt_betrag = 0, Storno-PDF.
+   * Der Zahlungsverlauf bleibt in der DB und wird im Storno-Bildschirm
+   * weiterhin (read-only) angezeigt — das Geld darf nicht unsichtbar werden.
+   */
+  const handleCancel = async (opts?: { grund?: string; docTypeLabel?: string }): Promise<boolean> => {
+    if (!invoiceId) return false;
     const stornoGrund = (opts?.grund?.trim()) || "Storniert durch Benutzer";
-    const docTypeLabel = opts?.docTypeLabel || "Rechnung";
+    const docTypeLabel = opts?.docTypeLabel || getDocConfig(form.typ).label;
     try {
-      const stornoNummer = `S-${form.nummer || invoiceId.substring(0, 8)}`;
       const stornoDatum = new Date().toISOString().split("T")[0];
+      // Atomare Stornonummer aus der DB (race-safe). Fällt die Funktion aus,
+      // greift der bisherige lokale Fallback, damit ein Storno nie am
+      // Nummernkreis scheitert.
+      let stornoNummer = "";
+      try {
+        const { data: nr, error: nrErr } = await supabase.rpc(
+          "next_storno_nummer" as any,
+          { p_jahr: form.jahr || new Date().getFullYear() },
+        );
+        if (!nrErr && nr) stornoNummer = String(nr);
+      } catch { /* Fallback unten */ }
+      if (!stornoNummer) stornoNummer = `S-${form.nummer || invoiceId.substring(0, 8)}`;
 
       // Wenn die zu stornierende Doku eine VERRECHNETE GUTSCHRIFT ist,
       // muss der bei der Verrechnung gebuchte Betrag auf der Ziel-
@@ -2544,6 +2848,7 @@ export default function InvoiceDetail() {
         bezahlt_betrag: 0,
       }).eq("id", invoiceId);
       if (error) throw error;
+      await standNachziehen(invoiceId);
       setForm(prev => ({ ...prev, status: "storniert", storno_nummer: stornoNummer, storno_datum: stornoDatum, storno_grund: stornoGrund, bezahlt_betrag: 0 }));
 
       // Stornobeleg sofort erstellen und herunterladen
@@ -2570,8 +2875,10 @@ export default function InvoiceDetail() {
       }
 
       toast({ title: `${docTypeLabel} storniert`, description: `Stornobeleg ${stornoNummer} wurde erstellt` });
+      return true;
     } catch (err: any) {
       toast({ variant: "destructive", title: "Fehler", description: err.message || "Stornierung fehlgeschlagen" });
+      return false;
     }
   };
 
@@ -2650,6 +2957,7 @@ export default function InvoiceDetail() {
     try {
       const { error } = await supabase.from("invoices").update({ mahnstufe: newStufe }).eq("id", invoiceId);
       if (error) throw error;
+      await standNachziehen(invoiceId);
       updateField("mahnstufe", newStufe);
       toast({ title: "Mahnstufe erhöht", description: `Mahnstufe ist jetzt ${newStufe}` });
     } catch (err: any) {
@@ -2760,11 +3068,11 @@ export default function InvoiceDetail() {
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-red-100 mb-2">
                   <Ban className="w-8 h-8 text-red-600" />
                 </div>
-                <h2 className="text-xl font-bold text-red-700">Rechnung storniert</h2>
+                <h2 className="text-xl font-bold text-red-700">{typLabel} storniert</h2>
                 <div className="text-sm text-muted-foreground space-y-1">
-                  <p>Rechnungsnummer: <strong>{form.nummer}</strong></p>
+                  <p>Belegnummer: <strong>{form.nummer}</strong></p>
                   <p>Kunde: <strong>{form.kunde_name}</strong></p>
-                  <p>Bruttobetrag: <strong>€ {bruttoSumme.toFixed(2)}</strong></p>
+                  <p>Bruttobetrag: <strong>€ {eur(bruttoSumme)}</strong></p>
                   {form.storno_nummer && <p>Stornonummer: <strong>{form.storno_nummer}</strong></p>}
                   {form.storno_datum && <p>Storniert am: <strong>{new Date(form.storno_datum + "T12:00:00").toLocaleDateString("de-AT")}</strong></p>}
                   {form.storno_grund && <p>Grund: <strong>{form.storno_grund}</strong></p>}
@@ -2806,6 +3114,40 @@ export default function InvoiceDetail() {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Zahlungsverlauf bleibt auch nach dem Storno sichtbar (read-only).
+                Vorher verschwand er komplett — das tatsächlich geflossene Geld
+                war damit in der App nicht mehr auffindbar. */}
+            {payments.length > 0 && (
+              <Card className="kb-panel">
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base">Zahlungsverlauf vor dem Storno</CardTitle>
+                  <CardDescription>
+                    Diese Zahlungen wurden vor der Stornierung erfasst. Der Bezahlt-Betrag
+                    des Belegs wurde beim Storno auf € 0,00 gesetzt, damit Umsatz- und
+                    Offen-Statistiken stimmen. Eine allfällige Rückzahlung bitte mit der
+                    Buchhaltung abstimmen.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {payments.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between rounded-md border bg-muted/30 p-2">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <span className="text-sm font-medium text-green-700">€ {eur(Number(p.betrag))}</span>
+                          <span className="text-sm text-muted-foreground">{format(parseISO(p.datum), "dd.MM.yyyy")}</span>
+                          {p.notizen && <span className="text-xs italic text-muted-foreground">{p.notizen}</span>}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t pt-2 text-sm">
+                      <span className="text-muted-foreground">Summe erfasster Zahlungen</span>
+                      <strong>€ {eur(payments.reduce((s, p) => s + (Number(p.betrag) || 0), 0))}</strong>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
       </div>
@@ -2818,7 +3160,9 @@ export default function InvoiceDetail() {
           Speichern + grüner „Speichern & Schließen" rechts */}
       <KBToolbar
         onBack={handleBackNav}
-        title={isNew ? `${typArticle} ${typLabel} erstellen` : `${typLabel} ${form.nummer}`}
+        /* Am Handy einen kurzen Titel — der lange Titel drängt sonst die
+           Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
+        title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen`) : `${typLabel} ${form.nummer}`}
         rightActions={
           !isLocked ? (
             <>
@@ -2841,7 +3185,11 @@ export default function InvoiceDetail() {
           ) : undefined
         }
       >
-        <KBWizardTabs activeStep={activeStep} onStepClick={scrollToStep} />
+        {/* Eigener Flex-Container: hält die 3 Wizard-Tabs am Handy in EINER
+            Zeile statt sie einzeln umbrechen zu lassen. */}
+        <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+          <KBWizardTabs activeStep={activeStep} onStepClick={scrollToStep} />
+        </div>
       </KBToolbar>
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
@@ -2859,7 +3207,7 @@ export default function InvoiceDetail() {
                     type="button"
                     onClick={() => { if (chainRoot.id !== invoiceId) navigate(`/invoices/${chainRoot.id}`); }}
                     disabled={chainRoot.id === invoiceId}
-                    className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-xs transition-colors ${
+                    className={`flex min-h-[40px] items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-xs transition-colors sm:min-h-0 sm:px-2 sm:py-1 ${
                       chainRoot.id === invoiceId
                         ? "border-blue-400 bg-blue-100 text-blue-900 ring-1 ring-blue-400"
                         : "border-blue-200 bg-white hover:bg-blue-100 text-blue-900"
@@ -2875,14 +3223,14 @@ export default function InvoiceDetail() {
                       type="button"
                       onClick={() => { if (c.id !== invoiceId) navigate(`/invoices/${c.id}`); }}
                       disabled={c.id === invoiceId}
-                      className={`flex items-center gap-1.5 rounded border px-2 py-1 font-mono text-xs transition-colors ${
+                      className={`flex min-h-[40px] items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-xs transition-colors sm:min-h-0 sm:px-2 sm:py-1 ${
                         c.id === invoiceId
                           ? "border-blue-400 bg-blue-100 text-blue-900 ring-1 ring-blue-400"
                           : c.status === "storniert"
                             ? "border-red-200 bg-white text-red-700 line-through opacity-70 hover:opacity-100"
                             : "border-blue-200 bg-white hover:bg-blue-100 text-blue-900"
                       }`}
-                      title={`${getDocConfig(c.typ).label} ${c.nummer || ""} — € ${Number(c.brutto_summe).toFixed(2)} brutto, Status ${c.status}`}
+                      title={`${getDocConfig(c.typ).label} ${c.nummer || ""} — € ${eur(Number(c.brutto_summe))} brutto, Status ${c.status}`}
                     >
                       <span className="text-[10px] uppercase text-blue-600">{getDocConfig(c.typ).shortLabel}</span>
                       <span>{c.nummer || "—"}</span>
@@ -2918,16 +3266,17 @@ export default function InvoiceDetail() {
                           const offen = bruttoSumme - form.bezahlt_betrag;
                           const ok = window.confirm(
                             `⚠️ Diese Rechnung ist bereits teilbezahlt.\n\n` +
-                            `Brutto: € ${bruttoSumme.toFixed(2)}\n` +
-                            `Bezahlt: € ${form.bezahlt_betrag.toFixed(2)}\n` +
-                            `Offen: € ${offen.toFixed(2)}\n\n` +
-                            `Die Mahnung wird den OFFENEN Betrag (€ ${offen.toFixed(2)}) mahnen. Fortfahren?`
+                            `Brutto: € ${eur(bruttoSumme)}\n` +
+                            `Bezahlt: € ${eur(form.bezahlt_betrag)}\n` +
+                            `Offen: € ${eur(offen)}\n\n` +
+                            `Die Mahnung wird den OFFENEN Betrag (€ ${eur(offen)}) mahnen. Fortfahren?`
                           );
                           if (!ok) return;
                         }
                         try {
                           // Update mahnstufe in DB + save history
                           await supabase.from("invoices").update({ mahnstufe }).eq("id", invoiceId);
+                          await standNachziehen(invoiceId);
                           await supabase.from("mahnung_history").insert({ invoice_id: invoiceId, mahnstufe });
                           updateField("mahnstufe", mahnstufe);
                           loadMahnungen();
@@ -3029,7 +3378,7 @@ export default function InvoiceDetail() {
                                   setBestehendeAnzahlungenNetto(0);
                                 }
                                 setAnzahlungProzentInput("30");
-                                setAnzahlungBetragInput((nettoSumme * 0.3).toFixed(2));
+                                setAnzahlungBetragInput(formatForInput(round2(nettoSumme * 0.3), 2));
                                 setAnzahlungMode("prozent");
                                 setAnzahlungDialogOpen(true);
                               }}>
@@ -3130,32 +3479,22 @@ export default function InvoiceDetail() {
                         Als verrechnet markieren
                       </Button>
                     )}
+                    {/* EIN Storno-Weg für den ganzen Beleg: der Dialog weiter
+                        unten fragt den Pflicht-Grund ab, warnt bei bereits
+                        erfassten Zahlungen und zieht die Storno-Nummer atomar
+                        aus der DB. Vorher gab es hier einen zweiten, gleich
+                        aussehenden Knopf, der ohne Grund und ohne
+                        Zahlungs-Warnung sofort stornierte. */}
                     {canCancel && (
-                      <AlertDialog>
-                        <AlertDialogTrigger asChild>
-                          <Button variant="destructive" size="sm" className="gap-1.5">
-                            <Ban className="w-4 h-4" />
-                            Stornieren
-                          </Button>
-                        </AlertDialogTrigger>
-                        <AlertDialogContent>
-                          <AlertDialogHeader>
-                            <AlertDialogTitle className="flex items-center gap-2">
-                              <AlertTriangle className="w-5 h-5 text-destructive" />
-                              Rechnung stornieren?
-                            </AlertDialogTitle>
-                            <AlertDialogDescription>
-                              Die Rechnung {form.nummer} wird als storniert markiert.
-                            </AlertDialogDescription>
-                          </AlertDialogHeader>
-                          <AlertDialogFooter>
-                            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-                            <AlertDialogAction onClick={handleCancel} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                              Stornieren
-                            </AlertDialogAction>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => setStornoDialogOpen(true)}
+                      >
+                        <Ban className="w-4 h-4" />
+                        Stornieren
+                      </Button>
                     )}
                     {canDelete && (
                       <AlertDialog>
@@ -3267,16 +3606,19 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
-          {/* Zahlungsverlauf */}
-          {!isNew && form.typ === "rechnung" && form.status !== "storniert" && (
+          {/* Zahlungsverlauf — für ALLE zahlbaren Belegarten (Rechnung,
+              Anzahlungs- und Schlussrechnung). Vorher hing die Karte an
+              typ === "rechnung", weshalb auf Anzahlungs-/Schlussrechnungen
+              überhaupt keine Zahlung erfasst werden konnte. */}
+          {!isNew && ZAHLBARE_TYPEN.has(form.typ) && form.status !== "storniert" && (
             <Card className="kb-panel">
               <CardHeader className="pb-2">
-                <div className="flex justify-between items-center">
+                <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                   <CardTitle className="text-base">Zahlungsverlauf</CardTitle>
-                  <div className="flex items-center gap-4 text-sm">
-                    <span>Brutto: <strong>€ {bruttoSumme.toFixed(2)}</strong></span>
-                    <span>Bezahlt: <strong className="text-green-600">€ {form.bezahlt_betrag.toFixed(2)}</strong></span>
-                    <span>Offen: <strong className={restBetrag > 0 ? "text-orange-600" : "text-green-600"}>€ {restBetrag.toFixed(2)}</strong></span>
+                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                    <span>Brutto: <strong>€ {eur(bruttoSumme)}</strong></span>
+                    <span>Bezahlt: <strong className="text-green-600">€ {eur(form.bezahlt_betrag)}</strong></span>
+                    <span>Offen: <strong className={restBetrag > 0 ? "text-orange-600" : "text-green-600"}>€ {eur(restBetrag)}</strong></span>
                   </div>
                 </div>
               </CardHeader>
@@ -3287,7 +3629,7 @@ export default function InvoiceDetail() {
                     {payments.map((p) => (
                       <div key={p.id} className="flex items-center justify-between p-2 rounded-md border bg-muted/30">
                         <div className="flex items-center gap-3">
-                          <span className="text-sm font-medium text-green-700">€ {Number(p.betrag).toFixed(2)}</span>
+                          <span className="text-sm font-medium text-green-700">€ {eur(Number(p.betrag))}</span>
                           <span className="text-sm text-muted-foreground">{format(parseISO(p.datum), "dd.MM.yyyy")}</span>
                           {p.notizen && <span className="text-xs text-muted-foreground italic">{p.notizen}</span>}
                         </div>
@@ -3301,40 +3643,49 @@ export default function InvoiceDetail() {
 
                 {/* Add payment form */}
                 {restBetrag > 0 && (
-                  <div className="flex items-end gap-3 pt-2 border-t">
-                    <div>
+                  /* Am Handy untereinander mit vollen Feldbreiten — nebeneinander
+                     ragten die drei fixen Breiten über den Bildschirmrand. */
+                  <div className="flex flex-col gap-3 pt-2 border-t sm:flex-row sm:items-end">
+                    <div className="w-full sm:w-32">
                       <Label className="text-xs">Betrag €</Label>
+                      {/* Text statt number: "12,50" darf nicht zu 1250,00 € werden. */}
                       <Input
-                        type="number"
+                        data-testid="zahlung-betrag"
+                        type="text"
+                        inputMode="decimal"
                         value={newPaymentAmount}
                         onChange={(e) => setNewPaymentAmount(e.target.value)}
-                        placeholder={restBetrag.toFixed(2)}
-                        min={0}
-                        step={0.01}
-                        className="w-32"
+                        onBlur={() => {
+                          const n = parseDecimal(newPaymentAmount);
+                          // Leeres Feld bleibt leer (= Vorschlag „Restbetrag"),
+                          // eine eingegebene 0 bleibt eine 0 (→ Fehlermeldung).
+                          if (n !== null) setNewPaymentAmount(formatForInput(clamp(n, 0), 2));
+                        }}
+                        placeholder={formatForInput(restBetrag, 2)}
+                        className="h-11 sm:h-10"
                       />
                     </div>
-                    <div>
+                    <div className="w-full sm:w-40">
                       <Label className="text-xs">Datum</Label>
                       <Input
                         type="date"
                         value={newPaymentDate}
                         onChange={(e) => setNewPaymentDate(e.target.value)}
-                        className="w-40"
+                        className="h-11 sm:h-10"
                       />
                     </div>
-                    <div>
+                    <div className="w-full sm:w-40">
                       <Label className="text-xs">Notiz (optional)</Label>
                       <Input
                         value={newPaymentNote}
                         onChange={(e) => setNewPaymentNote(e.target.value)}
                         placeholder="z.B. Überweisung"
-                        className="w-40"
+                        className="h-11 sm:h-10"
                       />
                     </div>
-                    <Button size="sm" onClick={addPayment} className="gap-1">
-                      <Plus className="w-3.5 h-3.5" />
-                      Zahlung
+                    <Button data-testid="zahlung-speichern" onClick={addPayment} className="h-11 w-full gap-1 sm:h-10 sm:w-auto">
+                      <Plus className="w-4 h-4" />
+                      Zahlung erfassen
                     </Button>
                   </div>
                 )}
@@ -3404,7 +3755,7 @@ export default function InvoiceDetail() {
 
           {/* Betreff */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
-            <fieldset disabled={isLocked}>
+            <fieldset disabled={isLocked} className="min-w-0">
             <CardHeader className="pb-2">
               <CardTitle className="text-base">Betreff</CardTitle>
             </CardHeader>
@@ -3422,7 +3773,7 @@ export default function InvoiceDetail() {
 
           {/* Rechnungsdetails */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
-            <fieldset disabled={isLocked}>
+            <fieldset disabled={isLocked} className="min-w-0">
             <CardHeader>
               <CardTitle>Details</CardTitle>
             </CardHeader>
@@ -3435,20 +3786,28 @@ export default function InvoiceDetail() {
                 {getDocConfig(form.typ).showLeistungsdatum && (
                   <div className="md:col-span-2">
                     <Label>Leistungszeitraum</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <Input
-                        type="date"
-                        value={form.leistungsdatum || form.datum}
-                        onChange={(e) => updateField("leistungsdatum", e.target.value)}
-                        placeholder="von"
-                      />
-                      <Input
-                        type="date"
-                        value={(form as any).leistungsdatum_bis || ""}
-                        onChange={(e) => updateField("leistungsdatum_bis" as any, e.target.value)}
-                        placeholder="bis (optional)"
-                        min={form.leistungsdatum || form.datum || undefined}
-                      />
+                    {/* Am Handy untereinander: zwei native Datumsfelder
+                        nebeneinander schneiden auf 390 px das Kalender-Icon ab. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div>
+                        <span className="mb-0.5 block text-[10px] text-muted-foreground sm:hidden">von</span>
+                        <Input
+                          type="date"
+                          value={form.leistungsdatum || form.datum}
+                          onChange={(e) => updateField("leistungsdatum", e.target.value)}
+                          placeholder="von"
+                        />
+                      </div>
+                      <div>
+                        <span className="mb-0.5 block text-[10px] text-muted-foreground sm:hidden">bis (optional)</span>
+                        <Input
+                          type="date"
+                          value={(form as any).leistungsdatum_bis || ""}
+                          onChange={(e) => updateField("leistungsdatum_bis" as any, e.target.value)}
+                          placeholder="bis (optional)"
+                          min={form.leistungsdatum || form.datum || undefined}
+                        />
+                      </div>
                     </div>
                     <p className="text-[10px] text-muted-foreground mt-0.5">
                       Beginnt automatisch am Rechnungsdatum. Enddatum nur ausfüllen, wenn die Leistung über mehrere Tage erbracht wurde.
@@ -3509,29 +3868,45 @@ export default function InvoiceDetail() {
                     <div>
                       <Label>Skonto %</Label>
                       <Input
-                        type="number"
-                        value={form.skonto_prozent || ""}
-                        onChange={(e) => updateField("skonto_prozent", Math.min(100, Math.max(0, Number(e.target.value))))}
+                        type="text"
+                        inputMode="decimal"
+                        value={rohOderZahl("form:skonto_prozent", form.skonto_prozent, { leerBeiNull: true })}
+                        onChange={(e) => {
+                          setRoh("form:skonto_prozent", e.target.value);
+                          const n = parseDecimal(e.target.value);
+                          updateField("skonto_prozent", n === null ? 0 : clamp(n, 0, 100));
+                        }}
+                        onBlur={() => {
+                          const n = clamp(toNumber(rohTexte["form:skonto_prozent"], 0), 0, 100);
+                          updateField("skonto_prozent", n);
+                          clearRoh("form:skonto_prozent");
+                        }}
                         placeholder="z.B. 2"
-                        min={0}
-                        max={100}
-                        step={0.5}
                       />
                     </div>
                     <div>
                       <Label>Skonto Tage</Label>
                       <Input
-                        type="number"
-                        value={form.skonto_tage || ""}
-                        onChange={(e) => updateField("skonto_tage", Number(e.target.value))}
+                        type="text"
+                        inputMode="numeric"
+                        value={rohOderZahl("form:skonto_tage", form.skonto_tage, { leerBeiNull: true })}
+                        onChange={(e) => {
+                          setRoh("form:skonto_tage", e.target.value);
+                          const n = parseDecimal(e.target.value);
+                          updateField("skonto_tage", n === null ? 0 : Math.round(clamp(n, 0)));
+                        }}
+                        onBlur={() => {
+                          const n = Math.round(clamp(toNumber(rohTexte["form:skonto_tage"], 0), 0));
+                          updateField("skonto_tage", n);
+                          clearRoh("form:skonto_tage");
+                        }}
                         placeholder="z.B. 10"
-                        min={0}
                       />
                     </div>
                     {form.skonto_prozent > 0 && form.skonto_tage > 0 && (
                       <p className="col-span-2 text-xs text-muted-foreground">
                         Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
-                        {" "}€ {(bruttoSumme * (1 - form.skonto_prozent / 100)).toFixed(2)} ({form.skonto_prozent}% Skonto)
+                        {" "}€ {eur((bruttoSumme * (1 - form.skonto_prozent / 100)))} ({form.skonto_prozent}% Skonto)
                       </p>
                     )}
                   </div>
@@ -3582,30 +3957,59 @@ export default function InvoiceDetail() {
                 <div>
                   <Label>Rabatt (%)</Label>
                   <Input
-                    type="number"
-                    value={form.rabatt_prozent}
+                    type="text"
+                    inputMode="decimal"
+                    data-testid="rabatt-prozent"
+                    value={rohOderZahl("form:rabatt_prozent", form.rabatt_prozent, { leerBeiNull: true })}
                     onChange={(e) => {
-                      const val = Math.min(100, Math.max(0, Number(e.target.value)));
+                      setRoh("form:rabatt_prozent", e.target.value);
+                      const n = parseDecimal(e.target.value);
+                      const val = n === null ? 0 : clamp(n, 0, 100);
                       updateField("rabatt_prozent", val);
                       if (val > 0) updateField("rabatt_betrag", 0);
                     }}
-                    min={0}
-                    max={100}
-                    step={0.5}
+                    onBlur={() => {
+                      const val = clamp(toNumber(rohTexte["form:rabatt_prozent"], 0), 0, 100);
+                      updateField("rabatt_prozent", val);
+                      if (val > 0) updateField("rabatt_betrag", 0);
+                      clearRoh("form:rabatt_prozent");
+                    }}
+                    placeholder="0"
                     className="w-32"
                   />
                 </div>
                 <div>
                   <Label>Rabatt (€)</Label>
+                  {/* Ein Rabatt kann nie negativ sein und nie größer als die
+                      Positionssumme — sonst erhöht er die Belegsumme bzw. dreht
+                      sie ins Minus, und das PDF geht nicht mehr auf. */}
                   <Input
-                    type="number"
-                    value={form.rabatt_betrag}
+                    type="text"
+                    inputMode="decimal"
+                    data-testid="rabatt-betrag"
+                    value={rohOderZahl("form:rabatt_betrag", form.rabatt_betrag, { nachkomma: 2, leerBeiNull: true })}
                     onChange={(e) => {
-                      updateField("rabatt_betrag", Number(e.target.value));
-                      if (Number(e.target.value) > 0) updateField("rabatt_prozent", 0);
+                      setRoh("form:rabatt_betrag", e.target.value);
+                      const n = parseDecimal(e.target.value);
+                      const val = n === null ? 0 : clamp(round2(n), 0);
+                      updateField("rabatt_betrag", val);
+                      if (val > 0) updateField("rabatt_prozent", 0);
                     }}
-                    min={0}
-                    step={0.01}
+                    onBlur={() => {
+                      const roh = clamp(round2(toNumber(rohTexte["form:rabatt_betrag"], 0)), 0);
+                      const val = Math.min(roh, positionenNetto);
+                      if (roh > positionenNetto) {
+                        toast({
+                          variant: "destructive",
+                          title: "Rabatt zu hoch",
+                          description: `Der Rabatt darf die Positionssumme (€ ${eur(positionenNetto)}) nicht übersteigen — auf € ${eur(val)} begrenzt.`,
+                        });
+                      }
+                      updateField("rabatt_betrag", val);
+                      if (val > 0) updateField("rabatt_prozent", 0);
+                      clearRoh("form:rabatt_betrag");
+                    }}
+                    placeholder="0,00"
                     className="w-32"
                     disabled={form.rabatt_prozent > 0}
                   />
@@ -3616,12 +4020,25 @@ export default function InvoiceDetail() {
                       <Calculator className="w-3.5 h-3.5" /> Aufschlag-Override (%)
                     </Label>
                     <Input
-                      type="number"
-                      value={form.kalkulation_aufschlag_override ?? ""}
+                      type="text"
+                      inputMode="decimal"
+                      value={
+                        rohTexte["form:aufschlag_override"] !== undefined
+                          ? rohTexte["form:aufschlag_override"]
+                          : (form.kalkulation_aufschlag_override ?? "") === ""
+                            ? ""
+                            : formatForInput(Number(form.kalkulation_aufschlag_override))
+                      }
                       placeholder="je Position"
-                      onChange={(e) => setDocAufschlagOverride(e.target.value)}
-                      min={0}
-                      step={0.5}
+                      onChange={(e) => {
+                        setRoh("form:aufschlag_override", e.target.value);
+                        setDocAufschlagOverride(e.target.value);
+                      }}
+                      onBlur={() => {
+                        const roh = rohTexte["form:aufschlag_override"];
+                        if (roh !== undefined) setDocAufschlagOverride(roh);
+                        clearRoh("form:aufschlag_override");
+                      }}
                       className="w-32"
                     />
                     <p className="text-[11px] text-muted-foreground mt-1 max-w-[16rem]">
@@ -3641,7 +4058,7 @@ export default function InvoiceDetail() {
               Toggle off — beim Wieder-Aktivieren sind die Werte da. */}
           {getDocConfig(form.typ).isAngebotLike && (
             <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
-              <fieldset disabled={isLocked}>
+              <fieldset disabled={isLocked} className="min-w-0">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Allgemeine Angaben</CardTitle>
               </CardHeader>
@@ -3845,6 +4262,7 @@ export default function InvoiceDetail() {
                         .eq("id", custId)
                         .single();
                       if (cust) {
+                        if (!loading) setIsDirty(true);
                         setForm(prev => ({
                           ...prev,
                           customer_id: cust.id,
@@ -3960,14 +4378,18 @@ export default function InvoiceDetail() {
 
           {/* Kundendaten — locked nach Speichern nur bei Rechnungen, bei Angeboten editierbar */}
           <Card className={`kb-panel ${isKundeLocked ? "opacity-80" : ""}`}>
-            <fieldset disabled={isKundeLocked}>
+            <fieldset disabled={isKundeLocked} className="min-w-0">
             <CardHeader>
-              <div className="flex justify-between items-center">
-                <CardTitle>Kundendaten</CardTitle>
+              {/* Am Handy untereinander — nebeneinander drückte die Karte über
+                  den Bildschirmrand hinaus (horizontaler Body-Overflow). */}
+              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="shrink-0">Kundendaten</CardTitle>
                 <CustomerSelect
+                  className="min-w-0 sm:w-64"
                   value={form.customer_id || null}
                   onChange={async (id, customer) => {
                     if (!customer) {
+                      if (!loading) setIsDirty(true);
                       setForm(prev => ({
                         ...prev,
                         customer_id: null,
@@ -4027,6 +4449,7 @@ export default function InvoiceDetail() {
                         }
                       }
                     }
+                    if (!loading) setIsDirty(true);
                     setForm(prev => ({ ...prev, ...updates }));
                     if (hints.length > 0) {
                       toast({ title: "Kundeneinstellungen übernommen", description: hints.join(" · ") });
@@ -4049,6 +4472,7 @@ export default function InvoiceDetail() {
               {form.customer_id && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Verknüpft mit bestehendem Kunden • <button className="underline" onClick={() => {
+                    if (!loading) setIsDirty(true);
                     setForm(prev => ({
                       ...prev,
                       customer_id: null,
@@ -4076,7 +4500,7 @@ export default function InvoiceDetail() {
                       {form.customer_id && (
                         <button
                           type="button"
-                          className="rounded-full p-1 hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors sm:h-7 sm:w-7"
                           title="Kundendaten bearbeiten"
                           onClick={() => setCustomerEditOpen(true)}
                         >
@@ -4085,9 +4509,10 @@ export default function InvoiceDetail() {
                       )}
                       <button
                         type="button"
-                        className="rounded-full p-1 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                        className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors sm:h-7 sm:w-7"
                         title="Kunde entfernen"
                         onClick={() => {
+                          if (!loading) setIsDirty(true);
                           setForm(prev => ({
                             ...prev,
                             customer_id: null,
@@ -4242,7 +4667,7 @@ export default function InvoiceDetail() {
               {form.typ === "rechnung" && (form.skonto_prozent > 0 || form.skonto_tage > 0 || (form as any).zahlungsbedingungen) && (
                 <div className="mt-3 p-3 rounded-lg bg-muted/30 border">
                   <p className="text-xs font-medium text-muted-foreground mb-2">Zahlungseinstellungen vom Kunden</p>
-                  <div className="grid grid-cols-3 gap-3 text-sm">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3 text-sm">
                     {form.skonto_prozent > 0 && (
                       <div><span className="text-muted-foreground">Skonto:</span> <strong>{form.skonto_prozent}%</strong></div>
                     )}
@@ -4265,8 +4690,10 @@ export default function InvoiceDetail() {
           {/* Positionen */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <CardHeader>
-              <div className="flex justify-between items-center">
-                <CardTitle>Positionen</CardTitle>
+              {/* Handy: Überschrift oben, Werkzeug-Knöpfe darunter (vorher
+                  schoben sich die Knöpfe über die Überschrift). */}
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <CardTitle className="shrink-0">Positionen</CardTitle>
                 {!isLocked && (
                 <div className="flex gap-2 flex-wrap">
                   {form.typ === "rechnung" && (
@@ -4326,13 +4753,349 @@ export default function InvoiceDetail() {
                   </Button>
                 </div>
               )}
-              <fieldset disabled={isLocked}>
-              <div className="overflow-x-auto">
-                <Table>
+              <fieldset disabled={isLocked} className="min-w-0">
+              <div ref={posWrapRef}>
+                {(() => {
+                  /* Positions-Zeilen werden EINMAL aufgebaut und je nach Platz
+                     als KingBill-Tabelle (breit) oder als Karten (schmal:
+                     Handy + eingeklappter Editor neben der Live-Vorschau)
+                     ausgegeben. Beide Darstellungen nutzen exakt dieselben
+                     Eingabefelder — kein zweiter Satz Logik, der auseinanderläuft. */
+                  const rows = items.map((item, idx) => {
+                    const acQuery = (autocompleteIdx === idx && item.beschreibung.length >= 2) ? item.beschreibung.toLowerCase() : "";
+                    const acResults = acQuery ? templates.filter(t => {
+                      const kb = ((t as any).kurzbezeichnung || t.name || "").toLowerCase();
+                      const pn = ((t as any).produktnummer || "").toLowerCase();
+                      const lb = ((t as any).langbezeichnung || t.beschreibung || "").toLowerCase();
+                      const pg = ((t as any).produktgruppe || "").toLowerCase();
+                      return kb.includes(acQuery) || pn.includes(acQuery) || lb.includes(acQuery) || pg.includes(acQuery);
+                    }).slice(0, 20) : [];
+
+                    const isExempt = !!(item as any).mwst_exempt;
+
+                    const beschreibungFeld = (
+                      <>
+                        <div className="relative">
+                          <Input
+                            value={item.beschreibung}
+                            onChange={(e) => {
+                              updateItem(idx, "beschreibung", e.target.value);
+                              updateItem(idx, "kurztext", e.target.value);
+                              setAutocompleteIdx(idx);
+                            }}
+                            onFocus={() => setAutocompleteIdx(idx)}
+                            onBlur={() => setTimeout(() => setAutocompleteIdx(null), 200)}
+                            placeholder="Kurzbezeichnung"
+                            className="h-10 md:h-9"
+                            disabled={isExempt}
+                            title={isExempt ? "Automatischer Anzahlungs-Abzug — nicht manuell editierbar. Entferne die Zeile, wenn die Anzahlung nicht abgezogen werden soll." : undefined}
+                          />
+                          {/* Autocomplete dropdown */}
+                          {acResults.length > 0 && (
+                            <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-popover border rounded-md shadow-lg max-h-72 overflow-y-auto">
+                              {acResults.map(t => (
+                                <button
+                                  key={t.id}
+                                  type="button"
+                                  className="w-full text-left px-3 py-2 text-sm hover:bg-accent flex justify-between gap-2"
+                                  onMouseDown={(e) => {
+                                    e.preventDefault();
+                                    const netto = Number((t as any).netto_preis) || t.einzelpreis;
+                                    updateItem(idx, "beschreibung", (t as any).kurzbezeichnung || t.name);
+                                    updateItem(idx, "kurztext", (t as any).kurzbezeichnung || t.name);
+                                    const lang = (t as any).langbezeichnung || "";
+                                    const kurz = (t as any).kurzbezeichnung || t.name || "";
+                                    // Langtext nur setzen wenn es eine echte Langbezeichnung gibt und sie sich vom Kurztext unterscheidet
+                                    updateItem(idx, "langtext", lang && lang !== kurz ? lang : "");
+                                    updateItem(idx, "einheit", t.einheit);
+                                    updateItem(idx, "einzelpreis", netto);
+                                    updateItem(idx, "produktnummer", (t as any).produktnummer || "");
+                                    setAutocompleteIdx(null);
+                                  }}
+                                >
+                                  <span className="truncate">{(t as any).kurzbezeichnung || t.name}</span>
+                                  <span className="text-xs text-muted-foreground shrink-0">
+                                    {(t as any).produktnummer && <span className="mr-2">{(t as any).produktnummer}</span>}
+                                    € {eur((Number((t as any).netto_preis) || t.einzelpreis))}
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {item.produktnummer && (
+                          <span className="text-[10px] text-muted-foreground mt-0.5 block">Prod.-Nr: {item.produktnummer}</span>
+                        )}
+                        {(item.langtext || !isLocked) && (
+                          <textarea
+                            value={item.langtext || ""}
+                            onChange={(e) => {
+                              updateItem(idx, "langtext", e.target.value);
+                              e.target.style.height = "auto";
+                              e.target.style.height = e.target.scrollHeight + "px";
+                            }}
+                            onFocus={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
+                            placeholder="Langtext / Details (optional, wird auf PDF angezeigt)"
+                            className="mt-1 w-full text-xs border rounded px-2 py-1 resize-none bg-muted/30"
+                            style={{ minHeight: "28px", height: item.langtext ? "auto" : "28px" }}
+                            rows={item.langtext ? Math.max(2, item.langtext.split("\n").length) : 1}
+                          />
+                        )}
+                      </>
+                    );
+
+                    /* Zahlenfelder: type="text" + Rohtext-Puffer, damit "12,50"
+                       nicht als 1250 gelesen wird. Beim Tippen wird live geparst
+                       (Summen aktualisieren sich sofort), der Rohtext bleibt
+                       stehen; erst onBlur wird geklemmt und neu formatiert. */
+                    const mengeKey = `pos:${idx}:menge`;
+                    const preisKey = `pos:${idx}:preis`;
+                    const rabattKey = `pos:${idx}:rabatt`;
+                    const mengeFeld = (
+                      <Input
+                        data-testid="pos-menge"
+                        type="text"
+                        inputMode="decimal"
+                        value={rohOderZahl(mengeKey, item.menge)}
+                        onChange={(e) => {
+                          setRoh(mengeKey, e.target.value);
+                          const n = parseDecimal(e.target.value);
+                          if (n !== null) updateItem(idx, "menge", clamp(n, 0));
+                        }}
+                        onBlur={() => {
+                          const n = clamp(toNumber(rohTexte[mengeKey], item.menge), 0);
+                          updateItem(idx, "menge", n);
+                          clearRoh(mengeKey);
+                        }}
+                        className="text-right h-10 md:h-9"
+                        disabled={isExempt}
+                      />
+                    );
+                    const einheitFeld = (
+                      <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={isExempt}>
+                        <SelectTrigger data-testid="pos-einheit" className="w-full md:w-[90px] h-10 md:h-9"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {einheiten.map(e => (
+                            <SelectItem key={e} value={e}>{e}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    );
+                    const preisFeld = (
+                      <Input
+                        data-testid="pos-preis"
+                        type="text"
+                        inputMode="decimal"
+                        value={rohOderZahl(preisKey, item.einzelpreis, { nachkomma: 2 })}
+                        onChange={(e) => {
+                          setRoh(preisKey, e.target.value);
+                          const n = parseDecimal(e.target.value);
+                          if (n !== null) updateItem(idx, "einzelpreis", clamp(n, 0));
+                        }}
+                        onBlur={() => {
+                          const n = clamp(toNumber(rohTexte[preisKey], item.einzelpreis), 0);
+                          updateItem(idx, "einzelpreis", n);
+                          clearRoh(preisKey);
+                        }}
+                        className="text-right h-10 md:h-9"
+                        disabled={isExempt || !!item.ist_kalkuliert}
+                        title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined}
+                      />
+                    );
+                    const rabattFeld = (
+                      <Input
+                        data-testid="pos-rabatt"
+                        type="text"
+                        inputMode="decimal"
+                        value={rohOderZahl(rabattKey, Number(item.rabatt_prozent) || 0, { leerBeiNull: true })}
+                        onChange={(e) => {
+                          setRoh(rabattKey, e.target.value);
+                          const n = parseDecimal(e.target.value);
+                          updateItem(idx, "rabatt_prozent", n === null ? 0 : clamp(n, 0, 100));
+                        }}
+                        onBlur={() => {
+                          const n = clamp(toNumber(rohTexte[rabattKey], 0), 0, 100);
+                          updateItem(idx, "rabatt_prozent", n);
+                          clearRoh(rabattKey);
+                        }}
+                        className="text-right h-10 md:h-9"
+                        placeholder="0"
+                        disabled={isExempt}
+                      />
+                    );
+
+                    const kalkButton = !isLocked && !hidePrices ? (
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" size="icon" className={`h-11 w-11 md:h-8 md:w-8 ${item.ist_kalkuliert ? "text-primary" : "text-muted-foreground"}`} title="Kalkulation (EK, Verschnitt, Aufschlag, Lohn)">
+                            <Calculator className="w-4 h-4" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[420px] max-w-[92vw]" align="end">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <p className="text-sm font-semibold">Kalkulation – Position {item.position}</p>
+                              {item.ist_kalkuliert && (
+                                <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
+                                  onClick={() => updateItem(idx, "ist_kalkuliert", false)}>
+                                  Kalkulation lösen
+                                </Button>
+                              )}
+                            </div>
+                            <KalkulationFields
+                              einheit={item.einheit}
+                              compact
+                              aufschlagOverride={docAufschlagOverride}
+                              value={{
+                                ek_preis: Number(item.ek_preis) || 0,
+                                verschnitt_prozent: Number(item.verschnitt_prozent) || 0,
+                                aufschlag_prozent: Number(item.aufschlag_prozent) || 0,
+                                befestigung_preis: Number(item.befestigung_preis) || 0,
+                                sonstiges_preis: Number(item.sonstiges_preis) || 0,
+                                arbeitszeit_minuten: Number(item.arbeitszeit_minuten) || 0,
+                                stundensatz: Number(item.stundensatz) || 52,
+                              }}
+                              onChange={(v) => applyItemKalkulation(idx, v)}
+                            />
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                    ) : null;
+
+                    const moveButtons = !isLocked ? (
+                      <>
+                        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8" disabled={idx === 0} onClick={() => moveItem(idx, "up")} title="Nach oben">
+                          <ChevronUp className="w-4 h-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8" disabled={idx === items.length - 1} onClick={() => moveItem(idx, "down")} title="Nach unten">
+                          <ChevronDown className="w-4 h-4" />
+                        </Button>
+                      </>
+                    ) : null;
+
+                    const deleteButton = items.length > 1 && !isLocked ? (
+                      <Button variant="ghost" size="icon" className="h-11 w-11 md:h-8 md:w-8" onClick={() => removeItem(idx)} title="Position löschen">
+                        <Trash2 className="w-4 h-4 text-destructive" />
+                      </Button>
+                    ) : null;
+
+                    return { item, idx, isExempt, beschreibungFeld, mengeFeld, einheitFeld, preisFeld, rabattFeld, kalkButton, moveButtons, deleteButton };
+                  });
+
+                  /* ══ SCHMAL: Karten (Handy / schmaler Editor) ══════════════ */
+                  if (posNarrow) {
+                    return (
+                      <div className="flex flex-col gap-3" data-testid="pos-cards">
+                        {rows.map(r => (
+                          <div
+                            key={r.idx}
+                            data-testid="pos-row"
+                            className={`rounded-lg border p-3 ${r.isExempt ? "border-rose-300 bg-rose-50/60" : "border-border bg-muted/20"}`}
+                          >
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                                {r.idx + 1}
+                              </span>
+                              {r.isExempt && (
+                                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
+                                  MwSt-frei
+                                </Badge>
+                              )}
+                              <div className="ml-auto flex items-center">
+                                {r.kalkButton}
+                                {r.moveButtons}
+                                {r.deleteButton}
+                              </div>
+                            </div>
+
+                            {r.beschreibungFeld}
+
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <div>
+                                <Label className="text-[11px] text-muted-foreground">Menge</Label>
+                                {r.mengeFeld}
+                              </div>
+                              <div>
+                                <Label className="text-[11px] text-muted-foreground">Einheit</Label>
+                                {r.einheitFeld}
+                              </div>
+                              {!hidePrices && (
+                                <>
+                                  <div>
+                                    <Label className="text-[11px] text-muted-foreground">Preis netto €</Label>
+                                    {r.preisFeld}
+                                  </div>
+                                  <div>
+                                    <Label className="text-[11px] text-muted-foreground">Rabatt %</Label>
+                                    {r.rabattFeld}
+                                  </div>
+                                </>
+                              )}
+                            </div>
+
+                            {!hidePrices && (
+                              <div className="mt-2 flex items-center justify-between border-t pt-2">
+                                <span className="text-xs text-muted-foreground">Gesamt (netto)</span>
+                                <span className="text-base font-bold tabular-nums">€ {eur(r.item.gesamtpreis)}</span>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+
+                        {!isLocked && (
+                          <Button onClick={addItem} variant="outline" className="w-full h-11 gap-1.5">
+                            <Plus className="w-4 h-4" />
+                            Position hinzufügen
+                          </Button>
+                        )}
+
+                        {/* Summen als Karte statt Tabellenfuß */}
+                        {!hidePrices && (
+                          <div className="rounded-lg border bg-muted/40 p-3 space-y-1.5 text-sm">
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Positionen Netto</span>
+                              <span className="font-medium tabular-nums">€ {eur(positionenNetto)}</span>
+                            </div>
+                            {rabattWert > 0 && (
+                              <div className="flex justify-between text-orange-600">
+                                <span>Rabatt {form.rabatt_prozent > 0 ? `(${form.rabatt_prozent}%)` : ""}</span>
+                                <span className="tabular-nums">- € {eur(rabattWert)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">Netto</span>
+                              <span className="font-medium tabular-nums">€ {eur(nettoSumme)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-muted-foreground">MwSt ({form.mwst_satz}%)</span>
+                              <span className="tabular-nums">€ {eur(mwstBetrag)}</span>
+                            </div>
+                            {exemptBrutto !== 0 && (
+                              <div className="flex justify-between text-red-600">
+                                <span>Anzahlungs-Abzug (brutto, MwSt-frei)</span>
+                                <span className="font-medium tabular-nums">€ {eur(exemptBrutto)}</span>
+                              </div>
+                            )}
+                            <div className="flex justify-between border-t pt-1.5 text-lg font-bold">
+                              <span>{exemptBrutto < 0 ? "Zu zahlen" : "Brutto"}</span>
+                              <span className="tabular-nums">€ {eur(bruttoSumme)}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+
+                  /* ══ BREIT: KingBill-Tabelle ══════════════════════════════ */
+                  return (
+                /* Engere Zellen als shadcn-Standard (p-4): die acht Spalten
+                   sparen so ~190 px Innenabstand — dadurch bleiben Mengen-,
+                   Preis- und Summenfeld auch neben der Live-Vorschau lesbar. */
+                <Table className="[&_td]:px-2 [&_th]:px-2">
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">Pos.</TableHead>
-                      <TableHead>Beschreibung</TableHead>
+                      <TableHead className="min-w-[220px]">Beschreibung</TableHead>
                       <TableHead className="w-28">Menge</TableHead>
                       <TableHead className="w-24">Einheit</TableHead>
                       {!hidePrices && (
@@ -4346,181 +5109,39 @@ export default function InvoiceDetail() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {items.map((item, idx) => {
-                      const acQuery = (autocompleteIdx === idx && item.beschreibung.length >= 2) ? item.beschreibung.toLowerCase() : "";
-                      const acResults = acQuery ? templates.filter(t => {
-                        const kb = ((t as any).kurzbezeichnung || t.name || "").toLowerCase();
-                        const pn = ((t as any).produktnummer || "").toLowerCase();
-                        const lb = ((t as any).langbezeichnung || t.beschreibung || "").toLowerCase();
-                        const pg = ((t as any).produktgruppe || "").toLowerCase();
-                        return kb.includes(acQuery) || pn.includes(acQuery) || lb.includes(acQuery) || pg.includes(acQuery);
-                      }).slice(0, 20) : [];
-
-                      const isExempt = !!(item as any).mwst_exempt;
-                      return (
-                      <TableRow key={idx} className={isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : ""}>
+                    {rows.map(r => (
+                      <TableRow key={r.idx} data-testid="pos-row" className={r.isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : ""}>
                         <TableCell className="text-muted-foreground text-xs align-top">
                           <div className="flex items-center gap-1">
-                            <span>{idx + 1}</span>
-                            {isExempt && (
+                            <span>{r.idx + 1}</span>
+                            {r.isExempt && (
                               <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
                                 MwSt-frei
                               </Badge>
                             )}
                           </div>
                         </TableCell>
-                        <TableCell>
-                          <div className="relative">
-                            <Input
-                              value={item.beschreibung}
-                              onChange={(e) => {
-                                updateItem(idx, "beschreibung", e.target.value);
-                                updateItem(idx, "kurztext", e.target.value);
-                                setAutocompleteIdx(idx);
-                              }}
-                              onFocus={() => setAutocompleteIdx(idx)}
-                              onBlur={() => setTimeout(() => setAutocompleteIdx(null), 200)}
-                              placeholder="Kurzbezeichnung"
-                              disabled={isExempt}
-                              title={isExempt ? "Automatischer Anzahlungs-Abzug — nicht manuell editierbar. Entferne die Zeile, wenn die Anzahlung nicht abgezogen werden soll." : undefined}
-                            />
-                            {/* Autocomplete dropdown */}
-                            {acResults.length > 0 && (
-                              <div className="absolute z-50 left-0 right-0 top-full mt-1 bg-popover border rounded-md shadow-lg max-h-72 overflow-y-auto">
-                                {acResults.map(t => (
-                                  <button
-                                    key={t.id}
-                                    type="button"
-                                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-accent flex justify-between gap-2"
-                                    onMouseDown={(e) => {
-                                      e.preventDefault();
-                                      const netto = Number((t as any).netto_preis) || t.einzelpreis;
-                                      updateItem(idx, "beschreibung", (t as any).kurzbezeichnung || t.name);
-                                      updateItem(idx, "kurztext", (t as any).kurzbezeichnung || t.name);
-                                      const lang = (t as any).langbezeichnung || "";
-                                      const kurz = (t as any).kurzbezeichnung || t.name || "";
-                                      // Langtext nur setzen wenn es eine echte Langbezeichnung gibt und sie sich vom Kurztext unterscheidet
-                                      updateItem(idx, "langtext", lang && lang !== kurz ? lang : "");
-                                      updateItem(idx, "einheit", t.einheit);
-                                      updateItem(idx, "einzelpreis", netto);
-                                      updateItem(idx, "produktnummer", (t as any).produktnummer || "");
-                                      setAutocompleteIdx(null);
-                                    }}
-                                  >
-                                    <span className="truncate">{(t as any).kurzbezeichnung || t.name}</span>
-                                    <span className="text-xs text-muted-foreground shrink-0">
-                                      {(t as any).produktnummer && <span className="mr-2">{(t as any).produktnummer}</span>}
-                                      € {(Number((t as any).netto_preis) || t.einzelpreis).toFixed(2)}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          {item.produktnummer && (
-                            <span className="text-[10px] text-muted-foreground mt-0.5 block">Prod.-Nr: {item.produktnummer}</span>
-                          )}
-                          {(item.langtext || !isLocked) && (
-                            <textarea
-                              value={item.langtext || ""}
-                              onChange={(e) => {
-                                updateItem(idx, "langtext", e.target.value);
-                                e.target.style.height = "auto";
-                                e.target.style.height = e.target.scrollHeight + "px";
-                              }}
-                              onFocus={(e) => { e.target.style.height = "auto"; e.target.style.height = e.target.scrollHeight + "px"; }}
-                              placeholder="Langtext / Details (optional, wird auf PDF angezeigt)"
-                              className="mt-1 w-full text-xs border rounded px-2 py-1 resize-none bg-muted/30"
-                              style={{ minHeight: "28px", height: item.langtext ? "auto" : "28px" }}
-                              rows={item.langtext ? Math.max(2, item.langtext.split("\n").length) : 1}
-                            />
-                          )}
-                        </TableCell>
-                        <TableCell>
-                          <Input type="number" value={item.menge} onChange={(e) => updateItem(idx, "menge", Number(e.target.value))} min={0} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt} />
-                        </TableCell>
-                        <TableCell>
-                          <Select value={item.einheit || "Stk."} onValueChange={(v) => updateItem(idx, "einheit", v)} disabled={isExempt}>
-                            <SelectTrigger className="w-[90px] h-10 md:h-9"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {einheiten.map(e => (
-                                <SelectItem key={e} value={e}>{e}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </TableCell>
+                        <TableCell>{r.beschreibungFeld}</TableCell>
+                        <TableCell>{r.mengeFeld}</TableCell>
+                        <TableCell>{r.einheitFeld}</TableCell>
                         {!hidePrices && (
                           <>
-                            <TableCell>
-                              <Input type="number" value={item.einzelpreis} onChange={(e) => updateItem(idx, "einzelpreis", Number(e.target.value))} step={0.01} className="text-right h-10 md:h-9" disabled={isExempt || !!item.ist_kalkuliert} title={item.ist_kalkuliert ? "Preis wird kalkuliert — über das Rechner-Symbol anpassen" : undefined} />
-                            </TableCell>
-                            <TableCell>
-                              <Input type="number" value={item.rabatt_prozent || ""} onChange={(e) => updateItem(idx, "rabatt_prozent", Number(e.target.value))} min={0} max={100} step={0.5} className="text-right h-10 md:h-9" placeholder="0" disabled={isExempt} />
-                            </TableCell>
+                            <TableCell>{r.preisFeld}</TableCell>
+                            <TableCell>{r.rabattFeld}</TableCell>
                             <TableCell className="text-right font-medium">
-                              € {item.gesamtpreis.toFixed(2)}
+                              € {eur(r.item.gesamtpreis)}
                             </TableCell>
                           </>
                         )}
                         <TableCell>
                           <div className="flex items-center gap-0.5">
-                            {!isLocked && !hidePrices && (
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button variant="ghost" size="icon" className={`h-10 w-10 md:h-8 md:w-8 ${item.ist_kalkuliert ? "text-primary" : "text-muted-foreground"}`} title="Kalkulation (EK, Verschnitt, Aufschlag, Lohn)">
-                                    <Calculator className="w-4 h-4" />
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-[420px] max-w-[92vw]" align="end">
-                                  <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
-                                      <p className="text-sm font-semibold">Kalkulation – Position {item.position}</p>
-                                      {item.ist_kalkuliert && (
-                                        <Button variant="ghost" size="sm" className="h-7 text-xs text-muted-foreground"
-                                          onClick={() => updateItem(idx, "ist_kalkuliert", false)}>
-                                          Kalkulation lösen
-                                        </Button>
-                                      )}
-                                    </div>
-                                    <KalkulationFields
-                                      einheit={item.einheit}
-                                      compact
-                                      aufschlagOverride={docAufschlagOverride}
-                                      value={{
-                                        ek_preis: Number(item.ek_preis) || 0,
-                                        verschnitt_prozent: Number(item.verschnitt_prozent) || 0,
-                                        aufschlag_prozent: Number(item.aufschlag_prozent) || 0,
-                                        befestigung_preis: Number(item.befestigung_preis) || 0,
-                                        sonstiges_preis: Number(item.sonstiges_preis) || 0,
-                                        arbeitszeit_minuten: Number(item.arbeitszeit_minuten) || 0,
-                                        stundensatz: Number(item.stundensatz) || 52,
-                                      }}
-                                      onChange={(v) => applyItemKalkulation(idx, v)}
-                                    />
-                                  </div>
-                                </PopoverContent>
-                              </Popover>
-                            )}
-                            {!isLocked && (
-                              <>
-                                <Button variant="ghost" size="icon" className="h-10 w-10 md:h-8 md:w-8" disabled={idx === 0} onClick={() => moveItem(idx, "up")}>
-                                  <ChevronUp className="w-4 h-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-10 w-10 md:h-8 md:w-8" disabled={idx === items.length - 1} onClick={() => moveItem(idx, "down")}>
-                                  <ChevronDown className="w-4 h-4" />
-                                </Button>
-                              </>
-                            )}
-                            {items.length > 1 && !isLocked && (
-                              <Button variant="ghost" size="icon" className="h-10 w-10 md:h-8 md:w-8" onClick={() => removeItem(idx)}>
-                                <Trash2 className="w-4 h-4 text-destructive" />
-                              </Button>
-                            )}
+                            {r.kalkButton}
+                            {r.moveButtons}
+                            {r.deleteButton}
                           </div>
                         </TableCell>
                       </TableRow>
-                      );
-                    })}
+                    ))}
                     {!isLocked && (
                       <TableRow>
                         <TableCell colSpan={hidePrices ? 5 : 8} className="py-1">
@@ -4537,7 +5158,7 @@ export default function InvoiceDetail() {
                   <TableFooter>
                     <TableRow>
                       <TableCell colSpan={6} className="text-right">Positionen Netto</TableCell>
-                      <TableCell className="text-right font-medium">€ {positionenNetto.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-medium">€ {eur(positionenNetto)}</TableCell>
                       <TableCell />
                     </TableRow>
                     {rabattWert > 0 && (
@@ -4545,18 +5166,18 @@ export default function InvoiceDetail() {
                         <TableCell colSpan={6} className="text-right text-orange-600">
                           Rabatt {form.rabatt_prozent > 0 ? `(${form.rabatt_prozent}%)` : ""}
                         </TableCell>
-                        <TableCell className="text-right text-orange-600">- € {rabattWert.toFixed(2)}</TableCell>
+                        <TableCell className="text-right text-orange-600">- € {eur(rabattWert)}</TableCell>
                         <TableCell />
                       </TableRow>
                     )}
                     <TableRow>
                       <TableCell colSpan={6} className="text-right">Netto</TableCell>
-                      <TableCell className="text-right font-medium">€ {nettoSumme.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-medium">€ {eur(nettoSumme)}</TableCell>
                       <TableCell />
                     </TableRow>
                     <TableRow>
                       <TableCell colSpan={6} className="text-right">MwSt ({form.mwst_satz}%)</TableCell>
-                      <TableCell className="text-right">€ {mwstBetrag.toFixed(2)}</TableCell>
+                      <TableCell className="text-right">€ {eur(mwstBetrag)}</TableCell>
                       <TableCell />
                     </TableRow>
                     {exemptBrutto !== 0 && (
@@ -4565,7 +5186,7 @@ export default function InvoiceDetail() {
                           Anzahlungs-Abzug (brutto, MwSt-frei)
                         </TableCell>
                         <TableCell className="text-right text-red-600 font-medium">
-                          € {exemptBrutto.toFixed(2)}
+                          € {eur(exemptBrutto)}
                         </TableCell>
                         <TableCell />
                       </TableRow>
@@ -4574,12 +5195,14 @@ export default function InvoiceDetail() {
                       <TableCell colSpan={6} className="text-right font-bold text-lg">
                         {exemptBrutto < 0 ? "Zu zahlen" : "Brutto"}
                       </TableCell>
-                      <TableCell className="text-right font-bold text-lg">€ {bruttoSumme.toFixed(2)}</TableCell>
+                      <TableCell className="text-right font-bold text-lg">€ {eur(bruttoSumme)}</TableCell>
                       <TableCell />
                     </TableRow>
                   </TableFooter>
                   )}
                 </Table>
+                  );
+                })()}
               </div>
               </fieldset>
             </CardContent>
@@ -4793,16 +5416,26 @@ export default function InvoiceDetail() {
                       </div>
                       {isSelected && (
                         <Input
-                          type="number"
-                          value={templateMengen[t.id] || 1}
-                          onChange={(e) => { e.stopPropagation(); setTemplateMengen(prev => ({ ...prev, [t.id]: Number(e.target.value) || 1 })); }}
+                          type="text"
+                          inputMode="decimal"
+                          value={rohOderZahl(`tmpl:${t.id}`, templateMengen[t.id] || 1)}
+                          onChange={(e) => {
+                            e.stopPropagation();
+                            setRoh(`tmpl:${t.id}`, e.target.value);
+                            const n = parseDecimal(e.target.value);
+                            if (n !== null && n > 0) setTemplateMengen(prev => ({ ...prev, [t.id]: round3(n) }));
+                          }}
+                          onBlur={() => {
+                            const n = round3(toNumber(rohTexte[`tmpl:${t.id}`], templateMengen[t.id] || 1));
+                            setTemplateMengen(prev => ({ ...prev, [t.id]: n > 0 ? n : 1 }));
+                            clearRoh(`tmpl:${t.id}`);
+                          }}
                           onClick={(e) => e.stopPropagation()}
-                          min={0.01} step={0.01}
                           className="w-16 text-right text-xs h-7"
                         />
                       )}
                       <span className="text-xs text-muted-foreground shrink-0 w-12 text-center">{t.einheit}</span>
-                      <span className="text-sm font-mono shrink-0 w-20 text-right">{netto > 0 ? `€ ${netto.toFixed(2)}` : "–"}</span>
+                      <span className="text-sm font-mono shrink-0 w-20 text-right">{netto > 0 ? `€ ${eur(netto)}` : "–"}</span>
                     </div>
                   );
                 };
@@ -4836,7 +5469,13 @@ export default function InvoiceDetail() {
             <div className="flex justify-between items-center pt-2">
               <span className="text-sm text-muted-foreground">{selectedTemplateIds.length} ausgewählt</span>
               <div className="flex gap-2">
-                <Button variant="outline" onClick={() => setTemplateDialogOpen(false)}>Abbrechen</Button>
+                {/* Nach dem Hinzufügen bleibt der Dialog offen (man fügt oft
+                    mehrere Artikel ein). Dann darf der Knopf nicht mehr
+                    „Abbrechen" heißen — das liest sich, als würde das schon
+                    Eingefügte wieder verworfen. */}
+                <Button variant="outline" onClick={() => setTemplateDialogOpen(false)}>
+                  {addedFromDialog.length > 0 ? "Fertig" : "Abbrechen"}
+                </Button>
                 <Button disabled={selectedTemplateIds.length === 0} onClick={() => {
                   const selected = templates.filter(t => selectedTemplateIds.includes(t.id));
                   const newItems = selected.map(t => {
@@ -4853,25 +5492,25 @@ export default function InvoiceDetail() {
                       arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
                       stundensatz: Number((t as any).stundensatz) || 52,
                     } : null;
-                    const netto = kalk
+                    const netto = round2(kalk
                       ? calcEinzelpreis({ ...kalk, aufschlag_prozent: docAufschlagOverride ?? kalk.aufschlag_prozent })
-                      : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis);
+                      : (Number((t as any).vk_netto ?? (t as any).netto_preis) || t.einzelpreis));
                     return {
                       position: 1,
                       beschreibung: (t as any).kurzbezeichnung || t.name || t.beschreibung,
                       kurztext: (t as any).kurzbezeichnung || t.name,
                       langtext: (t as any).langbezeichnung || t.beschreibung || "",
-                      menge,
+                      menge: round3(menge),
                       einheit: t.einheit,
                       einzelpreis: netto,
-                      gesamtpreis: Math.round(netto * menge * 100) / 100,
+                      gesamtpreis: round2(netto * round3(menge)),
                       produktnummer: (t as any).produktnummer || "",
                       ist_kalkuliert: isKalk,
                       kalkulation_template_id: isKalk ? t.id : null,
                       ...(kalk || {}),
                     } as InvoiceItem;
                   });
-                  setItems(prev => mergeItems(prev, newItems));
+                  setItemsDirty(prev => mergeItems(prev, newItems));
                   // Track was hinzugefügt wurde
                   setAddedFromDialog(prev => [...prev, ...newItems.map(i => ({ name: i.beschreibung, menge: i.menge, einheit: i.einheit }))]);
                   // Dialog bleibt offen — nur Auswahl zurücksetzen
@@ -4966,7 +5605,7 @@ export default function InvoiceDetail() {
                       const rest = Math.max(0, o.brutto_summe - o.bezahlt_betrag);
                       return (
                         <SelectItem key={o.id} value={o.id}>
-                          {o.nummer} — offen: €&nbsp;{rest.toFixed(2)}
+                          {o.nummer} — offen: €&nbsp;{eur(rest)}
                         </SelectItem>
                       );
                     })}
@@ -5002,6 +5641,11 @@ export default function InvoiceDetail() {
             onClose={() => setPriceAdjustOpen(false)}
             lines={priceAdjustLines}
             mwstSatz={(form as any).reverse_charge ? 0 : Number(form.mwst_satz) || 0}
+            /* Ohne den Global-Rabatt zeigte der Dialog eine zu hohe
+               Belegsumme und einen falschen Bruttobetrag an. */
+            rabattProzent={Number(form.rabatt_prozent) || 0}
+            rabattBetrag={Number(form.rabatt_betrag) || 0}
+            exemptBrutto={exemptBrutto}
             onApply={applyPriceAdjust}
           />
         )}
@@ -5015,12 +5659,12 @@ export default function InvoiceDetail() {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
-              menge: item.menge,
+              menge: round3(item.menge),
               einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
+              einzelpreis: round2(item.einzelpreis),
+              gesamtpreis: round2(round3(item.menge) * round2(item.einzelpreis)),
             }));
-            setItems(prev => mergeItems(prev, newItems));
+            setItemsDirty(prev => mergeItems(prev, newItems));
             setImportMaterialsOpen(false);
             toast({ title: "Materialien importiert", description: `${newItems.length} Positionen hinzugefügt` });
           }}
@@ -5034,12 +5678,12 @@ export default function InvoiceDetail() {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
-              menge: item.menge,
+              menge: round3(item.menge),
               einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
+              einzelpreis: round2(item.einzelpreis),
+              gesamtpreis: round2(round3(item.menge) * round2(item.einzelpreis)),
             }));
-            setItems(prev => mergeItems(prev, newItems));
+            setItemsDirty(prev => mergeItems(prev, newItems));
             // Fill customer data if empty
             if (kundeData && !form.kunde_name) {
               setForm(prev => ({
@@ -5093,12 +5737,12 @@ export default function InvoiceDetail() {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
-              menge: item.menge,
+              menge: round3(item.menge),
               einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
+              einzelpreis: round2(item.einzelpreis),
+              gesamtpreis: round2(round3(item.menge) * round2(item.einzelpreis)),
             }));
-            setItems(prev => mergeItems(prev, newItems));
+            setItemsDirty(prev => mergeItems(prev, newItems));
             if (kundeData && !form.kunde_name) {
               setForm(prev => ({
                 ...prev,
@@ -5128,11 +5772,12 @@ export default function InvoiceDetail() {
               const basisNetto = nettoSumme;
               const basisBrutto = bruttoSumme;
               const restNetto = Math.max(0, basisNetto - bestehendeAnzahlungenNetto);
-              const prozentNum = Number(anzahlungProzentInput);
-              const betragNum = Number(anzahlungBetragInput);
-              const anzNetto = anzahlungMode === "prozent"
-                ? (isNaN(prozentNum) ? 0 : basisNetto * prozentNum / 100)
-                : (isNaN(betragNum) ? 0 : betragNum);
+              // parseDecimal: "12,5" ist eine gültige Prozentangabe.
+              const prozentNum = parseDecimal(anzahlungProzentInput);
+              const betragNum = parseDecimal(anzahlungBetragInput);
+              const anzNetto = round2(anzahlungMode === "prozent"
+                ? (prozentNum === null ? 0 : basisNetto * prozentNum / 100)
+                : (betragNum === null ? 0 : betragNum));
               const anzBrutto = anzNetto * (1 + (form.mwst_satz / 100));
               // Neue Anzahlung darf den noch offenen Rest (basisNetto abzüglich
               // bereits ausgestellter Anzahlungen) nicht überschreiten.
@@ -5143,21 +5788,21 @@ export default function InvoiceDetail() {
                     <div className="rounded border bg-muted/40 p-3 text-sm">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Gesamtbetrag (Basis):</span>
-                        <span className="font-mono font-medium">€ {basisNetto.toFixed(2)} netto</span>
+                        <span className="font-mono font-medium">€ {eur(basisNetto)} netto</span>
                       </div>
                       <div className="flex justify-between text-xs text-muted-foreground mt-0.5">
                         <span>inkl. {form.mwst_satz}% MwSt.:</span>
-                        <span className="font-mono">€ {basisBrutto.toFixed(2)} brutto</span>
+                        <span className="font-mono">€ {eur(basisBrutto)} brutto</span>
                       </div>
                       {bestehendeAnzahlungenNetto > 0 && (
                         <>
                           <div className="flex justify-between text-xs text-orange-600 mt-1 pt-1 border-t">
                             <span>bereits angezahlt (netto):</span>
-                            <span className="font-mono">- € {bestehendeAnzahlungenNetto.toFixed(2)}</span>
+                            <span className="font-mono">- € {eur(bestehendeAnzahlungenNetto)}</span>
                           </div>
                           <div className="flex justify-between text-xs font-medium mt-0.5">
                             <span>Rest verfügbar (netto):</span>
-                            <span className="font-mono">€ {restNetto.toFixed(2)}</span>
+                            <span className="font-mono">€ {eur(restNetto)}</span>
                           </div>
                         </>
                       )}
@@ -5168,18 +5813,16 @@ export default function InvoiceDetail() {
                         <Label>Prozentsatz</Label>
                         <div className="flex items-center gap-1 mt-1">
                           <Input
-                            type="number"
-                            min={0}
-                            max={100}
-                            step="0.1"
+                            type="text"
+                            inputMode="decimal"
                             value={anzahlungProzentInput}
                             onChange={(e) => {
                               const v = e.target.value;
                               setAnzahlungProzentInput(v);
                               setAnzahlungMode("prozent");
-                              const p = Number(v);
-                              if (!isNaN(p) && basisNetto > 0) {
-                                setAnzahlungBetragInput((basisNetto * p / 100).toFixed(2));
+                              const p = parseDecimal(v);
+                              if (p !== null && basisNetto > 0) {
+                                setAnzahlungBetragInput(formatForInput(round2(basisNetto * p / 100), 2));
                               }
                             }}
                           />
@@ -5191,17 +5834,16 @@ export default function InvoiceDetail() {
                         <div className="flex items-center gap-1 mt-1">
                           <span className="text-sm text-muted-foreground">€</span>
                           <Input
-                            type="number"
-                            min={0}
-                            step="0.01"
+                            type="text"
+                            inputMode="decimal"
                             value={anzahlungBetragInput}
                             onChange={(e) => {
                               const v = e.target.value;
                               setAnzahlungBetragInput(v);
                               setAnzahlungMode("betrag");
-                              const b = Number(v);
-                              if (!isNaN(b) && basisNetto > 0) {
-                                setAnzahlungProzentInput(((b / basisNetto) * 100).toFixed(2));
+                              const b = parseDecimal(v);
+                              if (b !== null && basisNetto > 0) {
+                                setAnzahlungProzentInput(formatForInput(round2((b / basisNetto) * 100), 2));
                               }
                             }}
                           />
@@ -5212,11 +5854,11 @@ export default function InvoiceDetail() {
                     <div className="rounded border border-primary/30 bg-primary/5 p-3 text-sm">
                       <div className="flex justify-between font-medium">
                         <span>Anzahlung:</span>
-                        <span className="font-mono">€ {anzNetto.toFixed(2)} netto</span>
+                        <span className="font-mono">€ {eur(anzNetto)} netto</span>
                       </div>
                       <div className="flex justify-between text-xs text-muted-foreground mt-0.5">
                         <span>inkl. {form.mwst_satz}% MwSt.:</span>
-                        <span className="font-mono">€ {anzBrutto.toFixed(2)} brutto</span>
+                        <span className="font-mono">€ {eur(anzBrutto)} brutto</span>
                       </div>
                     </div>
 
@@ -5230,14 +5872,14 @@ export default function InvoiceDetail() {
                       disabled={!valid}
                       onClick={() => {
                         if (!valid) {
-                          toast({ variant: "destructive", title: "Ungültiger Anzahlungsbetrag", description: `Der Betrag muss > 0 und ≤ dem noch offenen Rest (€ ${restNetto.toFixed(2)}) sein.` });
+                          toast({ variant: "destructive", title: "Ungültiger Anzahlungsbetrag", description: `Der Betrag muss > 0 und ≤ dem noch offenen Rest (€ ${eur(restNetto)}) sein.` });
                           return;
                         }
                         setAnzahlungDialogOpen(false);
                         if (anzahlungMode === "betrag") {
-                          handleConvertTo("anzahlungsrechnung", { anzahlung_betrag: Math.round(anzNetto * 100) / 100 });
+                          handleConvertTo("anzahlungsrechnung", { anzahlung_betrag: round2(anzNetto) });
                         } else {
-                          handleConvertTo("anzahlungsrechnung", { anzahlung_prozent: Number(anzahlungProzentInput) });
+                          handleConvertTo("anzahlungsrechnung", { anzahlung_prozent: toNumber(anzahlungProzentInput, 0) });
                         }
                       }}
                     >
@@ -5263,15 +5905,15 @@ export default function InvoiceDetail() {
               beschreibung: item.beschreibung,
               kurztext: item.kurztext || item.beschreibung,
               langtext: item.langtext || "",
-              menge: item.menge,
+              menge: round3(item.menge),
               einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
+              einzelpreis: round2(item.einzelpreis),
               rabatt_prozent: item.rabatt_prozent || 0,
-              gesamtpreis: item.gesamtpreis ?? (item.menge * item.einzelpreis),
+              gesamtpreis: round2(item.gesamtpreis ?? (item.menge * item.einzelpreis)),
               produktnummer: item.produktnummer || "",
               mwst_exempt: !!item.mwst_exempt,
             }));
-            setItems(prev => mergeItems(prev, newItems));
+            setItemsDirty(prev => mergeItems(prev, newItems));
             // Quell-Angebot verknüpfen → wird beim Speichern als Rechnung auf
             // "verrechnet" gesetzt. Parent nur setzen, wenn noch keiner da ist
             // (kein Überschreiben bei Import aus mehreren Quellen).
@@ -5307,12 +5949,12 @@ export default function InvoiceDetail() {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
-              menge: item.menge,
+              menge: round3(item.menge),
               einheit: item.einheit,
-              einzelpreis: item.einzelpreis,
-              gesamtpreis: item.menge * item.einzelpreis,
+              einzelpreis: round2(item.einzelpreis),
+              gesamtpreis: round2(round3(item.menge) * round2(item.einzelpreis)),
             }));
-            setItems(prev => mergeItems(prev, newItems));
+            setItemsDirty(prev => mergeItems(prev, newItems));
             setImportTimeOpen(false);
             toast({
               title: "Arbeitszeiten importiert",
@@ -5321,15 +5963,28 @@ export default function InvoiceDetail() {
           }}
         />
 
-        {/* Storno Dialog */}
+        {/* Storno Dialog — EINZIGER Storno-Weg, führt durch handleCancel().
+            Vorher hatte dieser Dialog eine eigene, abweichende Storno-Logik
+            (ließ bezahlt_betrag stehen) — daher gab es je nach Knopf zwei
+            verschiedene Ergebnisse. */}
         <Dialog open={stornoDialogOpen} onOpenChange={setStornoDialogOpen}>
           <DialogContent className="max-w-md">
             <DialogHeader>
-              <DialogTitle>Rechnung stornieren</DialogTitle>
+              <DialogTitle>{typLabel} stornieren</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              Die Rechnung {form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
+              {typLabel} {form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
             </p>
+            {form.bezahlt_betrag > 0 && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <p className="font-medium">Achtung: bereits € {eur(form.bezahlt_betrag)} bezahlt.</p>
+                <p className="text-xs mt-1">
+                  Beim Stornieren wird der Bezahlt-Betrag auf € 0,00 zurückgesetzt.
+                  Der Zahlungsverlauf bleibt danach zur Dokumentation sichtbar —
+                  eine allfällige Rückzahlung bitte mit der Buchhaltung klären.
+                </p>
+              </div>
+            )}
             <div>
               <Label>Storno-Grund *</Label>
               <Textarea
@@ -5340,88 +5995,25 @@ export default function InvoiceDetail() {
               />
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setStornoDialogOpen(false)}>Abbrechen</Button>
-              <Button variant="destructive" disabled={!stornoGrund.trim()} onClick={async () => {
+              <Button variant="outline" onClick={() => setStornoDialogOpen(false)} disabled={stornoLaeuft}>Abbrechen</Button>
+              <Button variant="destructive" disabled={!stornoGrund.trim() || stornoLaeuft} onClick={async () => {
                 // Guard: bereits storniert
                 if (form.status === "storniert") {
-                  toast({ variant: "destructive", title: "Bereits storniert", description: "Diese Rechnung wurde bereits storniert." });
+                  toast({ variant: "destructive", title: "Bereits storniert", description: `${typLabel} ${form.nummer} wurde bereits storniert.` });
                   setStornoDialogOpen(false);
                   return;
                 }
-
-                // Warnung wenn bereits bezahlt
-                if (form.bezahlt_betrag > 0) {
-                  const ok = window.confirm(
-                    `⚠️ Achtung: Diese Rechnung hat bereits Zahlungen (€ ${form.bezahlt_betrag.toFixed(2)}).\n\n` +
-                    `Beim Stornieren wird der Bezahlt-Betrag NICHT zurückgesetzt. ` +
-                    `Bitte vorab mit der Buchhaltung klären und ggf. eine Rückzahlung dokumentieren.\n\n` +
-                    `Trotzdem fortfahren?`
-                  );
-                  if (!ok) return;
-                }
-
-                const year = form.jahr || new Date().getFullYear();
-
-                // Atomare Storno-Nummer-Generierung via DB-Funktion (race-safe)
-                const { data: stornoNummer, error: numErr } = await supabase.rpc("next_storno_nummer" as any, { p_jahr: year });
-                if (numErr || !stornoNummer) {
-                  toast({ variant: "destructive", title: "Fehler", description: "Storno-Nummer konnte nicht generiert werden: " + (numErr?.message || "unbekannt") });
-                  return;
-                }
-
-                const stornoDatum = new Date().toISOString().split("T")[0];
-
-                const { error: updErr } = await supabase.from("invoices").update({
-                  status: "storniert",
-                  storno_nummer: stornoNummer,
-                  storno_datum: stornoDatum,
-                  storno_grund: stornoGrund.trim(),
-                }).eq("id", invoiceId);
-
-                if (updErr) {
-                  toast({ variant: "destructive", title: "Fehler", description: updErr.message });
-                  return;
-                }
-
-                // Update local form state with storno data
-                setForm(prev => ({
-                  ...prev,
-                  status: "storniert",
-                  storno_nummer: stornoNummer,
-                  storno_datum: stornoDatum,
-                  storno_grund: stornoGrund.trim(),
-                }));
-
-                // Generate and download Storno-PDF
+                setStornoLaeuft(true);
                 try {
-                  const { generateStornoPdf } = await import("@/lib/pdfGenerator");
-                  const logoUri = await loadInvoiceLogo();
-
-                  const { data: bankSettings4 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-                  const bank4 = { kontoinhaber: "", iban: "", bic: "" };
-                  bankSettings4?.forEach((s: any) => {
-                    if (s.key === "bank_kontoinhaber") bank4.kontoinhaber = s.value;
-                    if (s.key === "bank_iban") bank4.iban = s.value;
-                    if (s.key === "bank_bic") bank4.bic = s.value;
-                  });
-                  const stornoBlob = generateStornoPdf(
-                    { nummer: form.nummer, kunde_name: form.kunde_name, brutto_summe: bruttoSumme, datum: form.datum },
-                    stornoNummer, stornoDatum, stornoGrund.trim(),
-                    bank4, logoUri, invoiceLayout
-                  );
-                  const url = URL.createObjectURL(stornoBlob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `Storno_${stornoNummer}.pdf`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch (e) { console.warn("Storno-PDF failed:", e); }
-
-                toast({ title: "Rechnung storniert", description: `Stornonummer: ${stornoNummer}` });
-                setStornoDialogOpen(false);
-                navigate("/invoices");
+                  const ok = await handleCancel({ grund: stornoGrund.trim(), docTypeLabel: typLabel });
+                  if (!ok) return;
+                  setStornoDialogOpen(false);
+                  navigate("/invoices");
+                } finally {
+                  setStornoLaeuft(false);
+                }
               }}>
-                Rechnung stornieren
+                {stornoLaeuft ? "Storniert..." : `${typLabel} stornieren`}
               </Button>
             </div>
           </DialogContent>

@@ -4,10 +4,10 @@
 // Fahrten, Dienstleistungen), Spalte C (Zusammenfassung + Nachkalkulation).
 // Drag&Drop-Umsortierung, Klonen, optional-Flag wie im Original.
 // ============================================================================
-import { ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
+import { AlertTriangle, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
 import {
   KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten,
-  DAEMMSTAERKEN, fmt, fmtEuro, num,
+  DAEMMSTAERKEN, fmt, fmtEuro, num, wandhoeheWarnung,
 } from "@/lib/kalkulationEngine";
 import { KatalogKategorie } from "./useKalkKatalog";
 import { MaterialTabelle } from "./MaterialTabelle";
@@ -38,8 +38,14 @@ interface Props {
   dragProps: DragProps;
 }
 
+/** Feldhöhe: am Handy 44 px (Touch-Ziel), am Desktop kompakt. */
+const FELD_H = "h-11 sm:h-8";
+
+/** Stückzahlen ohne unnötige Nachkommastellen ("3 Tage" statt "3,00 Tage"). */
+const anz = (n: number): string => (Number.isInteger(n) ? String(n) : fmt(n));
+
 const Feld = ({ label, children }: { label: string; children: React.ReactNode }) => (
-  <label className="block text-xs">
+  <label className="block min-w-0 text-xs">
     <span className="mb-0.5 block text-muted-foreground">{label}</span>
     {children}
   </label>
@@ -55,6 +61,9 @@ export function AufbauKarte({
   const gesamtAdj = materialAdj + laborAdj;
   const area = num(m.area);
   const nk = erg.nachkalk;
+  // Unplausible Wandhöhen (0,1 m, kleiner als 2× Brettdicke) wurden früher
+  // wortlos durchgerechnet — jetzt steht der Hinweis direkt am Feld.
+  const hoehenWarnung = wandhoeheWarnung(m.wallHeight, bd);
 
   return (
     <div
@@ -64,7 +73,7 @@ export function AufbauKarte({
     >
       {/* Header */}
       <div
-        className="flex cursor-pointer select-none items-center gap-2 border-b px-3 py-2"
+        className="flex min-h-[44px] cursor-pointer select-none items-center gap-2 border-b px-3 py-2"
         onClick={() => onPatch({ collapsed: !m.collapsed })}
       >
         <span
@@ -80,23 +89,27 @@ export function AufbauKarte({
         <span className="hidden text-xs text-muted-foreground sm:block">
           Material <b className="tabular-nums">{fmtEuro(materialAdj)}</b> · Arbeit <b className="tabular-nums">{fmtEuro(laborAdj)}</b> · Gesamt <b className="tabular-nums text-foreground">{fmtEuro(gesamtAdj)}</b>
         </span>
+        {/* Handy: wenigstens die Gesamtsumme muss auf der zugeklappten Karte stehen */}
+        <span className="whitespace-nowrap text-xs font-bold tabular-nums sm:hidden">{fmtEuro(gesamtAdj)}</span>
         <ChevronDown className={`h-4 w-4 shrink-0 text-muted-foreground transition-transform ${m.collapsed ? "-rotate-90" : ""}`} />
       </div>
 
       {!m.collapsed && (
         <>
-          <div className="grid gap-4 p-3 xl:grid-cols-3">
+          {/* min-w-0 an jeder Spalte: sonst zwingt die Materialtabelle
+              (min-w-540) das Grid am Handy breiter als der Bildschirm. */}
+          <div className="grid gap-4 p-3 xl:grid-cols-[1.35fr_1fr_1fr]">
             {/* Spalte A: Aufbau / Material */}
-            <div className="space-y-2">
+            <div className="min-w-0 space-y-2">
               <h4 className="text-xs font-bold uppercase tracking-wide text-kb-blue-dark">Aufbau / Material</h4>
               <Feld label="Bezeichnung">
-                <input className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={m.name}
+                <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.name}
                   placeholder={`Aufbau ${index + 1}`}
                   onChange={(e) => onPatch({ name: e.target.value })} />
               </Feld>
               <div className="grid grid-cols-2 gap-2">
                 <Feld label="Kategorie">
-                  <select className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={m.aufbauKategorie}
+                  <select className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`} value={m.aufbauKategorie}
                     onChange={(e) => onPatch({ aufbauKategorie: e.target.value as KalkModule["aufbauKategorie"] })}>
                     <option value="">—</option>
                     <option value="Wand">Wand</option>
@@ -106,21 +119,28 @@ export function AufbauKarte({
                   </select>
                 </Feld>
                 <Feld label="Fläche in qm">
-                  <NumInput value={m.area} onCommit={(n) => onPatch({ area: n ?? 0 })} />
+                  <NumInput min={0} value={m.area} onCommit={(n) => onPatch({ area: n ?? 0 })} className={FELD_H} />
                 </Feld>
                 <Feld label="Wandhöhe in m (Riegel)">
-                  <NumInput value={m.wallHeight} onCommit={(n) => onPatch({ wallHeight: n ?? 0 })}
+                  <NumInput min={0} value={m.wallHeight} onCommit={(n) => onPatch({ wallHeight: n ?? 0 })}
+                    className={`${FELD_H} ${hoehenWarnung ? "border-amber-500 bg-amber-50" : ""}`}
                     title="Für die Riegelkonstruktions-Geometrie (Excel-Formel). Leer = Näherung 3,5 lfm/m²." />
+                  {hoehenWarnung && (
+                    <span className="mt-0.5 flex items-start gap-1 text-[10px] font-semibold leading-snug text-amber-700">
+                      <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
+                      <span>{hoehenWarnung}</span>
+                    </span>
+                  )}
                 </Feld>
                 <Feld label="Dämmstärke in cm">
-                  <select className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={String(m.insulationThickness)}
+                  <select className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`} value={String(m.insulationThickness)}
                     onChange={(e) => onPatch({ insulationThickness: num(e.target.value) })}>
                     {DAEMMSTAERKEN.map((d) => <option key={d} value={String(d)}>{d}</option>)}
                   </select>
                 </Feld>
               </div>
               <Feld label="Notiz">
-                <input className="kb-input h-8 min-h-0 px-2 py-1 text-sm" value={m.note}
+                <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.note}
                   onChange={(e) => onPatch({ note: e.target.value })} />
               </Feld>
               <MaterialTabelle
@@ -131,34 +151,36 @@ export function AufbauKarte({
             </div>
 
             {/* Spalte B: Arbeitszeit und Sonstiges */}
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wide text-kb-blue-dark">Arbeitszeit und Sonstiges</h4>
               <div className="rounded border bg-muted/20 p-2">
                 <div className="mb-1 text-xs font-semibold">Arbeitszeit</div>
                 <div className="grid grid-cols-2 gap-2">
                   <Feld label="Anzahl Arbeiter">
-                    <NumInput value={m.workers} onCommit={(n) => onPatch({ workers: n ?? 0 })} />
+                    <NumInput min={0} value={m.workers} onCommit={(n) => onPatch({ workers: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label="Dauer in Tagen">
-                    <NumInput value={m.days} onCommit={(n) => onPatch({ days: n ?? 0 })} />
+                    <NumInput min={0} value={m.days} onCommit={(n) => onPatch({ days: n ?? 0 })} className={FELD_H} />
                   </Feld>
                 </div>
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  á {fmt(bd.stundenProTag)} h zu {fmtEuro(bd.mittellohn * num(m.workers))} → <b className="tabular-nums text-foreground">{fmtEuro(erg.laborCosts)}</b>
+                  {anz(num(m.days))} Tage × {anz(num(m.workers))} Arbeiter × {anz(bd.stundenProTag)} h × {fmtEuro(bd.mittellohn)}/h
+                  {" = "}<b className="tabular-nums text-foreground">{fmtEuro(erg.laborCosts)}</b>
+                  {erg.laborHours > 0 && <> ({anz(erg.laborHours)} Std.)</>}
                 </div>
               </div>
 
               <div className="rounded border bg-muted/20 p-2">
                 <div className="mb-1 text-xs font-semibold">Fahrten</div>
                 <Feld label="Entfernung zur Baustelle in km">
-                  <NumInput value={m.distanceKM} onCommit={(n) => onPatch({ distanceKM: n ?? 0 })} />
+                  <NumInput min={0} value={m.distanceKM} onCommit={(n) => onPatch({ distanceKM: n ?? 0 })} className={FELD_H} />
                 </Feld>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <Feld label={`Busfahrten (${fmtEuro(erg.transport.bus)})`}>
-                    <NumInput value={m.busTrips} onCommit={(n) => onPatch({ busTrips: n ?? 0 })} />
+                    <NumInput min={0} value={m.busTrips} onCommit={(n) => onPatch({ busTrips: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label={`LKW-Fahrten (${fmtEuro(erg.transport.lkw)})`}>
-                    <NumInput value={m.lkwTrips} onCommit={(n) => onPatch({ lkwTrips: n ?? 0 })} />
+                    <NumInput min={0} value={m.lkwTrips} onCommit={(n) => onPatch({ lkwTrips: n ?? 0 })} className={FELD_H} />
                   </Feld>
                 </div>
                 <div className="mt-1 text-right text-[11px]">Summe Fahrten: <b className="tabular-nums">{fmtEuro(erg.transport.total)}</b></div>
@@ -168,16 +190,16 @@ export function AufbauKarte({
                 <div className="mb-1 text-xs font-semibold">Eingekaufte Dienstleistungen</div>
                 <div className="grid grid-cols-2 gap-2">
                   <Feld label={`Kranstunden (${fmtEuro(erg.craneCosts)})`}>
-                    <NumInput value={m.craneHours} onCommit={(n) => onPatch({ craneHours: n ?? 0 })} />
+                    <NumInput min={0} value={m.craneHours} onCommit={(n) => onPatch({ craneHours: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label="Speditionskosten €">
-                    <NumInput value={m.shippingCosts} onCommit={(n) => onPatch({ shippingCosts: n ?? 0 })} />
+                    <NumInput value={m.shippingCosts} onCommit={(n) => onPatch({ shippingCosts: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label="Lohnabdunst Kosten €">
-                    <NumInput value={m.paintCosts} onCommit={(n) => onPatch({ paintCosts: n ?? 0 })} />
+                    <NumInput value={m.paintCosts} onCommit={(n) => onPatch({ paintCosts: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label="Sonstige Kosten €">
-                    <NumInput value={m.miscCosts} onCommit={(n) => onPatch({ miscCosts: n ?? 0 })} />
+                    <NumInput value={m.miscCosts} onCommit={(n) => onPatch({ miscCosts: n ?? 0 })} className={FELD_H} />
                   </Feld>
                 </div>
                 <div className="mt-1 text-right text-[11px]">Summe Dienstleistungen: <b className="tabular-nums">{fmtEuro(erg.servicesTotal)}</b></div>
@@ -185,7 +207,7 @@ export function AufbauKarte({
             </div>
 
             {/* Spalte C: Zusammenfassung + Nachkalkulation */}
-            <div className="space-y-3">
+            <div className="min-w-0 space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wide text-kb-blue-dark">Zusammenfassung</h4>
               <div className="rounded border bg-[#F0F7EC] p-3 text-sm">
                 <div className="flex justify-between py-0.5"><span>Material</span><b className="tabular-nums">{fmtEuro(materialAdj)}</b></div>
@@ -202,8 +224,8 @@ export function AufbauKarte({
               <div className="rounded border border-dashed border-[#ED7D31] p-3">
                 <div className="mb-2 text-xs font-bold text-[#C55A11]">📊 Nachkalkulation (Ist-Kosten)</div>
                 <Feld label="Tatsächliche Dauer in Tagen">
-                  <NumInput value={m.nachkalk?.actualDays ?? null} nullable
-                    onCommit={(n) => onPatch({ nachkalk: { actualDays: n } })} className="border-[#ED7D31]/50" />
+                  <NumInput min={0} value={m.nachkalk?.actualDays ?? null} nullable
+                    onCommit={(n) => onPatch({ nachkalk: { actualDays: n } })} className={`${FELD_H} border-[#ED7D31]/50`} />
                 </Feld>
                 {nk.istLohn !== null && (
                   <div className="mt-2 space-y-0.5 text-xs">
@@ -241,14 +263,15 @@ export function AufbauKarte({
               {area > 0 && <> · Gesamt/qm <b className="tabular-nums">{fmtEuro(gesamtAdj / area)}</b></>}
             </span>
             <span className="flex-1" />
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs">
-              <input type="checkbox" checked={m.isOptional} onChange={(e) => onPatch({ isOptional: e.target.checked })} />
+            <label className="flex h-11 cursor-pointer items-center gap-2 px-1 text-xs sm:h-7">
+              <input type="checkbox" className="h-4 w-4" checked={m.isOptional}
+                onChange={(e) => onPatch({ isOptional: e.target.checked })} />
               optional
             </label>
-            <button type="button" onClick={onClone} className="kb-btn h-7 min-h-0 px-2 py-1 text-xs" title="Aufbau direkt dahinter duplizieren">
+            <button type="button" onClick={onClone} className="kb-btn h-11 min-h-0 px-3 py-1 text-xs sm:h-7 sm:px-2" title="Aufbau direkt dahinter duplizieren">
               <Copy className="h-3.5 w-3.5 text-kb-blue-dark" /> Verdoppeln
             </button>
-            <button type="button" onClick={onRemove} className="kb-btn h-7 min-h-0 px-2 py-1 text-xs text-destructive" title="Aufbau entfernen">
+            <button type="button" onClick={onRemove} className="kb-btn h-11 min-h-0 px-3 py-1 text-xs text-destructive sm:h-7 sm:px-2" title="Aufbau entfernen">
               <Trash2 className="h-3.5 w-3.5 text-destructive" /> Entfernen
             </button>
           </div>

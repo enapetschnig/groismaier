@@ -13,7 +13,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt } from "lucide-react";
+import { Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt } from "lucide-react";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { format } from "date-fns";
 import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 
@@ -51,8 +52,18 @@ interface VehicleOption {
   kennzeichen: string | null;
 }
 
+/** Benutzerkonto (profiles) für die Verknüpfung employees.user_id. */
+interface ProfileOption {
+  id: string;
+  vorname: string | null;
+  nachname: string | null;
+  email: string | null;
+}
+
 /** Sentinel für „kein Standard-Fahrzeug" — Radix-Select erlaubt kein value="". */
 const NO_VEHICLE = "__none__";
+/** Sentinel für „kein Benutzerkonto verknüpft". */
+const NO_USER = "__nouser__";
 
 export default function Employees() {
   const navigate = useNavigate();
@@ -64,12 +75,25 @@ export default function Employees() {
   const [newEmployee, setNewEmployee] = useState({ vorname: "", nachname: "", email: "" });
   const [showSizesDialog, setShowSizesDialog] = useState(false);
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
+  const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
 
   useEffect(() => {
     checkAdminAccess();
     fetchEmployees();
     fetchVehicles();
+    fetchProfileOptions();
   }, []);
+
+  // Benutzerkonten für die Verknüpfung „Mitarbeiter ↔ Login".
+  // Ohne diese Verknüpfung greifen alle user_id-basierten Funktionen nicht
+  // (u. a. das Standard-Fahrzeug in der Zeiterfassung).
+  const fetchProfileOptions = async () => {
+    const { data } = await (supabase.from("profiles" as never) as any)
+      .select("id, vorname, nachname, email")
+      .eq("hidden", false)
+      .order("nachname");
+    setProfileOptions(((data as ProfileOption[]) || []));
+  };
 
   // Aktive Fahrzeuge für das Feld „Standard-Fahrzeug".
   // vehicles ist nicht in types.ts erfasst → untypisierter Client.
@@ -178,26 +202,37 @@ export default function Employees() {
   }
 
   return (
-    <div className="container mx-auto p-4">
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-            <ArrowLeft className="w-4 h-4" />
-          </Button>
-          <h1 className="text-3xl font-bold">Mitarbeiterverwaltung</h1>
-        </div>
+    <div className="kb-page min-h-screen">
+      {/* KingBill-Werkzeugleiste statt eigenem Kopf — „Zurück" ist Pflicht,
+          weil die App keine Sidebar hat. */}
+      <KBToolbar onBack={() => navigate("/")} title="Mitarbeiter">
+        <KBToolbarButton
+          icon={Plus}
+          iconClassName="text-kb-green"
+          label="Neuer Mitarbeiter"
+          onClick={() => setShowCreateDialog(true)}
+        />
+        <KBToolbarButton
+          icon={Shirt}
+          label="Größen"
+          title="Arbeitskleidung- & Schuhgrößen-Übersicht"
+          onClick={() => setShowSizesDialog(true)}
+        />
+      </KBToolbar>
 
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowSizesDialog(true)}>
-            <Shirt className="w-4 h-4 mr-2" />
-            Arbeitskleidung/Schuhe Größen
-          </Button>
-          <Button onClick={() => setShowCreateDialog(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Neuer Mitarbeiter
+      <div className="container mx-auto p-3 sm:p-4">
+      {employees.length === 0 && (
+        <div className="kb-panel p-8 text-center">
+          <User className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+          <p className="mb-1 text-lg font-semibold">Noch keine Mitarbeiter</p>
+          <p className="mb-4 text-sm text-muted-foreground">
+            Lege deine Mitarbeiter an, um Stundenlohn, Standard-Fahrzeug und Dokumente zu pflegen.
+          </p>
+          <Button className="h-11" onClick={() => setShowCreateDialog(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Mitarbeiter anlegen
           </Button>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         {employees.map((emp) => (
@@ -238,6 +273,28 @@ export default function Employees() {
                     Seit: {format(new Date(emp.eintritt_datum), "dd.MM.yyyy")}
                   </div>
                 )}
+                {/* Für den Chef auf einen Blick: Lohn, Standard-Fahrzeug und
+                    ob überhaupt ein Login verknüpft ist. */}
+                <div className="mt-2 flex flex-wrap gap-1.5 text-xs">
+                  {emp.stundenlohn != null && (
+                    <span className="rounded bg-muted px-2 py-0.5">
+                      € {Number(emp.stundenlohn).toFixed(2)}/h
+                    </span>
+                  )}
+                  {emp.standard_vehicle_id && (
+                    <span className="rounded bg-muted px-2 py-0.5">
+                      🚚 {vehicles.find((v) => v.id === emp.standard_vehicle_id)?.bezeichnung || "Fahrzeug"}
+                    </span>
+                  )}
+                  {!emp.user_id && (
+                    <span
+                      className="rounded bg-amber-100 px-2 py-0.5 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                      title="Ohne Benutzerkonto greifen Zeiterfassung, Standard-Fahrzeug und Stundenauswertung nicht."
+                    >
+                      kein Login verknüpft
+                    </span>
+                  )}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -271,11 +328,11 @@ export default function Employees() {
 
             {/* Tab 1: Stammdaten */}
             <TabsContent value="stammdaten">
-              <ScrollArea className="h-[500px] pr-4">
+              <ScrollArea className="h-[62vh] sm:h-[500px] pr-4">
                 <form onSubmit={handleSaveEmployee} className="space-y-6">
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Persönliche Daten</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <Label>Vorname *</Label>
                         <Input
@@ -307,8 +364,8 @@ export default function Employees() {
 
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Kontaktdaten</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="sm:col-span-2">
                         <Label>Adresse</Label>
                         <Input
                           value={formData.adresse || ""}
@@ -353,7 +410,7 @@ export default function Employees() {
 
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Beschäftigung</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <Label>SV-Nummer</Label>
                         <Input
@@ -407,10 +464,14 @@ export default function Employees() {
                         <Input
                           type="number"
                           step="0.01"
-                          value={formData.stundenlohn || ""}
-                          onChange={(e) =>
-                            setFormData({ ...formData, stundenlohn: parseFloat(e.target.value) })
-                          }
+                          min="0"
+                          value={formData.stundenlohn ?? ""}
+                          onChange={(e) => {
+                            // Leeres Feld → NULL statt NaN (NaN killt das Update).
+                            const v = e.target.value.trim();
+                            const n = parseFloat(v.replace(",", "."));
+                            setFormData({ ...formData, stundenlohn: v === "" || !isFinite(n) ? null : n });
+                          }}
                         />
                       </div>
                       <div>
@@ -434,6 +495,40 @@ export default function Employees() {
                           </SelectContent>
                         </Select>
                       </div>
+                      {/* Verknüpfung zum Login. Ohne sie greifen Standard-Fahrzeug,
+                          Stundenauswertung & Zeiterfassung für diesen Mitarbeiter nicht. */}
+                      <div className="sm:col-span-2">
+                        <Label>Benutzerkonto (Login)</Label>
+                        <Select
+                          value={formData.user_id || NO_USER}
+                          onValueChange={(v) =>
+                            setFormData({ ...formData, user_id: v === NO_USER ? null : v })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Kein Benutzerkonto" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_USER}>Kein Benutzerkonto</SelectItem>
+                            {profileOptions
+                              .filter(
+                                (p) =>
+                                  p.id === formData.user_id ||
+                                  !employees.some((e) => e.user_id === p.id)
+                              )
+                              .map((p) => (
+                                <SelectItem key={p.id} value={p.id}>
+                                  {`${p.vorname || ""} ${p.nachname || ""}`.trim() || p.email || p.id}
+                                  {p.email ? ` — ${p.email}` : ""}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Nötig, damit Zeiterfassung, Standard-Fahrzeug und Stundenauswertung
+                          diesem Mitarbeiter zugeordnet werden.
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -441,8 +536,8 @@ export default function Employees() {
 
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Bankverbindung</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="sm:col-span-2">
                         <Label>IBAN</Label>
                         <Input
                           value={formData.iban || ""}
@@ -472,7 +567,7 @@ export default function Employees() {
 
                   <div>
                     <h3 className="text-lg font-semibold mb-3">Arbeitskleidung</h3>
-                    <div className="grid grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                       <div>
                         <Label>Kleidungsgröße</Label>
                         <Select
@@ -686,6 +781,7 @@ export default function Employees() {
           </ScrollArea>
         </DialogContent>
       </Dialog>
+      </div>
     </div>
   );
 }

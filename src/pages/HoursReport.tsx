@@ -8,7 +8,9 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { ArrowLeft, Download, FileSpreadsheet, Building2, Hammer, ChevronDown, ChevronRight, Pencil, Trash2, Save, Plus, UserCog, CalendarOff, Truck } from "lucide-react";
+import { Download, FileSpreadsheet, Building2, Hammer, ChevronDown, ChevronRight, Pencil, Trash2, Save, Plus, UserCog, CalendarOff, Truck } from "lucide-react";
+import { KBToolbar } from "@/components/kingbill";
+import { toNumber, clamp } from "@/lib/num";
 import { AdminAbsenceDialog } from "@/components/AdminAbsenceDialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -119,7 +121,9 @@ export default function HoursReport() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editEntry, setEditEntry] = useState<TimeEntry | null>(null);
-  const [editForm, setEditForm] = useState({ start_time: "", end_time: "", pause_minutes: 0, stunden: 0, taetigkeit: "", location_type: "", project_id: "" });
+  // pause_minutes als Rohtext (parseDecimal beim Speichern) — „30" wie bisher,
+  // aber auch „30,0" oder Leereingabe brechen nichts mehr.
+  const [editForm, setEditForm] = useState({ start_time: "", end_time: "", pause_minutes: "0", stunden: 0, taetigkeit: "", location_type: "", project_id: "" });
   const [editSaving, setEditSaving] = useState(false);
 
   // Admin-Dialog (voller Editor + Nachtrag)
@@ -232,9 +236,13 @@ export default function HoursReport() {
     for (const row of ((tevData as any[]) || [])) {
       if (!row.vehicle_id) continue;
       const s = ensure(row.vehicle_id);
-      // Fallback auf die Stunden des Zeiteintrags (Altbestand ohne
-      // eigene Fahrzeugstunden).
-      const h = row.stunden != null ? Number(row.stunden) : Number(row.time_entries?.stunden) || 0;
+      // Fallback auf die Stunden des Zeiteintrags NUR bei NULL (Altbestand
+      // ohne eigene Fahrzeugstunden). Eine ausdrücklich erfasste 0 bleibt 0 —
+      // sonst würde ein „nicht gefahren" als volle Arbeitszeit gezählt.
+      const eigen = row.stunden === null || row.stunden === undefined ? null : Number(row.stunden);
+      const h = eigen !== null && isFinite(eigen)
+        ? eigen
+        : (Number(row.time_entries?.stunden) || 0);
       s.stunden += isFinite(h) ? h : 0;
       const km = row.km_gefahren != null
         ? Number(row.km_gefahren)
@@ -413,7 +421,7 @@ export default function HoursReport() {
     setEditForm({
       start_time: entry.start_time?.substring(0, 5) || "",
       end_time: entry.end_time?.substring(0, 5) || "",
-      pause_minutes: entry.pause_minutes || 0,
+      pause_minutes: String(entry.pause_minutes || 0),
       stunden: entry.stunden,
       taetigkeit: entry.taetigkeit || "",
       location_type: entry.location_type || "baustelle",
@@ -431,12 +439,22 @@ export default function HoursReport() {
 
   const handleEditSave = async () => {
     if (!editEntry) return;
+    const pause = clamp(Math.round(toNumber(editForm.pause_minutes, 0)), 0, 720);
+    const stunden = recalcHours(editForm.start_time, editForm.end_time, pause);
+    // Plausibilisieren statt den Postgres-Fehler durchzureichen.
+    if (!(stunden > 0) || stunden > 24) {
+      toast({
+        title: "Zeiten unplausibel",
+        description: "Aus Von/Bis/Pause ergeben sich " + stunden.toFixed(2) + " Stunden. Bitte Werte prüfen (0,01 bis 24 h).",
+        variant: "destructive",
+      });
+      return;
+    }
     setEditSaving(true);
-    const stunden = recalcHours(editForm.start_time, editForm.end_time, editForm.pause_minutes);
     const { error } = await supabase.from("time_entries").update({
       start_time: editForm.start_time || null,
       end_time: editForm.end_time || null,
-      pause_minutes: editForm.pause_minutes,
+      pause_minutes: pause,
       stunden,
       taetigkeit: editForm.taetigkeit,
       location_type: editForm.location_type,
@@ -866,14 +884,12 @@ export default function HoursReport() {
   };
 
   return (
-    <div className="container mx-auto p-4 space-y-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => navigate(-1)}>
-          <ArrowLeft className="w-5 h-5" />
-        </Button>
-        <h1 className="text-3xl font-bold">Stundenauswertung</h1>
-      </div>
+    <div className="kb-page min-h-screen">
+      {/* Kopfleiste wie in allen anderen Masken — vorher war /hours-report
+          ohne Toolbar eine Sackgasse (kein Weg zurück zum Start). */}
+      <KBToolbar onBack={() => navigate("/")} title="Stundenauswertung" />
 
+      <div className="container mx-auto p-4 space-y-6">
       <Tabs defaultValue="mitarbeiter" className="w-full">
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto">
           <TabsTrigger value="mitarbeiter">
@@ -1300,14 +1316,16 @@ export default function HoursReport() {
                 </Badge>
               </div>
 
+              {/* Kein min-w: bei 390px wurde sonst die Stunden-Spalte
+                  abgeschnitten. „Anteil" entfällt am Handy. */}
               <div className="overflow-x-auto">
-                <Table className="min-w-[420px]">
+                <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-8"></TableHead>
                       <TableHead>Kostenstelle</TableHead>
-                      <TableHead className="text-right">Stunden</TableHead>
-                      <TableHead className="text-right w-[80px]">Anteil</TableHead>
+                      <TableHead className="text-right whitespace-nowrap">Stunden</TableHead>
+                      <TableHead className="hidden sm:table-cell text-right w-[80px]">Anteil</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -1325,19 +1343,24 @@ export default function HoursReport() {
                               className="cursor-pointer hover:bg-muted/50"
                               onClick={() => toggleKs(e.kostenstelle)}
                             >
-                              <TableCell>
+                              <TableCell className="h-12">
                                 {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                               </TableCell>
-                              <TableCell className="font-medium">{ksLabel(e.kostenstelle)}</TableCell>
-                              <TableCell className="text-right font-bold">{e.stunden.toFixed(2)} h</TableCell>
-                              <TableCell className="text-right text-muted-foreground text-xs">{anteil.toFixed(0)} %</TableCell>
+                              <TableCell className="font-medium">
+                                {ksLabel(e.kostenstelle)}
+                                <span className="sm:hidden block text-xs font-normal text-muted-foreground">
+                                  {anteil.toFixed(0)} % Anteil
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-bold whitespace-nowrap">{e.stunden.toFixed(2)} h</TableCell>
+                              <TableCell className="hidden sm:table-cell text-right text-muted-foreground text-xs">{anteil.toFixed(0)} %</TableCell>
                             </TableRow>
                             {open && e.perUser.map((u) => (
                               <TableRow key={`${e.kostenstelle}-${u.user_id}`} className="bg-muted/30">
                                 <TableCell></TableCell>
                                 <TableCell className="pl-6 text-sm">{employeeName(u.user_id)}</TableCell>
-                                <TableCell className="text-right text-sm">{u.stunden.toFixed(2)} h</TableCell>
-                                <TableCell></TableCell>
+                                <TableCell className="text-right text-sm whitespace-nowrap">{u.stunden.toFixed(2)} h</TableCell>
+                                <TableCell className="hidden sm:table-cell"></TableCell>
                               </TableRow>
                             ))}
                           </Fragment>
@@ -1348,8 +1371,8 @@ export default function HoursReport() {
                   <TableFooter>
                     <TableRow>
                       <TableCell colSpan={2} className="font-bold text-right">Gesamt:</TableCell>
-                      <TableCell className="text-right font-bold">{kostenstellenGesamt.toFixed(2)} h</TableCell>
-                      <TableCell></TableCell>
+                      <TableCell className="text-right font-bold whitespace-nowrap">{kostenstellenGesamt.toFixed(2)} h</TableCell>
+                      <TableCell className="hidden sm:table-cell"></TableCell>
                     </TableRow>
                   </TableFooter>
                 </Table>
@@ -1394,7 +1417,40 @@ export default function HoursReport() {
                 </div>
               </div>
 
-              <div className="overflow-x-auto">
+              {/* Mobil: Karten statt 8-Spalten-Tabelle — am Handy waren die
+                  Kostenspalten sonst nur per Seitwärts-Scrollen erreichbar. */}
+              <div className="space-y-2 md:hidden">
+                {vehicleLoading ? (
+                  <p className="text-center text-muted-foreground py-6">Lade...</p>
+                ) : vehicleStats.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-6">Keine Fahrzeuge vorhanden</p>
+                ) : (
+                  vehicleStats.map((v) => (
+                    <div key={v.vehicleId} className="rounded-md border p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="font-semibold truncate">{v.bezeichnung}</p>
+                          {v.kennzeichen && <p className="text-xs text-muted-foreground">{v.kennzeichen}</p>}
+                        </div>
+                        <p className="shrink-0 font-bold whitespace-nowrap">{formatEuro(v.kostenGesamt)}</p>
+                      </div>
+                      <div className="mt-2 flex gap-4 text-sm">
+                        <span className="text-muted-foreground">Std.: <b className="text-foreground">{v.stunden.toFixed(2)} h</b></span>
+                        <span className="text-muted-foreground">km: <b className="text-foreground">{v.km.toLocaleString("de-AT")}</b></span>
+                      </div>
+                      {v.kostenGesamt > 0 && (
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                          {KOSTEN_KATEGORIEN.filter((k) => v.kostenNachKategorie[k.wert]).map((k) => (
+                            <span key={k.wert}>{k.label}: {formatEuro(v.kostenNachKategorie[k.wert])}</span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="hidden md:block overflow-x-auto">
                 <Table className="min-w-[720px]">
                   <TableHeader>
                     <TableRow>
@@ -1491,11 +1547,17 @@ export default function HoursReport() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <Label>Pause (Min.)</Label>
-                  <Input type="number" min={0} value={editForm.pause_minutes} onChange={(e) => setEditForm(f => ({ ...f, pause_minutes: Number(e.target.value) || 0 }))} />
+                  <Input
+                    type="text"
+                    inputMode="decimal"
+                    value={editForm.pause_minutes}
+                    onChange={(e) => setEditForm(f => ({ ...f, pause_minutes: e.target.value }))}
+                    onBlur={() => setEditForm(f => ({ ...f, pause_minutes: String(clamp(Math.round(toNumber(f.pause_minutes, 0)), 0, 720)) }))}
+                  />
                 </div>
                 <div>
                   <Label>Stunden (berechnet)</Label>
-                  <p className="text-lg font-bold mt-1">{recalcHours(editForm.start_time, editForm.end_time, editForm.pause_minutes).toFixed(2)} h</p>
+                  <p className="text-lg font-bold mt-1">{recalcHours(editForm.start_time, editForm.end_time, clamp(Math.round(toNumber(editForm.pause_minutes, 0)), 0, 720)).toFixed(2)} h</p>
                 </div>
               </div>
               <div>
@@ -1570,6 +1632,7 @@ export default function HoursReport() {
           onSaved={fetchTimeEntries}
         />
       )}
+      </div>
     </div>
   );
 }

@@ -94,6 +94,39 @@ function KBStat({ label, value, valueClass = "" }: { label: string; value: strin
   );
 }
 
+// Typ-Kürzel + Farbe für das Badge (Liste + Karten verwenden dieselben Werte).
+const TYP_BADGE_STYLES: Record<string, string> = {
+  angebot: "bg-blue-100 text-blue-800 border-blue-300",
+  auftragsbestaetigung: "bg-indigo-100 text-indigo-800 border-indigo-300",
+  rechnung: "bg-green-100 text-green-800 border-green-300",
+  anzahlungsrechnung: "bg-orange-100 text-orange-800 border-orange-300",
+  schlussrechnung: "bg-emerald-100 text-emerald-900 border-emerald-400",
+  lieferschein: "bg-amber-100 text-amber-800 border-amber-300",
+  gutschrift: "bg-purple-100 text-purple-800 border-purple-300",
+};
+const TYP_BADGE_LABELS: Record<string, string> = {
+  angebot: "AN", auftragsbestaetigung: "AB", rechnung: "RE",
+  anzahlungsrechnung: "AR", schlussrechnung: "SR",
+  lieferschein: "LS", gutschrift: "GS",
+};
+const TYP_TITLES: Record<string, string> = {
+  angebot: "Angebot", auftragsbestaetigung: "Auftragsbestätigung", rechnung: "Rechnung",
+  anzahlungsrechnung: "Anzahlungsrechnung", schlussrechnung: "Schlussrechnung",
+  lieferschein: "Lieferschein", gutschrift: "Gutschrift",
+};
+
+/** Typ-Badge (AN/AB/RE/…) — identisch in Tabelle und Karte. */
+function TypBadge({ typ }: { typ: string }) {
+  return (
+    <span
+      className={`inline-flex items-center justify-center text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded border min-w-[28px] ${TYP_BADGE_STYLES[typ] || "bg-muted text-foreground border-border"}`}
+      title={TYP_TITLES[typ] || typ}
+    >
+      {TYP_BADGE_LABELS[typ] || typ.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+
 export default function Invoices() {
   // Query-Params: ?tab= wählt die Belegart, ?q= füllt die Suche,
   // ?status= setzt den Status-Filter (Verlinkung von der Hauptmaske).
@@ -515,6 +548,40 @@ export default function Invoices() {
 
   const storniertCount = invoices.filter(i => i.status === "storniert").length;
 
+  /**
+   * Gemeinsame Ableitungen je Beleg. Desktop-Tabelle und Mobil-Karten nutzen
+   * exakt dieselben Werte — so können sich die zwei Darstellungen nicht
+   * auseinanderentwickeln (Ampelfarbe, Warnhinweis, erlaubte Status).
+   */
+  const docMeta = (inv: Invoice) => {
+    const overdue = isOverdue(inv);
+    const expired = isExpiredOffer(inv);
+    const brutto = Number(inv.brutto_summe);
+    const bezahlt = Number(inv.bezahlt_betrag) || 0;
+    const offen = brutto - bezahlt;
+    // Status-Set pro Typ:
+    //   - echte zahlbare Rechnungen (RE/AR/SR) → offen/teilbezahlt/bezahlt
+    //   - Gutschrift → offen/verrechnet (Auszahlung, kein Bezahlstatus)
+    //   - Angebot → offen/angenommen/abgelehnt/verrechnet
+    //   - Auftragsbestätigung → offen/verrechnet (AB IST das angenommene Angebot)
+    const availableStatuses =
+      inv.typ === "gutschrift" ? gutschriftStatuses :
+      inv.typ === "lieferschein" ? lieferscheinStatuses :
+      inv.typ === "auftragsbestaetigung" ? abStatuses :
+      PAYABLE_INVOICE_TYPES.has(inv.typ) ? rechnungStatuses :
+      angebotStatuses;
+    const dotColor =
+      inv.status === "bezahlt" ? "bg-green-500" :
+      inv.status === "angenommen" ? "bg-[#002337]" :
+      inv.status === "storniert" || inv.status === "abgelehnt" ? "bg-red-500" :
+      overdue ? "bg-red-500" :
+      inv.status === "teilbezahlt" ? "bg-yellow-500" :
+      inv.status === "verrechnet" ? "bg-blue-500" :
+      "bg-orange-500";
+    const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
+    return { overdue, expired, brutto, bezahlt, offen, availableStatuses, dotColor, warn };
+  };
+
   const totalRechnungen = invoices.filter(i => INVOICE_LIKE_TYPES.has(i.typ) && i.status !== "storniert").length;
   const totalAngebote = invoices.filter(i => ANGEBOT_LIKE_TYPES.has(i.typ) && i.status !== "storniert").length;
   // Offen: nur echte Forderungen (keine Gutschriften — die sind aus
@@ -558,7 +625,11 @@ export default function Invoices() {
         title="Dokumente"
         rightActions={
           <>
-            <KBToolbarButton icon={FileDown} label="Export" onClick={() => setExportDialogOpen(true)} />
+            {/* Am Handy wandert „Export" ins ⋯-Menü — sonst bleibt für den
+                „Neuer Beleg"-Knopf kein Platz und er wird überdeckt. */}
+            <span className="hidden sm:contents">
+              <KBToolbarButton icon={FileDown} label="Export" onClick={() => setExportDialogOpen(true)} />
+            </span>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button type="button" className="kb-btn kb-btn-lg px-3" title="Mehr Aktionen" aria-label="Mehr Aktionen">
@@ -566,6 +637,13 @@ export default function Invoices() {
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
+                {/* Am Handy sind „Export"/„Liste drucken" nicht in der Toolbar — hier rein. */}
+                <DropdownMenuItem className="sm:hidden" onClick={() => setExportDialogOpen(true)}>
+                  <FileDown className="h-4 w-4 mr-2" /> Export
+                </DropdownMenuItem>
+                <DropdownMenuItem className="sm:hidden" onClick={() => window.print()}>
+                  <Printer className="h-4 w-4 mr-2" /> Liste drucken
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setShowArchive(!showArchive)}>
                   <Archive className="h-4 w-4 mr-2" />
                   {showArchive ? "Archiv ausblenden" : "Archiv anzeigen"}
@@ -578,45 +656,82 @@ export default function Invoices() {
           </>
         }
       >
-        <KBToolbarButton
-          icon={Plus}
-          iconClassName="text-kb-green"
-          label="Neues Angebot"
-          onClick={() => navigate("/invoices/new?typ=angebot")}
-        />
-        <KBToolbarButton
-          icon={Plus}
-          iconClassName="text-kb-green"
-          label="Neue Rechnung"
-          onClick={() => navigate("/invoices/new?typ=rechnung")}
-        />
-        <KBToolbarButton
-          icon={Plus}
-          iconClassName="text-kb-green"
-          label="Neuer Lieferschein"
-          onClick={() => navigate("/invoices/new?typ=lieferschein")}
-        />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <KBToolbarButton icon={ChevronDown} label="Weitere Belegart" title="Weitere Belegart wählen" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
-              <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
-              <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
-              <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
-              <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+        {/* Mobil: EIN „Neu"-Knopf mit allen Belegarten — sonst quillt die
+            Toolbar am Handy über und schiebt die Liste nach unten. */}
+        <div className="sm:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neuer Beleg" title="Neuen Beleg anlegen" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-60">
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=angebot")}>
+                <FileText className="w-4 h-4 mr-2" /> Neues Angebot
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=rechnung")}>
+                <Receipt className="w-4 h-4 mr-2" /> Neue Rechnung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=lieferschein")}>
+                <Truck className="w-4 h-4 mr-2" /> Neuer Lieferschein
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
+                <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
+                <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
+                <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
+                <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Ab sm: die gewohnten KingBill-Einzelknöpfe */}
+        <div className="hidden sm:contents">
+          <KBToolbarButton
+            icon={Plus}
+            iconClassName="text-kb-green"
+            label="Neues Angebot"
+            onClick={() => navigate("/invoices/new?typ=angebot")}
+          />
+          <KBToolbarButton
+            icon={Plus}
+            iconClassName="text-kb-green"
+            label="Neue Rechnung"
+            onClick={() => navigate("/invoices/new?typ=rechnung")}
+          />
+          <KBToolbarButton
+            icon={Plus}
+            iconClassName="text-kb-green"
+            label="Neuer Lieferschein"
+            onClick={() => navigate("/invoices/new?typ=lieferschein")}
+          />
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <KBToolbarButton icon={ChevronDown} label="Weitere Belegart" title="Weitere Belegart wählen" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
+                <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
+                <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
+                <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
+                <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+        </div>
       </KBToolbar>
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
@@ -816,7 +931,34 @@ export default function Invoices() {
                 />
               )
             ) : filterTyp === "storno" ? (
-              <div className="overflow-x-auto">
+              <>
+              {/* ── Mobil/Tablet: Storno-Karten ── */}
+              <div className="lg:hidden print:hidden flex flex-col gap-2">
+                {filtered.map((inv) => (
+                  <button
+                    key={inv.id}
+                    type="button"
+                    onClick={() => navigate(`/invoices/${inv.id}`)}
+                    className="w-full text-left rounded-lg border border-red-200 bg-white p-3 shadow-sm active:bg-red-50"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-red-500" />
+                      <span className="font-mono font-semibold">{(inv as any).storno_nummer || "—"}</span>
+                      <span className="ml-auto font-semibold tabular-nums">€ {Number(inv.brutto_summe).toFixed(2)}</span>
+                    </div>
+                    <div className="mt-1 text-sm font-medium">{inv.kunde_name}</div>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                      <span>Storniert am {formatDateShort((inv as any).storno_datum)}</span>
+                      <span className="font-mono">Original: {inv.nummer}</span>
+                    </div>
+                    {(inv as any).storno_grund && (
+                      <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{(inv as any).storno_grund}</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+              {/* ── Desktop: KingBill-Grid ── */}
+              <div className="hidden lg:block print:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -880,8 +1022,101 @@ export default function Invoices() {
                   </TableBody>
                 </Table>
               </div>
+              </>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              {/* ══ Mobil/Tablet: eine Karte je Beleg ══════════════════════
+                  Der Chef bedient das am Handy: großes Tap-Ziel (ganze Karte
+                  öffnet den Beleg), Ampel + Typ-Badge + Nummer oben, Kunde,
+                  Datum und Betrag darunter, Status als eigene Zeile mit
+                  44px-Touchziel. Keine horizontal scrollende Tabelle mehr. */}
+              <div className="lg:hidden print:hidden flex flex-col gap-2">
+                {filtered.map((inv) => {
+                  const { overdue, brutto, bezahlt, offen, availableStatuses, dotColor, warn } = docMeta(inv);
+                  return (
+                    <div
+                      key={inv.id}
+                      className={`rounded-lg border shadow-sm ${overdue ? "border-red-300 bg-red-50" : "border-border bg-white"}`}
+                    >
+                      {/* Tap-Fläche: öffnet den Beleg */}
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/invoices/${inv.id}`)}
+                        className="w-full text-left px-3 pt-3 pb-2 active:bg-muted/50 rounded-t-lg"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor}`} title={statusLabels[inv.status] || inv.status} />
+                          <TypBadge typ={inv.typ} />
+                          <span className="font-mono font-semibold truncate">{inv.nummer}</span>
+                          {filterTyp !== "lieferschein" && (
+                            <span className="ml-auto shrink-0 text-base font-bold tabular-nums">€ {brutto.toFixed(2)}</span>
+                          )}
+                        </div>
+                        <div className="mt-1.5 text-sm font-medium truncate">{inv.kunde_name || "—"}</div>
+                        <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                          <span>{formatDateShort(inv.datum)}</span>
+                          {filterTyp === "lieferschein" && (
+                            <span className="truncate">{inv.project_id ? (projectNames[inv.project_id] || "ohne Projekt") : "ohne Projekt"}</span>
+                          )}
+                          {PAYABLE_INVOICE_TYPES.has(inv.typ) && bezahlt > 0 && inv.status !== "bezahlt" && (
+                            <span className="text-yellow-700 font-medium">
+                              bezahlt € {bezahlt.toFixed(2)} · offen € {offen.toFixed(2)}
+                            </span>
+                          )}
+                          {warn && <span className="text-red-600 font-semibold">{warn}</span>}
+                        </div>
+                      </button>
+
+                      {/* Fußzeile: Status ändern + Aktionen (nicht durchklickbar) */}
+                      <div className="flex items-center gap-2 border-t border-border/70 px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                        {inv.status === "storniert" ? (
+                          <span className="text-xs font-medium text-red-700 px-1">
+                            Storniert{(inv as any).storno_nummer ? ` (${(inv as any).storno_nummer})` : ""}
+                          </span>
+                        ) : (
+                          <Select
+                            value={inv.status}
+                            onValueChange={(val) => handleStatusChange(inv.id, val, { stopPropagation: () => {} } as React.MouseEvent)}
+                          >
+                            <SelectTrigger className="h-10 w-auto min-w-[130px] text-sm font-medium" aria-label="Status ändern">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableStatuses.map(s => (
+                                <SelectItem key={s} value={s}>{statusLabels[s]}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        )}
+                        <div className="ml-auto flex items-center">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-11 w-11"
+                            title="PDF herunterladen"
+                            disabled={downloadingId === inv.id}
+                            onClick={(e) => handleDownloadPdf(inv.id, inv.nummer, e as any)}
+                          >
+                            <Download className="h-5 w-5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-11 w-11"
+                            title="Drucken"
+                            onClick={(e) => handlePrintPdf(inv.id, e as any)}
+                          >
+                            <Printer className="h-5 w-5" />
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ══ Desktop: KingBill-Grid ══ */}
+              <div className="hidden lg:block print:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -900,32 +1135,7 @@ export default function Invoices() {
                   </TableHeader>
                   <TableBody>
                     {filtered.map((inv) => {
-                      const overdue = isOverdue(inv);
-                      const expired = isExpiredOffer(inv);
-                      const brutto = Number(inv.brutto_summe);
-                      const bezahlt = inv.bezahlt_betrag;
-                      const offen = brutto - bezahlt;
-                      // Status-Set pro Typ:
-                      //   - echte zahlbare Rechnungen (RE/AR/SR) → offen/teilbezahlt/bezahlt
-                      //   - Gutschrift → offen/verrechnet (Auszahlung, kein Bezahlstatus)
-                      //   - Angebot → offen/angenommen/abgelehnt/verrechnet
-                      //   - Auftragsbestätigung → offen/verrechnet (AB IST das angenommene Angebot)
-                      const availableStatuses =
-                        inv.typ === "gutschrift" ? gutschriftStatuses :
-                        inv.typ === "lieferschein" ? lieferscheinStatuses :
-                        inv.typ === "auftragsbestaetigung" ? abStatuses :
-                        PAYABLE_INVOICE_TYPES.has(inv.typ) ? rechnungStatuses :
-                        angebotStatuses;
-                      // Status-Ampel (erste Spalte) + Warnhinweis
-                      const dotColor =
-                        inv.status === "bezahlt" ? "bg-green-500" :
-                        inv.status === "angenommen" ? "bg-[#002337]" :
-                        inv.status === "storniert" || inv.status === "abgelehnt" ? "bg-red-500" :
-                        overdue ? "bg-red-500" :
-                        inv.status === "teilbezahlt" ? "bg-yellow-500" :
-                        inv.status === "verrechnet" ? "bg-blue-500" :
-                        "bg-orange-500";
-                      const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
+                      const { overdue, brutto, bezahlt, offen, availableStatuses, dotColor, warn } = docMeta(inv);
                       return (
                         <TableRow
                           key={inv.id}
@@ -940,42 +1150,7 @@ export default function Invoices() {
                           </TableCell>
                           <TableCell className="font-mono font-medium">
                             <div className="flex items-center gap-2">
-                              {(() => {
-                                // Typ-Badge immer sichtbar (auch bei Rechnung + Angebot) und
-                                // farblich unterschieden — macht in der Liste sofort klar, ob
-                                // es eine normale Rechnung, Anzahlungs-, Schlussrechnung,
-                                // Gutschrift, Angebot, AB oder Lieferschein ist.
-                                const styles: Record<string, string> = {
-                                  angebot:              "bg-blue-100 text-blue-800 border-blue-300",
-                                  auftragsbestaetigung: "bg-indigo-100 text-indigo-800 border-indigo-300",
-                                  rechnung:             "bg-green-100 text-green-800 border-green-300",
-                                  anzahlungsrechnung:   "bg-orange-100 text-orange-800 border-orange-300",
-                                  schlussrechnung:      "bg-emerald-100 text-emerald-900 border-emerald-400",
-                                  lieferschein:         "bg-amber-100 text-amber-800 border-amber-300",
-                                  gutschrift:           "bg-purple-100 text-purple-800 border-purple-300",
-                                };
-                                const labels: Record<string, string> = {
-                                  angebot: "AN", auftragsbestaetigung: "AB", rechnung: "RE",
-                                  anzahlungsrechnung: "AR", schlussrechnung: "SR",
-                                  lieferschein: "LS", gutschrift: "GS",
-                                };
-                                return (
-                                  <span
-                                    className={`inline-flex items-center justify-center text-[10px] font-semibold tracking-wide px-1.5 py-0.5 rounded border min-w-[28px] ${styles[inv.typ] || "bg-muted text-foreground border-border"}`}
-                                    title={
-                                      inv.typ === "anzahlungsrechnung" ? "Anzahlungsrechnung"
-                                        : inv.typ === "schlussrechnung" ? "Schlussrechnung"
-                                        : inv.typ === "auftragsbestaetigung" ? "Auftragsbestätigung"
-                                        : inv.typ === "gutschrift" ? "Gutschrift"
-                                        : inv.typ === "lieferschein" ? "Lieferschein"
-                                        : inv.typ === "rechnung" ? "Rechnung"
-                                        : "Angebot"
-                                    }
-                                  >
-                                    {labels[inv.typ] || inv.typ.slice(0, 2).toUpperCase()}
-                                  </span>
-                                );
-                              })()}
+                              <TypBadge typ={inv.typ} />
                               <span>{inv.nummer}</span>
                             </div>
                           </TableCell>
@@ -1073,8 +1248,8 @@ export default function Invoices() {
                                         const pdfBlob = generateMahnungPdf(
                                           {
                                             nummer: inv.nummer, datum: inv.datum, faellig_am: inv.faellig_am || "",
-                                            kunde_name: inv.kunde_name, kunde_adresse: inv.kunde_adresse,
-                                            kunde_plz: inv.kunde_plz, kunde_ort: inv.kunde_ort,
+                                            kunde_name: inv.kunde_name, kunde_adresse: (inv as any).kunde_adresse,
+                                            kunde_plz: (inv as any).kunde_plz, kunde_ort: (inv as any).kunde_ort,
                                             brutto_summe: Number(inv.brutto_summe), bezahlt_betrag: Number(inv.bezahlt_betrag || 0),
                                           },
                                           stufe, 0, bank, logoUri, invoiceLayout
@@ -1103,6 +1278,7 @@ export default function Invoices() {
                   </TableBody>
                 </Table>
               </div>
+              </>
             )}
             </div>
           </section>

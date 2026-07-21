@@ -13,6 +13,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Save, Loader2, Car } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 
 /**
  * Voll-editierbarer Zeit-Eintrag-Dialog für Admins.
@@ -43,6 +44,7 @@ export interface AdminTimeEntryDialogProps {
 
 interface ProjectOpt { id: string; name: string; adresse?: string | null }
 interface VehicleOpt { id: string; bezeichnung: string; kennzeichen?: string | null }
+interface KostenstelleOpt { wert: string; label: string }
 interface KfzRow {
   id?: string;
   vehicle_id: string;
@@ -58,6 +60,21 @@ const LOCATION_OPTIONS = [
   { value: "regie",     label: "Regie / Büro" },
 ];
 
+/**
+ * Fallback-Kostenstellen — identisch zu TimeTracking.tsx. Ohne explizite
+ * Kostenstelle landete jeder Admin-Nachtrag per DB-Default unter „Baustelle";
+ * die Kostenstellen-Auswertung war dadurch falsch.
+ */
+const KOSTENSTELLEN_FALLBACK: KostenstelleOpt[] = [
+  { wert: "baustelle", label: "Baustelle" },
+  { wert: "werkstatt", label: "Werkstatt" },
+  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerplatz", label: "Lagerplatz" },
+];
+
+/** Obergrenze für einen einzelnen Zeit-Eintrag (ein Kalendertag hat 24 h). */
+const MAX_STUNDEN_PRO_TAG = 24;
+
 const ABWESENHEITS_TAETIGKEITEN = new Set(["Urlaub", "Krankenstand", "Weiterbildung", "Zeitausgleich", "Feiertag"]);
 
 export function AdminTimeEntryDialog({
@@ -70,16 +87,21 @@ export function AdminTimeEntryDialog({
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [vehicles, setVehicles] = useState<VehicleOpt[]>([]);
+  const [kostenstellen, setKostenstellen] = useState<KostenstelleOpt[]>(KOSTENSTELLEN_FALLBACK);
   const [isAbsence, setIsAbsence] = useState(false);
 
+  // Zahlenfelder werden als ROHTEXT gehalten (österreichische Schreibweise
+  // „8,5" muss tippbar bleiben) und erst beim Speichern über parseDecimal
+  // in Zahlen umgesetzt.
   const [form, setForm] = useState({
     datum: datum || new Date().toISOString().slice(0, 10),
     project_id: "",
+    kostenstelle: "baustelle",
     location_type: "baustelle" as "baustelle" | "werkstatt" | "regie",
     start_time: "07:00",
     end_time: "15:30",
-    pause_minutes: 30,
-    stunden: 8,
+    pause_minutes: "30",
+    stunden: "8",
     taetigkeit: "",
     wetterschicht_stunden: "",
     notizen: "",
@@ -93,13 +115,21 @@ export function AdminTimeEntryDialog({
     void (async () => {
       setLoading(true);
       try {
-        const [projRes, vehRes] = await Promise.all([
+        const [projRes, vehRes, ksRes] = await Promise.all([
           supabase.from("projects").select("id, name, adresse").not("status", "eq", "Abgeschlossen").order("name"),
           // Spalte heißt `aktiv` (nicht is_active) — sonst bleibt die Auswahl leer.
           (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen").eq("aktiv", true).order("bezeichnung"),
+          // Gleiche Quelle wie die Zeiterfassung der Mitarbeiter.
+          (supabase.from("admin_config_options" as never) as any)
+            .select("wert, label, sort_order")
+            .eq("kategorie", "kostenstelle")
+            .eq("is_active", true)
+            .order("sort_order"),
         ]);
         setProjects(((projRes.data as any[]) || []).map(p => ({ id: p.id, name: p.name, adresse: p.adresse })));
         setVehicles(((vehRes.data as any[]) || []).map((v: any) => ({ id: v.id, bezeichnung: v.bezeichnung, kennzeichen: v.kennzeichen })));
+        const ksList = ((ksRes?.data as any[]) || []).map((o: any) => ({ wert: o.wert as string, label: o.label as string }));
+        if (ksList.length > 0) setKostenstellen(ksList);
 
         if (isEdit && entryId) {
           const { data } = await supabase
@@ -112,13 +142,14 @@ export function AdminTimeEntryDialog({
             setForm({
               datum: d.datum,
               project_id: d.project_id || "",
+              kostenstelle: d.kostenstelle || "baustelle",
               location_type: (d.location_type || "baustelle"),
               start_time: (d.start_time || "07:00").slice(0, 5),
               end_time: (d.end_time || "15:30").slice(0, 5),
-              pause_minutes: d.pause_minutes ?? 30,
-              stunden: Number(d.stunden) || 0,
+              pause_minutes: formatForInput(Number(d.pause_minutes ?? 30)),
+              stunden: formatForInput(Number(d.stunden) || 0),
               taetigkeit: d.taetigkeit || "",
-              wetterschicht_stunden: d.wetterschicht_stunden != null ? String(d.wetterschicht_stunden) : "",
+              wetterschicht_stunden: d.wetterschicht_stunden != null ? formatForInput(Number(d.wetterschicht_stunden)) : "",
               notizen: d.notizen || "",
             });
             setIsAbsence(ABWESENHEITS_TAETIGKEITEN.has((d.taetigkeit || "").trim()));
@@ -138,11 +169,12 @@ export function AdminTimeEntryDialog({
           setForm({
             datum: datum || new Date().toISOString().slice(0, 10),
             project_id: "",
+            kostenstelle: "baustelle",
             location_type: "baustelle",
             start_time: "07:00",
             end_time: "15:30",
-            pause_minutes: 30,
-            stunden: 8,
+            pause_minutes: "30",
+            stunden: "8",
             taetigkeit: "",
             wetterschicht_stunden: "",
             notizen: "",
@@ -157,19 +189,29 @@ export function AdminTimeEntryDialog({
     })();
   }, [open, entryId, datum, isEdit]);
 
-  // Stunden auto-berechnen, sofern User nicht manuell überschreibt
+  // Stunden auto-berechnen, sofern User nicht manuell überschreibt.
+  // Endzeit vor Startzeit = Schicht über Mitternacht.
   const recalcStunden = (start: string, end: string, pause: number): number => {
     if (!start || !end) return 0;
     const [sh, sm] = start.split(":").map(Number);
     const [eh, em] = end.split(":").map(Number);
-    const totalMin = (eh * 60 + em) - (sh * 60 + sm) - (pause || 0);
+    if ([sh, sm, eh, em].some(n => !Number.isFinite(n))) return 0;
+    let totalMin = (eh * 60 + em) - (sh * 60 + sm);
+    if (totalMin < 0) totalMin += 24 * 60;
+    totalMin -= Math.max(0, pause || 0);
     return Math.max(0, Math.round(totalMin / 60 * 100) / 100);
   };
 
-  const updateTimeField = (field: "start_time" | "end_time" | "pause_minutes", value: string | number) => {
+  /** Stunden laut Start/Ende/Pause — Referenzwert für die Plausibilisierung. */
+  const stundenAusZeiten = (): number =>
+    recalcStunden(form.start_time, form.end_time, toNumber(form.pause_minutes, 0));
+
+  const updateTimeField = (field: "start_time" | "end_time" | "pause_minutes", value: string) => {
     setForm(prev => {
       const next = { ...prev, [field]: value } as typeof prev;
-      next.stunden = recalcStunden(next.start_time, next.end_time, Number(next.pause_minutes));
+      next.stunden = formatForInput(
+        recalcStunden(next.start_time, next.end_time, toNumber(next.pause_minutes, 0)),
+      );
       return next;
     });
   };
@@ -203,6 +245,81 @@ export function AdminTimeEntryDialog({
       toast({ variant: "destructive", title: "Projekt fehlt", description: "Bei Baustelle ist ein Projekt erforderlich." });
       return;
     }
+    if (!form.kostenstelle) {
+      toast({ variant: "destructive", title: "Kostenstelle fehlt", description: "Bitte eine Kostenstelle wählen — sonst ist die Kostenstellen-Auswertung falsch." });
+      return;
+    }
+
+    // Pause plausibilisieren (0 … 12 h) — negative Werte hat die DB bisher
+    // durchgelassen bzw. mit einer Postgres-Meldung quittiert.
+    const pauseNum = parseDecimal(form.pause_minutes);
+    if (pauseNum === null || pauseNum < 0 || pauseNum > 720) {
+      toast({
+        variant: "destructive",
+        title: "Pause unplausibel",
+        description: "Bitte eine Pause zwischen 0 und 720 Minuten eintragen.",
+      });
+      return;
+    }
+
+    // Stunden plausibilisieren: > 0 und höchstens 24 h. Vorher war das Feld
+    // komplett von Start/Ende entkoppelt — 40 h an einem Tag waren möglich.
+    const stundenNum = parseDecimal(form.stunden);
+    if (stundenNum === null || stundenNum <= 0 || stundenNum > MAX_STUNDEN_PRO_TAG) {
+      toast({
+        variant: "destructive",
+        title: "Stunden unplausibel",
+        description: `Die Stunden müssen zwischen 0,01 und ${MAX_STUNDEN_PRO_TAG} liegen (aktuell: „${form.stunden || "leer"}“). Ein Tag hat nur ${MAX_STUNDEN_PRO_TAG} Stunden.`,
+        duration: 7000,
+      });
+      return;
+    }
+
+    const wetterNum = form.wetterschicht_stunden.trim() ? parseDecimal(form.wetterschicht_stunden) : null;
+    if (form.wetterschicht_stunden.trim() && (wetterNum === null || wetterNum < 0 || wetterNum > stundenNum)) {
+      toast({
+        variant: "destructive",
+        title: "Wetterschicht unplausibel",
+        description: `Die Wetterschicht-Stunden müssen zwischen 0 und den erfassten ${formatForInput(stundenNum)} Stunden liegen.`,
+      });
+      return;
+    }
+
+    // KM-Plausibilität VOR dem Speichern prüfen — die DB lehnt
+    // km_ende < km_start seit Migration 20260721090000 hart ab
+    // (CHECK tev_km_plausibel); der rohe Postgres-Fehler ist unlesbar.
+    for (let i = 0; i < kfzRows.length; i++) {
+      const k = kfzRows[i];
+      if (!k.vehicle_id) continue;
+      const zeile = `Fahrzeug-Zeile ${i + 1}`;
+      if (k.modus === "start_ende") {
+        const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
+        const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
+        if ((k.km_start.trim() && s === null) || (k.km_ende.trim() && e === null)) {
+          toast({ variant: "destructive", title: "km-Stand ungültig", description: `${zeile}: Bitte nur Zahlen eintragen.` });
+          return;
+        }
+        if ((s !== null && s < 0) || (e !== null && e < 0)) {
+          toast({ variant: "destructive", title: "km-Stand ungültig", description: `${zeile}: Kilometerstände können nicht negativ sein.` });
+          return;
+        }
+        if (s !== null && e !== null && e < s) {
+          toast({
+            variant: "destructive",
+            title: "km-Stand unplausibel",
+            description: `${zeile}: Der km-Stand am Ende (${formatForInput(e)}) ist kleiner als am Start (${formatForInput(s)}). Bitte korrigieren.`,
+            duration: 7000,
+          });
+          return;
+        }
+      } else {
+        const g = k.km_gefahren.trim() ? parseDecimal(k.km_gefahren) : null;
+        if (k.km_gefahren.trim() && (g === null || g < 0)) {
+          toast({ variant: "destructive", title: "km ungültig", description: `${zeile}: Gefahrene Kilometer können nicht negativ sein.` });
+          return;
+        }
+      }
+    }
 
     setSaving(true);
     try {
@@ -212,14 +329,17 @@ export function AdminTimeEntryDialog({
       const payload: any = {
         datum: form.datum,
         project_id: form.location_type === "baustelle" ? (form.project_id || null) : null,
+        // Ohne dieses Feld greift der DB-Default „baustelle" — jeder Nachtrag
+        // wäre in der Kostenstellen-Auswertung als Baustelle gelandet.
+        kostenstelle: form.kostenstelle,
         location_type: form.location_type,
         start_time: form.start_time || null,
         end_time: form.end_time || null,
-        pause_minutes: Number(form.pause_minutes) || 0,
-        stunden: Number(form.stunden) || 0,
+        pause_minutes: Math.round(pauseNum),
+        stunden: stundenNum,
         taetigkeit: form.taetigkeit.trim(),
-        wetterschicht_stunden: form.location_type === "baustelle" && form.wetterschicht_stunden
-          ? Number(form.wetterschicht_stunden) : null,
+        wetterschicht_stunden: form.location_type === "baustelle" && wetterNum !== null && wetterNum > 0
+          ? wetterNum : null,
         notizen: form.notizen?.trim() || null,
       };
 
@@ -250,14 +370,19 @@ export function AdminTimeEntryDialog({
         }
         for (const k of kfzRows) {
           if (!k.vehicle_id) continue;
+          // parseDecimal statt parseInt: „1.250" (Tausenderpunkt) wurde von
+          // parseInt zu 1 verstümmelt.
+          const gef = k.km_gefahren.trim() ? parseDecimal(k.km_gefahren) : null;
+          const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
+          const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
           const row: any = {
             vehicle_id: k.vehicle_id,
             modus: k.modus,
             km_gefahren: k.modus === "gefahren"
-              ? (k.km_gefahren ? parseInt(k.km_gefahren, 10) : null)
-              : (k.km_start && k.km_ende ? parseInt(k.km_ende, 10) - parseInt(k.km_start, 10) : null),
-            km_start: k.modus === "start_ende" && k.km_start ? parseInt(k.km_start, 10) : null,
-            km_ende:  k.modus === "start_ende" && k.km_ende  ? parseInt(k.km_ende, 10)  : null,
+              ? (gef !== null ? Math.round(gef) : null)
+              : (s !== null && e !== null ? Math.round(e - s) : null),
+            km_start: k.modus === "start_ende" && s !== null ? Math.round(s) : null,
+            km_ende:  k.modus === "start_ende" && e !== null ? Math.round(e) : null,
           };
           if (k.id) {
             await (supabase.from("time_entry_vehicles" as never) as any).update(row).eq("id", k.id);
@@ -271,7 +396,16 @@ export function AdminTimeEntryDialog({
       onSaved();
       onClose();
     } catch (err: any) {
-      toast({ variant: "destructive", title: "Fehler", description: err.message || "Speichern fehlgeschlagen" });
+      // DB-CHECKs (z. B. tev_km_plausibel) in Klartext übersetzen — die rohe
+      // Postgres-Meldung ist für den Anwender wertlos.
+      const raw = String(err?.message || "");
+      let text = raw || "Speichern fehlgeschlagen";
+      if (/tev_km_plausibel/i.test(raw)) {
+        text = "Der km-Stand am Ende darf nicht kleiner sein als am Start.";
+      } else if (/violates check constraint|check constraint/i.test(raw)) {
+        text = "Die eingegebenen Werte sind unplausibel und wurden von der Datenbank abgelehnt. Bitte Stunden, Pause und Kilometer prüfen.";
+      }
+      toast({ variant: "destructive", title: "Fehler", description: text });
     } finally {
       setSaving(false);
     }
@@ -336,7 +470,18 @@ export function AdminTimeEntryDialog({
                 <Label>Location</Label>
                 <Select
                   value={form.location_type}
-                  onValueChange={(v) => setForm(f => ({ ...f, location_type: v as any, project_id: v !== "baustelle" ? "" : f.project_id }))}
+                  onValueChange={(v) => setForm(f => {
+                    // Kostenstelle mitziehen — wie in der Zeiterfassung der
+                    // Mitarbeiter. Eine bewusst gewählte Nicht-Baustellen-
+                    // Kostenstelle (z. B. Lagerplatz) bleibt erhalten.
+                    let ks = f.kostenstelle;
+                    if (v === "baustelle") {
+                      ks = "baustelle";
+                    } else if (ks === "baustelle") {
+                      ks = kostenstellen.find(k => k.wert !== "baustelle")?.wert || ks;
+                    }
+                    return { ...f, location_type: v as any, kostenstelle: ks, project_id: v !== "baustelle" ? "" : f.project_id };
+                  })}
                   disabled={isAbsence}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -361,6 +506,29 @@ export function AdminTimeEntryDialog({
                   </Select>
                 </div>
               )}
+              <div>
+                <Label>Kostenstelle *</Label>
+                <Select
+                  value={form.kostenstelle}
+                  onValueChange={(v) => setForm(f => ({
+                    ...f,
+                    kostenstelle: v,
+                    // Grobe Einordnung nachziehen (Baustelle vs. Firma) —
+                    // „Regie / Büro" bleibt unberührt.
+                    location_type: f.location_type === "regie"
+                      ? f.location_type
+                      : (v === "baustelle" ? "baustelle" : "werkstatt"),
+                    project_id: v === "baustelle" ? f.project_id : "",
+                  }))}
+                  disabled={isAbsence}
+                >
+                  <SelectTrigger data-testid="ate-kostenstelle"><SelectValue placeholder="Wählen..." /></SelectTrigger>
+                  <SelectContent>
+                    {kostenstellen.map(k => <SelectItem key={k.wert} value={k.wert}>{k.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <p className="text-[10px] text-muted-foreground mt-0.5">Steuert die Kostenstellen-Auswertung.</p>
+              </div>
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -374,18 +542,41 @@ export function AdminTimeEntryDialog({
               </div>
               <div>
                 <Label>Pause (Min)</Label>
-                <Input type="number" min={0} max={600} value={form.pause_minutes}
-                  onChange={(e) => updateTimeField("pause_minutes", Number(e.target.value) || 0)}
+                <Input type="text" inputMode="decimal" value={form.pause_minutes}
+                  onChange={(e) => updateTimeField("pause_minutes", e.target.value)}
+                  onBlur={() => {
+                    const n = clamp(toNumber(form.pause_minutes, 0), 0, 720);
+                    updateTimeField("pause_minutes", formatForInput(Math.round(n)));
+                  }}
                   disabled={isAbsence}
                 />
               </div>
               <div>
                 <Label>Stunden</Label>
-                <Input type="number" min={0} step={0.25} value={form.stunden}
-                  onChange={(e) => setForm(f => ({ ...f, stunden: Number(e.target.value) || 0 }))}
+                <Input type="text" inputMode="decimal" data-testid="ate-stunden" value={form.stunden}
+                  onChange={(e) => setForm(f => ({ ...f, stunden: e.target.value }))}
+                  onBlur={() => {
+                    // Rohtext erst beim Verlassen normalisieren und auf 0…24 klemmen.
+                    const n = parseDecimal(form.stunden);
+                    if (n === null) return;
+                    setForm(f => ({ ...f, stunden: formatForInput(clamp(n, 0, MAX_STUNDEN_PRO_TAG)) }));
+                  }}
                   disabled={isAbsence}
                 />
-                <p className="text-[10px] text-muted-foreground mt-0.5">Auto aus Start/End/Pause, manuell überschreibbar.</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Auto aus Start/End/Pause ({formatForInput(stundenAusZeiten())} h), manuell überschreibbar — max. {MAX_STUNDEN_PRO_TAG} h.
+                </p>
+                {(() => {
+                  const n = parseDecimal(form.stunden);
+                  const ausZeiten = stundenAusZeiten();
+                  if (n !== null && (n <= 0 || n > MAX_STUNDEN_PRO_TAG)) {
+                    return <p className="text-[10px] font-medium text-destructive mt-0.5">Wert muss zwischen 0,01 und {MAX_STUNDEN_PRO_TAG} liegen.</p>;
+                  }
+                  if (n !== null && ausZeiten > 0 && Math.abs(n - ausZeiten) > 0.01) {
+                    return <p className="text-[10px] font-medium text-amber-600 mt-0.5">Weicht von Start/Ende/Pause ab ({formatForInput(ausZeiten)} h).</p>;
+                  }
+                  return null;
+                })()}
               </div>
             </div>
 
@@ -403,11 +594,16 @@ export function AdminTimeEntryDialog({
               <div>
                 <Label>Wetterschicht-Stunden (optional)</Label>
                 <Input
-                  type="number"
-                  min={0}
-                  step={0.25}
+                  type="text"
+                  inputMode="decimal"
                   value={form.wetterschicht_stunden}
                   onChange={(e) => setForm(f => ({ ...f, wetterschicht_stunden: e.target.value }))}
+                  onBlur={() => {
+                    if (!form.wetterschicht_stunden.trim()) return;
+                    const n = parseDecimal(form.wetterschicht_stunden);
+                    if (n === null) return;
+                    setForm(f => ({ ...f, wetterschicht_stunden: formatForInput(clamp(n, 0, MAX_STUNDEN_PRO_TAG)) }));
+                  }}
                   disabled={isAbsence}
                 />
               </div>
@@ -448,22 +644,24 @@ export function AdminTimeEntryDialog({
                     </div>
                     <div className="flex gap-1">
                       {k.modus === "gefahren" ? (
-                        <Input type="number" min={0} placeholder="km"
+                        <Input type="text" inputMode="decimal" placeholder="km"
                           value={k.km_gefahren}
                           onChange={(e) => updateKfzRow(idx, { km_gefahren: e.target.value })}
                           className="h-8"
                         />
                       ) : (
                         <>
-                          <Input type="number" min={0} placeholder="Start"
+                          <Input type="text" inputMode="decimal" placeholder="Start"
                             value={k.km_start}
                             onChange={(e) => updateKfzRow(idx, { km_start: e.target.value })}
                             className="h-8"
+                            aria-label={`km Start Zeile ${idx + 1}`}
                           />
-                          <Input type="number" min={0} placeholder="Ende"
+                          <Input type="text" inputMode="decimal" placeholder="Ende"
                             value={k.km_ende}
                             onChange={(e) => updateKfzRow(idx, { km_ende: e.target.value })}
                             className="h-8"
+                            aria-label={`km Ende Zeile ${idx + 1}`}
                           />
                         </>
                       )}
@@ -471,6 +669,22 @@ export function AdminTimeEntryDialog({
                     <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeKfzRow(idx)}>
                       <Trash2 className="w-3.5 h-3.5 text-destructive" />
                     </Button>
+                    {/* Sofort-Hinweis: die DB lehnt km_ende < km_start ab. */}
+                    {k.modus === "start_ende" && (() => {
+                      const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
+                      const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
+                      if (s === null || e === null) return null;
+                      if (e < s) {
+                        return (
+                          <p className="col-span-4 text-[11px] font-medium text-destructive">
+                            km-Stand Ende ({formatForInput(e)}) ist kleiner als Start ({formatForInput(s)}) — bitte korrigieren.
+                          </p>
+                        );
+                      }
+                      return (
+                        <p className="col-span-4 text-[11px] text-muted-foreground">Gefahren: {formatForInput(e - s)} km</p>
+                      );
+                    })()}
                   </div>
                 ))
               )}

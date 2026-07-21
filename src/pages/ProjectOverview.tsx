@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ArrowLeft, FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package } from "lucide-react";
+import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -20,6 +20,7 @@ import { istArbeitszeitZeile } from "@/lib/stunden";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 
 type DocumentCategory = {
   type: "plans" | "reports" | "photos" | "chef";
@@ -451,17 +452,11 @@ const ProjectOverview = () => {
   );
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/projects")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Zurück</span>
-            </Button>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      {/* KingBill-Werkzeugleiste statt weißer shadcn-Kopfzeile. */}
+      <KBToolbar onBack={() => navigate("/projects")} title="Projekt">
+        <KBToolbarButton icon={Settings} label="Bearbeiten" onClick={openEditDialog} />
+      </KBToolbar>
 
       <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 max-w-4xl">
         <div className="mb-6">
@@ -487,12 +482,10 @@ const ProjectOverview = () => {
             ) : (
               <>
                 <h1 className="text-2xl sm:text-3xl font-bold">{projectName}</h1>
-                <Button variant="ghost" size="icon" className="shrink-0 h-8 w-8" onClick={() => { setEditNameValue(projectName); setEditingName(true); }}>
+                {/* Stift = Schnell-Umbenennen. Das vollständige „Bearbeiten"
+                    sitzt jetzt in der KBToolbar oben — nicht doppelt anbieten. */}
+                <Button variant="ghost" size="icon" aria-label="Projektnamen bearbeiten" className="h-11 w-11 shrink-0" onClick={() => { setEditNameValue(projectName); setEditingName(true); }}>
                   <Pencil className="h-4 w-4 text-muted-foreground" />
-                </Button>
-                <Button variant="outline" size="sm" className="gap-1.5 shrink-0" onClick={openEditDialog}>
-                  <Settings className="h-3.5 w-3.5" />
-                  Bearbeiten
                 </Button>
               </>
             )}
@@ -1082,10 +1075,36 @@ const ProjectOverview = () => {
                     {editForm.kunde_name || "Kunde auswählen..."}
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent className="w-[350px] p-0" align="start">
+                <PopoverContent className="w-[min(350px,calc(100vw-2.5rem))] p-0" align="start">
                   <Command>
                     <CommandInput placeholder="Kunde suchen..." />
                     <CommandList>
+                      {/*
+                        „+ Neuer Kunde" IMMER als erster Eintrag ganz oben —
+                        gleiches Verhalten wie in CustomerSelect. Setzt die
+                        Verknüpfung zurück, damit die Felder darunter frisch
+                        ausgefüllt werden können.
+                      */}
+                      <CommandGroup forceMount>
+                        <CommandItem
+                          forceMount
+                          value="__neuer_kunde__"
+                          onSelect={() => {
+                            setCustomerPopoverOpen(false);
+                            setEditForm(f => ({
+                              ...f,
+                              customer_id: null,
+                              kunde_name: "", kunde_anrede: "", kunde_titel: "",
+                              kunde_adresse: "", kunde_plz: "", kunde_ort: "",
+                              kunde_email: "", kunde_telefon: "", kunde_uid: "",
+                            }));
+                          }}
+                          className="font-medium text-primary aria-selected:text-primary"
+                        >
+                          <Plus className="w-4 h-4 mr-2 shrink-0" />
+                          Neuer Kunde
+                        </CommandItem>
+                      </CommandGroup>
                       <CommandEmpty>Kein Kunde gefunden</CommandEmpty>
                       <CommandGroup>
                         {customers.map(c => (

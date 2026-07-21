@@ -16,13 +16,14 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { toast as sonnerToast } from "sonner";
-import { 
-  getNormalWorkingHours, 
-  getDefaultWorkTimes, 
+import {
+  getNormalWorkingHours,
+  getDefaultWorkTimes,
   isNonWorkingDay,
   getWeeklyTargetHours,
   getTotalWorkingHours
 } from "@/lib/workingHours";
+import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 
 type Project = {
   id: string;
@@ -568,9 +569,10 @@ const TimeTracking = () => {
     let entryPauseMinutes: number;
 
     if (absenceData.isFullDay) {
-      const custom = absenceData.customHours ? parseFloat(absenceData.customHours) : NaN;
+      // parseDecimal: „8,5" muss 8,5 ergeben (parseFloat lieferte 8).
+      const custom = parseDecimal(absenceData.customHours);
       // Validierung: muss eine endliche, nicht-negative Zahl zwischen 0 und 24 sein
-      workingHours = (isFinite(custom) && custom >= 0 && custom <= 24) ? custom : automaticHours;
+      workingHours = (custom !== null && custom >= 0 && custom <= 24) ? custom : automaticHours;
       entryStartTime = defaultTimes?.startTime || "07:00";
       entryEndTime = defaultTimes?.endTime || "16:00";
       entryPauseMinutes = defaultTimes?.pauseMinutes || 30;
@@ -578,7 +580,7 @@ const TimeTracking = () => {
       // Calculate from Von/Bis
       const [sH, sM] = absenceData.absenceStartTime.split(':').map(Number);
       const [eH, eM] = absenceData.absenceEndTime.split(':').map(Number);
-      const pause = Math.max(0, parseInt(absenceData.absencePauseMinutes) || 0);
+      const pause = clamp(Math.round(toNumber(absenceData.absencePauseMinutes, 0)), 0, 720);
       let totalMinutes = (eH * 60 + eM) - (sH * 60 + sM);
       if (totalMinutes < 0) totalMinutes += 24 * 60; // Overnight
       totalMinutes -= pause;
@@ -725,6 +727,62 @@ const TimeTracking = () => {
         setSaving(false);
         return;
       }
+
+      // KM-Plausibilität VOR dem Speichern prüfen. Die DB lehnt
+      // km_ende < km_start seit Migration 20260721090000 ab (CHECK
+      // tev_km_plausibel) — ohne diese Prüfung landet der rohe
+      // Postgres-Fehler in der Konsole und der Eintrag verschwindet stumm.
+      if (block.kfzOpen) {
+        for (let k = 0; k < block.kfzEntries.length; k++) {
+          const kfz = block.kfzEntries[k];
+          if (!kfz.vehicleId) continue;
+          const wo = `Block ${blockNum}, Fahrzeug ${k + 1}`;
+          if (kfz.modus === "start_ende") {
+            const s = kfz.kmStart.trim() ? parseDecimal(kfz.kmStart) : null;
+            const e = kfz.kmEnde.trim() ? parseDecimal(kfz.kmEnde) : null;
+            if ((kfz.kmStart.trim() && s === null) || (kfz.kmEnde.trim() && e === null)) {
+              toast({ variant: "destructive", title: "km-Stand ungültig", description: `${wo}: Bitte nur Zahlen eintragen.` });
+              setSaving(false);
+              return;
+            }
+            if ((s !== null && s < 0) || (e !== null && e < 0)) {
+              toast({ variant: "destructive", title: "km-Stand ungültig", description: `${wo}: Kilometerstände können nicht negativ sein.` });
+              setSaving(false);
+              return;
+            }
+            if (s !== null && e !== null && e < s) {
+              toast({
+                variant: "destructive",
+                title: "km-Stand unplausibel",
+                description: `${wo}: Der km-Stand am Ende (${formatForInput(e)}) ist kleiner als am Start (${formatForInput(s)}). Bitte korrigieren.`,
+                duration: 7000,
+              });
+              setSaving(false);
+              return;
+            }
+          } else {
+            const g = kfz.kmGefahren.trim() ? parseDecimal(kfz.kmGefahren) : null;
+            if (kfz.kmGefahren.trim() && (g === null || g < 0)) {
+              toast({ variant: "destructive", title: "km ungültig", description: `${wo}: Gefahrene Kilometer können nicht negativ sein.` });
+              setSaving(false);
+              return;
+            }
+          }
+          // Fahrzeugstunden plausibilisieren (0 … 24 h)
+          if (kfz.stundenTouched && kfz.stunden.trim()) {
+            const h = parseDecimal(kfz.stunden);
+            if (h === null || h < 0 || h > 24) {
+              toast({
+                variant: "destructive",
+                title: "Fahrzeugstunden unplausibel",
+                description: `${wo}: Bitte einen Wert zwischen 0 und 24 Stunden eintragen.`,
+              });
+              setSaving(false);
+              return;
+            }
+          }
+        }
+      }
     }
 
     // Check for overlaps between blocks
@@ -814,8 +872,8 @@ const TimeTracking = () => {
       // Wetterschicht: nur bei Baustelle sinnvoll — bei Werkstatt/Regie ignorieren
       const wetterschichtVal = (() => {
         if (block.locationType !== "baustelle") return null;
-        const v = parseFloat(block.wetterschichtStunden || "");
-        return isNaN(v) || v <= 0 ? null : v;
+        const v = parseDecimal(block.wetterschichtStunden);
+        return v === null || v <= 0 ? null : clamp(v, 0, 24);
       })();
 
       // Prepare main entry for current user (Legacy-Spalten kfz_id/km_start/km_ende
@@ -904,13 +962,26 @@ const TimeTracking = () => {
         const kfzRows = block.kfzEntries
           .filter(k => k.vehicleId)
           .map(k => {
-            const gef = k.kmGefahren ? parseInt(k.kmGefahren, 10) : null;
-            const s = k.kmStart ? parseInt(k.kmStart, 10) : null;
-            const e = k.kmEnde ? parseInt(k.kmEnde, 10) : null;
-            // Fahrzeugstunden: manuell gesetzter Wert, sonst die Stunden
-            // des Zeitblocks (Vorbelegung).
-            const manuell = k.stundenTouched ? parseFloat(k.stunden.replace(",", ".")) : NaN;
-            const fahrzeugStunden = isFinite(manuell) && manuell >= 0 ? manuell : blockHours;
+            // parseDecimal statt parseInt: „1.250" (Tausenderpunkt) wurde
+            // von parseInt zu 1 verstümmelt, „12,5" zu 12.
+            const gefN = k.kmGefahren.trim() ? parseDecimal(k.kmGefahren) : null;
+            const sN = k.kmStart.trim() ? parseDecimal(k.kmStart) : null;
+            const eN = k.kmEnde.trim() ? parseDecimal(k.kmEnde) : null;
+            const gef = gefN !== null ? Math.round(gefN) : null;
+            const s = sN !== null ? Math.round(sN) : null;
+            const e = eN !== null ? Math.round(eN) : null;
+            // Fahrzeugstunden: manuell gesetzter Wert (inkl. explizite 0!),
+            // sonst die Stunden des Zeitblocks (Vorbelegung).
+            // WICHTIG: 0 muss als 0 gespeichert werden. Wurde 0 als NULL
+            // abgelegt, hat die Auswertung mit der vollen Arbeitszeit
+            // aufgefüllt („Fahrzeug 8 h unterwegs", obwohl 0 erfasst war).
+            const manuell = k.stundenTouched && k.stunden.trim() ? parseDecimal(k.stunden) : null;
+            const fahrzeugStunden = manuell !== null && manuell >= 0 ? manuell : blockHours;
+            // NULL nur, wenn der Anwender das Feld bewusst geleert hat
+            // („nicht erfasst" → Auswertung füllt mit der Arbeitszeit auf).
+            const stundenWert = k.stundenTouched && !k.stunden.trim()
+              ? null
+              : Number(fahrzeugStunden.toFixed(2));
             return {
               time_entry_id: mainId,
               vehicle_id: k.vehicleId,
@@ -918,12 +989,25 @@ const TimeTracking = () => {
               km_gefahren: k.modus === "gefahren" ? gef : (s != null && e != null ? e - s : null),
               km_start: k.modus === "start_ende" ? s : null,
               km_ende: k.modus === "start_ende" ? e : null,
-              stunden: fahrzeugStunden > 0 ? Number(fahrzeugStunden.toFixed(2)) : null,
+              stunden: stundenWert,
             };
           });
         if (kfzRows.length > 0) {
           const { error: kfzErr } = await (supabase.from("time_entry_vehicles" as never) as any).insert(kfzRows);
-          if (kfzErr) console.error("KFZ-Einträge konnten nicht gespeichert werden:", kfzErr);
+          if (kfzErr) {
+            console.error("KFZ-Einträge konnten nicht gespeichert werden:", kfzErr);
+            // Bisher nur console.error → der Mitarbeiter glaubte, die
+            // Fahrzeugdaten wären mitgespeichert.
+            const raw = String(kfzErr.message || "");
+            toast({
+              variant: "destructive",
+              title: "Fahrzeugdaten nicht gespeichert",
+              description: /tev_km_plausibel/i.test(raw)
+                ? "Der km-Stand am Ende darf nicht kleiner sein als am Start. Die Arbeitszeit wurde gespeichert, die Fahrzeugdaten nicht."
+                : `Die Arbeitszeit wurde gespeichert, die Fahrzeugdaten nicht: ${raw}`,
+              duration: 9000,
+            });
+          }
         }
       }
 
@@ -955,15 +1039,17 @@ const TimeTracking = () => {
       <div className="p-4">
         <Card className="max-w-2xl mx-auto">
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="h-5 w-5" />
-                <CardTitle>Zeiterfassung</CardTitle>
+            {/* flex-wrap + min-w-0: ohne das schiebt der „Abwesenheit"-Button
+                die Karte am Handy (390px) um ein paar Pixel über den Rand. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <Clock className="h-5 w-5 shrink-0" />
+                <CardTitle className="truncate">Zeiterfassung</CardTitle>
               </div>
-              <Button 
-                variant="outline" 
-                onClick={() => setShowAbsenceDialog(true)} 
-                className="gap-2"
+              <Button
+                variant="outline"
+                onClick={() => setShowAbsenceDialog(true)}
+                className="h-11 gap-2"
               >
                 <Calendar className="h-4 w-4" />
                 Abwesenheit
@@ -976,8 +1062,9 @@ const TimeTracking = () => {
               <div className="space-y-2">
                 <Label htmlFor="date">Datum</Label>
                 <Input 
-                  id="date" 
-                  type="date" 
+                  id="date"
+                  type="date"
+                  className="h-12"
                   value={selectedDate} 
                   onChange={(e) => setSelectedDate(e.target.value)} 
                   required 
@@ -1144,7 +1231,7 @@ const TimeTracking = () => {
                                 }
                               }}
                             >
-                              <SelectTrigger><SelectValue placeholder="Projekt auswählen" /></SelectTrigger>
+                              <SelectTrigger className="h-12"><SelectValue placeholder="Projekt auswählen" /></SelectTrigger>
                               <SelectContent>
                                 {block.kostenstelle !== "baustelle" && (
                                   <SelectItem value="none">Kein Projekt</SelectItem>
@@ -1202,6 +1289,7 @@ const TimeTracking = () => {
                           <div className="space-y-2">
                             <Label>Tätigkeit <span className="text-muted-foreground font-normal">(optional)</span></Label>
                             <Input
+                              className="h-12"
                               list={`taetigkeit-options-${block.id}`}
                               value={block.taetigkeit}
                               onChange={(e) => updateBlock(block.id, { taetigkeit: e.target.value })}
@@ -1242,7 +1330,7 @@ const TimeTracking = () => {
                                     ? block.kfzEntries
                                     : [createEmptyKfzEntry(standardVehicleId)],
                                 } as any)}
-                                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
+                                className="w-full min-h-[48px] flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
                               >
                                 <Plus className="h-4 w-4" /> KFZ &amp; Kilometerstand erfassen
                               </button>
@@ -1253,7 +1341,7 @@ const TimeTracking = () => {
                                   <button
                                     type="button"
                                     onClick={() => updateBlock(block.id, { kfzOpen: false, kfzEntries: [] } as any)}
-                                    className="text-xs text-muted-foreground hover:text-destructive"
+                                    className="min-h-[44px] px-2 text-xs text-muted-foreground hover:text-destructive"
                                   >
                                     Entfernen
                                   </button>
@@ -1271,7 +1359,7 @@ const TimeTracking = () => {
                                             updateBlock(block.id, { kfzEntries: next } as any);
                                           }}
                                         >
-                                          <SelectTrigger><SelectValue placeholder="Fahrzeug wählen..." /></SelectTrigger>
+                                          <SelectTrigger className="h-12"><SelectValue placeholder="Fahrzeug wählen..." /></SelectTrigger>
                                           <SelectContent>
                                             <SelectItem value="none">Kein Fahrzeug</SelectItem>
                                             {vehicles.map((v) => (
@@ -1292,7 +1380,7 @@ const TimeTracking = () => {
                                             kfzOpen: next.length > 0,
                                           } as any);
                                         }}
-                                        className="mt-5 h-9 w-9 shrink-0 rounded border text-destructive hover:bg-destructive/10"
+                                        className="mt-5 h-12 w-12 shrink-0 rounded border text-lg text-destructive hover:bg-destructive/10"
                                       >
                                         ×
                                       </button>
@@ -1306,7 +1394,7 @@ const TimeTracking = () => {
                                           next[kfzIdx] = { ...kfz, modus: "gefahren" };
                                           updateBlock(block.id, { kfzEntries: next } as any);
                                         }}
-                                        className={`flex-1 px-2 py-1 rounded border ${kfz.modus === "gefahren" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
+                                        className={`flex-1 min-h-[44px] px-2 py-1 rounded border ${kfz.modus === "gefahren" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
                                       >
                                         Gefahrene km
                                       </button>
@@ -1317,7 +1405,7 @@ const TimeTracking = () => {
                                           next[kfzIdx] = { ...kfz, modus: "start_ende" };
                                           updateBlock(block.id, { kfzEntries: next } as any);
                                         }}
-                                        className={`flex-1 px-2 py-1 rounded border ${kfz.modus === "start_ende" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
+                                        className={`flex-1 min-h-[44px] px-2 py-1 rounded border ${kfz.modus === "start_ende" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
                                       >
                                         km Start / Ende
                                       </button>
@@ -1327,8 +1415,9 @@ const TimeTracking = () => {
                                       <div>
                                         <Label className="text-xs">Gefahrene km</Label>
                                         <Input
-                                          type="number"
-                                          inputMode="numeric"
+                                          type="text"
+                                          inputMode="decimal"
+                                          className="h-12"
                                           value={kfz.kmGefahren}
                                           onChange={(e) => {
                                             const next = [...block.kfzEntries];
@@ -1345,8 +1434,10 @@ const TimeTracking = () => {
                                           <div>
                                             <Label className="text-xs">km Start</Label>
                                             <Input
-                                              type="number"
-                                              inputMode="numeric"
+                                              type="text"
+                                              inputMode="decimal"
+                                              className="h-12"
+                                              data-testid={`km-start-${block.id}-${kfzIdx}`}
                                               value={kfz.kmStart}
                                               onChange={(e) => {
                                                 const next = [...block.kfzEntries];
@@ -1360,8 +1451,10 @@ const TimeTracking = () => {
                                           <div>
                                             <Label className="text-xs">km Ende</Label>
                                             <Input
-                                              type="number"
-                                              inputMode="numeric"
+                                              type="text"
+                                              inputMode="decimal"
+                                              className="h-12"
+                                              data-testid={`km-ende-${block.id}-${kfzIdx}`}
                                               value={kfz.kmEnde}
                                               onChange={(e) => {
                                                 const next = [...block.kfzEntries];
@@ -1373,9 +1466,20 @@ const TimeTracking = () => {
                                             />
                                           </div>
                                         </div>
-                                        {kfz.kmStart && kfz.kmEnde && Number(kfz.kmEnde) >= Number(kfz.kmStart) && (
-                                          <p className="text-xs text-muted-foreground">Gefahren: {Number(kfz.kmEnde) - Number(kfz.kmStart)} km</p>
-                                        )}
+                                        {/* Sofort-Hinweis statt Postgres-Fehler beim Speichern */}
+                                        {(() => {
+                                          const s = kfz.kmStart.trim() ? parseDecimal(kfz.kmStart) : null;
+                                          const e = kfz.kmEnde.trim() ? parseDecimal(kfz.kmEnde) : null;
+                                          if (s === null || e === null) return null;
+                                          if (e < s) {
+                                            return (
+                                              <p className="text-xs font-medium text-destructive" data-testid="km-warnung">
+                                                km-Stand Ende ({formatForInput(e)}) ist kleiner als Start ({formatForInput(s)}) — bitte korrigieren.
+                                              </p>
+                                            );
+                                          }
+                                          return <p className="text-xs text-muted-foreground">Gefahren: {formatForInput(e - s)} km</p>;
+                                        })()}
                                       </>
                                     )}
                                     {/* Fahrzeugstunden — vorbelegt mit den Stunden des Zeitblocks */}
@@ -1383,15 +1487,22 @@ const TimeTracking = () => {
                                       <Label className="text-xs">Fahrzeugstunden</Label>
                                       <div className="flex items-center gap-2">
                                         <Input
-                                          type="number"
-                                          step="0.25"
-                                          min="0"
-                                          max="24"
+                                          type="text"
                                           inputMode="decimal"
-                                          value={kfz.stundenTouched ? kfz.stunden : calculateBlockHours(block).toFixed(2)}
+                                          className="h-12"
+                                          data-testid={`kfz-stunden-${block.id}-${kfzIdx}`}
+                                          value={kfz.stundenTouched ? kfz.stunden : formatForInput(calculateBlockHours(block), 2)}
                                           onChange={(e) => {
                                             const next = [...block.kfzEntries];
                                             next[kfzIdx] = { ...kfz, stunden: e.target.value, stundenTouched: true };
+                                            updateBlock(block.id, { kfzEntries: next } as any);
+                                          }}
+                                          onBlur={() => {
+                                            if (!kfz.stundenTouched || !kfz.stunden.trim()) return;
+                                            const n = parseDecimal(kfz.stunden);
+                                            if (n === null) return;
+                                            const next = [...block.kfzEntries];
+                                            next[kfzIdx] = { ...kfz, stunden: formatForInput(clamp(n, 0, 24)) };
                                             updateBlock(block.id, { kfzEntries: next } as any);
                                           }}
                                           disabled={!kfz.vehicleId}
@@ -1411,6 +1522,11 @@ const TimeTracking = () => {
                                           </button>
                                         )}
                                       </div>
+                                      {kfz.stundenTouched && parseDecimal(kfz.stunden) === 0 && (
+                                        <p className="text-xs text-muted-foreground mt-0.5">
+                                          0 h wird als „nicht gefahren“ gespeichert (nicht als volle Arbeitszeit).
+                                        </p>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
@@ -1419,7 +1535,7 @@ const TimeTracking = () => {
                                   onClick={() => updateBlock(block.id, {
                                     kfzEntries: [...block.kfzEntries, createEmptyKfzEntry()],
                                   } as any)}
-                                  className="w-full flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground py-1.5 border border-dashed rounded"
+                                  className="w-full min-h-[44px] flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground py-1.5 border border-dashed rounded"
                                 >
                                   <Plus className="h-3.5 w-3.5" /> Weiteres Fahrzeug
                                 </button>
@@ -1433,7 +1549,7 @@ const TimeTracking = () => {
                           <div className="space-y-1.5">
                             <Label>Beginn</Label>
                             <Select value={block.startTime} onValueChange={(v) => updateBlock(block.id, { startTime: v })}>
-                              <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
+                              <SelectTrigger className="h-12 text-base"><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
                                 {Array.from({ length: 48 }, (_, i) => {
                                   const h = Math.floor(i / 2);
@@ -1447,7 +1563,7 @@ const TimeTracking = () => {
                           <div className="space-y-1.5">
                             <Label>Ende</Label>
                             <Select value={block.endTime} onValueChange={(v) => updateBlock(block.id, { endTime: v })}>
-                              <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
+                              <SelectTrigger className="h-12 text-base"><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
                                 {Array.from({ length: 48 }, (_, i) => {
                                   const h = Math.floor(i / 2);
@@ -1472,8 +1588,7 @@ const TimeTracking = () => {
                                 key={opt.value}
                                 type="button"
                                 variant={block.pauseDuration === opt.value ? "default" : "outline"}
-                                size="sm"
-                                className="h-9 text-xs"
+                                className="h-12 px-1 text-xs"
                                 onClick={() => updateBlock(block.id, { pauseDuration: opt.value })}
                               >
                                 {opt.label}
@@ -1506,7 +1621,7 @@ const TimeTracking = () => {
                               });
                             }
                           }}
-                          className="w-full text-xs"
+                          className="h-11 w-full text-xs"
                         >
                           <Sun className="w-3 h-3 mr-1" />
                           Regelarbeitszeit einfüllen
@@ -1520,19 +1635,24 @@ const TimeTracking = () => {
                               className="text-xs font-normal text-muted-foreground flex items-center gap-1.5 flex-1 min-w-0 cursor-pointer"
                             >
                               <span aria-hidden>☔</span>
-                              <span className="truncate">Wetterschicht (Regenstunden)</span>
+                              {/* Am Handy nur „Wetterschicht" — der Zusatz wurde
+                                  bei 390px ohnehin abgeschnitten. */}
+                              <span className="truncate">Wetterschicht<span className="hidden sm:inline"> (Regenstunden)</span></span>
                             </Label>
                             <Input
                               id={`wetter-${block.id}`}
-                              type="number"
-                              step="0.25"
-                              min="0"
-                              max="24"
+                              type="text"
                               inputMode="decimal"
                               placeholder="0"
                               value={block.wetterschichtStunden}
                               onChange={(e) => updateBlock(block.id, { wetterschichtStunden: e.target.value })}
-                              className="h-8 w-20 text-sm"
+                              onBlur={() => {
+                                if (!block.wetterschichtStunden.trim()) return;
+                                const n = parseDecimal(block.wetterschichtStunden);
+                                if (n === null) return;
+                                updateBlock(block.id, { wetterschichtStunden: formatForInput(clamp(n, 0, 24)) });
+                              }}
+                              className="h-11 w-20 text-sm"
                             />
                             <span className="text-xs text-muted-foreground">h</span>
                           </div>
@@ -1552,7 +1672,7 @@ const TimeTracking = () => {
                     type="button" 
                     variant="outline" 
                     onClick={addTimeBlock}
-                    className="w-full gap-2 border-dashed"
+                    className="h-12 w-full gap-2 border-dashed"
                   >
                     <Plus className="w-4 h-4" />
                     Weitere Stunden hinzufügen
@@ -1564,7 +1684,7 @@ const TimeTracking = () => {
                     <span className="text-2xl font-bold">{calculateTotalHours()} h</span>
                   </div>
 
-                  <Button type="submit" className="w-full" disabled={saving}>
+                  <Button type="submit" className="h-14 w-full text-base" disabled={saving}>
                     {saving ? "Wird gespeichert..." : `${timeBlocks.length > 1 ? 'Alle Einträge' : 'Stunden'} erfassen`}
                   </Button>
                 </>
@@ -1721,13 +1841,17 @@ const TimeTracking = () => {
                     <Label className="text-sm">Stunden anpassen (optional)</Label>
                     <div className="flex items-center gap-2 mt-1">
                       <Input
-                        type="number"
-                        step="0.5"
-                        min="0"
-                        max="24"
-                        placeholder={String(getNormalWorkingHours(new Date(absenceData.date)))}
+                        type="text"
+                        inputMode="decimal"
+                        placeholder={formatForInput(getNormalWorkingHours(new Date(absenceData.date)))}
                         value={absenceData.customHours}
                         onChange={(e) => setAbsenceData({ ...absenceData, customHours: e.target.value })}
+                        onBlur={() => {
+                          if (!absenceData.customHours.trim()) return;
+                          const n = parseDecimal(absenceData.customHours);
+                          if (n === null) return;
+                          setAbsenceData(d => ({ ...d, customHours: formatForInput(clamp(n, 0, 24)) }));
+                        }}
                         className="w-24 text-center"
                       />
                       <span className="text-sm text-muted-foreground">Stunden</span>
@@ -1770,11 +1894,15 @@ const TimeTracking = () => {
                   <div className="space-y-1.5">
                     <Label>Pause (Minuten)</Label>
                     <Input
-                      type="number"
-                      min="0"
-                      max="120"
+                      type="text"
+                      inputMode="decimal"
                       value={absenceData.absencePauseMinutes}
                       onChange={(e) => setAbsenceData({ ...absenceData, absencePauseMinutes: e.target.value })}
+                      onBlur={() => {
+                        const n = parseDecimal(absenceData.absencePauseMinutes);
+                        if (n === null) return;
+                        setAbsenceData(d => ({ ...d, absencePauseMinutes: String(clamp(Math.round(n), 0, 720)) }));
+                      }}
                       className="w-24"
                     />
                   </div>
@@ -1784,7 +1912,7 @@ const TimeTracking = () => {
                       {(() => {
                         const [sH, sM] = absenceData.absenceStartTime.split(':').map(Number);
                         const [eH, eM] = absenceData.absenceEndTime.split(':').map(Number);
-                        const pause = parseInt(absenceData.absencePauseMinutes) || 0;
+                        const pause = clamp(Math.round(toNumber(absenceData.absencePauseMinutes, 0)), 0, 720);
                         const total = Math.max(0, ((eH * 60 + eM) - (sH * 60 + sM) - pause) / 60);
                         return total.toFixed(2);
                       })()} h

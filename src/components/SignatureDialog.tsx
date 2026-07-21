@@ -8,7 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
-import { Send, User, Clock, Package, FileText, Loader2 } from "lucide-react";
+import { Send, User, Clock, Package, FileText, Loader2, Check } from "lucide-react";
 
 type Material = {
   id: string;
@@ -58,6 +58,7 @@ export const SignatureDialog = ({
   const [photos, setPhotos] = useState<Photo[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -91,6 +92,42 @@ export const SignatureDialog = ({
     if (!error && data) {
       setPhotos(data);
     }
+  };
+
+  /** Unterschrift speichern OHNE E-Mail — funktioniert auch ohne Kunden-Mail
+   *  und ohne funktionierenden Mailversand (Baustelle, schlechtes Netz). */
+  const handleSaveSignatureOnly = async () => {
+    if (!signature) {
+      toast({
+        variant: "destructive",
+        title: "Unterschrift fehlt",
+        description: "Bitte lassen Sie den Kunden unterschreiben",
+      });
+      return;
+    }
+
+    setSaving(true);
+    const { error } = await supabase
+      .from("disturbances")
+      .update({
+        unterschrift_kunde: signature,
+        unterschrift_am: new Date().toISOString(),
+        status: "gesendet",
+      })
+      .eq("id", disturbance.id);
+    setSaving(false);
+
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: "Unterschrift konnte nicht gespeichert werden" });
+      return;
+    }
+
+    toast({
+      title: "Unterschrift gespeichert",
+      description: "Der Regiebericht ist jetzt unterschrieben. Abschließen können Sie ihn mit dem Button „Abschließen\".",
+    });
+    onSuccess();
+    onOpenChange(false);
   };
 
   const handleSendReport = async () => {
@@ -206,18 +243,18 @@ export const SignatureDialog = ({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
             Regiebericht zur Unterschrift
           </DialogTitle>
           <DialogDescription>
-            Bitte lassen Sie den Kunden unterschreiben und senden Sie dann den Bericht.
+            Kunden unterschreiben lassen und speichern. Der E-Mail-Versand ist optional.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-6 py-4">
+        <div className="flex-1 overflow-y-auto space-y-6 py-4 pr-1">
           {/* Signature Section - TOP */}
           <Card className="border-2 border-primary/20">
             <CardHeader className="pb-3">
@@ -338,31 +375,44 @@ export const SignatureDialog = ({
           </div>
         </div>
 
-        {/* Action Buttons */}
-        <div className="flex justify-end gap-3 pt-4 border-t">
+        {/* Action Buttons — Unterschrift speichern ist der Hauptweg,
+            der E-Mail-Versand ist optional (braucht eine Kunden-E-Mail). */}
+        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t bg-background flex-shrink-0">
           <Button
-            variant="outline"
+            variant="ghost"
+            className="h-11 sm:h-10"
             onClick={() => onOpenChange(false)}
-            disabled={sending}
+            disabled={sending || saving}
           >
             Abbrechen
           </Button>
+          {disturbance.kunde_email && (
+            <Button
+              variant="outline"
+              onClick={handleSendReport}
+              disabled={!signature || sending || saving}
+              className="gap-2 h-11 sm:h-10"
+            >
+              {sending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Wird gesendet…
+                </>
+              ) : (
+                <>
+                  <Send className="h-4 w-4" />
+                  Speichern & per E-Mail senden
+                </>
+              )}
+            </Button>
+          )}
           <Button
-            onClick={handleSendReport}
-            disabled={!signature || sending}
-            className="gap-2"
+            onClick={handleSaveSignatureOnly}
+            disabled={!signature || sending || saving}
+            className="gap-2 h-12 sm:h-10 text-base sm:text-sm"
           >
-            {sending ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Wird gesendet...
-              </>
-            ) : (
-              <>
-                <Send className="h-4 w-4" />
-                Regiebericht senden
-              </>
-            )}
+            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            {saving ? "Speichern…" : "Unterschrift speichern"}
           </Button>
         </div>
       </DialogContent>

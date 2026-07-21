@@ -272,7 +272,7 @@ export default function KalkulationHub() {
             <DropdownMenuTrigger asChild>
               <Button
                 variant="ghost" size="icon"
-                className="h-8 w-8 text-muted-foreground md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
+                className="h-11 w-11 text-muted-foreground sm:h-8 sm:w-8 md:opacity-0 md:group-hover:opacity-100 focus:opacity-100 data-[state=open]:opacity-100"
                 onClick={(e) => e.stopPropagation()}
                 title="Aktionen"
               >

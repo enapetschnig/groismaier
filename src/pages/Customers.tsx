@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Pencil, Trash2, Users, Receipt, Printer, Filter, ChevronDown, ChevronUp, Check, IdCard } from "lucide-react";
+import { Plus, Pencil, Trash2, Users, Receipt, Printer, Filter, ChevronDown, ChevronUp, Check, IdCard, Phone, Mail } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { CustomerForm, EMPTY_CUSTOMER_FORM, composeCustomerName, type CustomerFormData } from "@/components/CustomerForm";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
@@ -573,9 +573,16 @@ export default function Customers() {
       `}</style>
 
       {/* KingBill-Toolbar: [Zurück] [+ Neu] [Bearbeiten] [Löschen] [Detailblatt] [Liste drucken] */}
+      {/*
+        Die zeilenabhängigen Aktionen (Bearbeiten/Löschen/Detailblatt) und
+        „Liste drucken" sind am Handy ausgeblendet: dort gibt es keine markierte
+        Tabellenzeile, sondern Karten mit eigenen Aktionen. Sonst würde die
+        Toolbar am Handy 5 Zeilen hoch werden und den halben Bildschirm fressen.
+      */}
       <KBToolbar onBack={() => navigate("/")} title="Kunden">
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neu" onClick={openNew} />
         <KBToolbarButton
+          className="hidden md:inline-flex"
           icon={Pencil}
           label="Bearbeiten"
           onClick={editSelected}
@@ -583,6 +590,7 @@ export default function Customers() {
           title={selectedRow ? `${selectedRow.name} bearbeiten` : "Zuerst eine Zeile markieren"}
         />
         <KBToolbarButton
+          className="hidden md:inline-flex"
           icon={Trash2}
           label="Löschen"
           onClick={() => selectedRow && setDeleteDialogOpen(true)}
@@ -590,13 +598,14 @@ export default function Customers() {
           title={selectedRow ? `${selectedRow.name} löschen` : "Zuerst eine Zeile markieren"}
         />
         <KBToolbarButton
+          className="hidden md:inline-flex"
           icon={IdCard}
           label="Detailblatt"
           onClick={detailSelected}
           disabled={!selectedRow}
           title={selectedRow ? `Umsatz & Belege von ${selectedRow.name}` : "Zuerst eine Zeile markieren"}
         />
-        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+        <KBToolbarButton className="hidden md:inline-flex" icon={Printer} label="Liste drucken" onClick={() => window.print()} />
       </KBToolbar>
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
@@ -607,7 +616,7 @@ export default function Customers() {
             {/* Mobile: Filterspalte auf-/zuklappen */}
             <button
               type="button"
-              className="kb-btn w-full justify-between lg:hidden"
+              className="kb-btn min-h-[44px] w-full justify-between lg:hidden"
               onClick={() => setFiltersOpen(o => !o)}
               aria-expanded={filtersOpen}
             >
@@ -680,7 +689,98 @@ export default function Customers() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <>
+                {/*
+                  ── Mobil (< md): Karten statt Tabelle ──
+                  Die 9-spaltige Tabelle ist am Handy unlesbar (abgeschnittene
+                  Spalten). Kundenwunsch: „so einfach wie möglich am Handy zu
+                  bedienen, mit den Cards wie vorher". Tippen = bearbeiten
+                  (entspricht dem Doppelklick am Desktop).
+                */}
+                <ul className="flex flex-col gap-2 md:hidden print:hidden">
+                  {filtered.map((c) => {
+                    const color = customerColors[c.id];
+                    const typ = (c as any).kundentyp;
+                    return (
+                      <li key={c.id}>
+                        <div className="kb-panel p-3">
+                          <button
+                            type="button"
+                            className="min-h-[44px] w-full text-left"
+                            onClick={() => { setSelectedId(c.id); openEdit(c); }}
+                          >
+                            <div className="flex items-start gap-2">
+                              {color && (
+                                <span
+                                  className="mt-1.5 inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+                                  style={{ backgroundColor: color.bg }}
+                                  title="Kundenfarbe"
+                                />
+                              )}
+                              <div className="min-w-0 flex-1">
+                                <p className="font-bold leading-tight break-words">{c.name}</p>
+                                <p className="mt-0.5 font-mono text-xs text-muted-foreground">
+                                  {(c as any).kundennummer || "–"}
+                                </p>
+                              </div>
+                              {typ === "privatkunde" && (
+                                <span className="shrink-0 rounded bg-blue-100 px-1.5 py-0.5 text-[10px] uppercase text-blue-800">Privat</span>
+                              )}
+                              {typ === "geschaeftskunde" && (
+                                <span className="shrink-0 rounded bg-purple-100 px-1.5 py-0.5 text-[10px] uppercase text-purple-800">Gewerbe</span>
+                              )}
+                            </div>
+                            {(c.adresse || c.plz || c.ort) && (
+                              <p className="mt-1.5 text-sm text-muted-foreground break-words">
+                                {[c.adresse, [c.plz, c.ort].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
+                              </p>
+                            )}
+                          </button>
+                          <div className="mt-2 flex flex-wrap gap-2 border-t border-border pt-2">
+                            {c.telefon && (
+                              <a
+                                href={`tel:${c.telefon.replace(/\s/g, "")}`}
+                                className="kb-btn min-h-[44px] flex-1 justify-center"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Phone className="h-4 w-4 text-kb-blue-dark" /> Anrufen
+                              </a>
+                            )}
+                            {c.email && (
+                              <a
+                                href={`mailto:${c.email}`}
+                                className="kb-btn min-h-[44px] flex-1 justify-center"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <Mail className="h-4 w-4 text-kb-blue-dark" /> E-Mail
+                              </a>
+                            )}
+                            <button
+                              type="button"
+                              className="kb-btn min-h-[44px] flex-1 justify-center"
+                              onClick={() => { setSelectedId(c.id); openCustomerDetail(c); }}
+                            >
+                              <IdCard className="h-4 w-4 text-kb-blue-dark" /> Detailblatt
+                            </button>
+                            {/* Löschen bewusst klein + rechts abgesetzt (Fehlgriff-Schutz);
+                                die Sicherheitsabfrage kommt wie am Desktop. */}
+                            <button
+                              type="button"
+                              aria-label={`${c.name} löschen`}
+                              title={`${c.name} löschen`}
+                              className="kb-btn min-h-[44px] w-11 shrink-0 justify-center"
+                              onClick={() => { setSelectedId(c.id); setDeleteDialogOpen(true); }}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                <div className="hidden overflow-x-auto md:block print:block">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -745,6 +845,7 @@ export default function Customers() {
                     </TableBody>
                   </Table>
                 </div>
+                </>
               )}
             </div>
           </section>

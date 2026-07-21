@@ -30,6 +30,35 @@ function fmt(val: number): string {
   return parts.join(",");
 }
 
+/** Kaufmännisch auf 2 Nachkommastellen runden (Cent). */
+const r2 = (val: number): number =>
+  isFinite(val) ? Math.round((val + Number.EPSILON) * 100) / 100 : 0;
+
+/** Menge auf 3 Nachkommastellen runden (z.B. 0,125 h). */
+const r3 = (val: number): number =>
+  isFinite(val) ? Math.round((val + Number.EPSILON) * 1000) / 1000 : 0;
+
+/**
+ * Menge fürs PDF: bis zu DREI Nachkommastellen, überflüssige Nullen weg.
+ *
+ * HINTERGRUND (Edge-Case-Review 2026-07-21): vorher wurde die Menge mit
+ * fmt() auf 2 Nachkommastellen gedruckt, der Gesamtpreis aber aus den
+ * ungerundeten Werten übernommen. Auf dem Papier stand dann z.B.
+ * "7,00 × 1,11 € = 7,81 €" — eine Zeile, die man nicht nachrechnen kann.
+ * Jetzt wird die Menge so genau gedruckt, wie sie gerechnet wird, und der
+ * Gesamtpreis aus den GEDRUCKTEN Werten gebildet (siehe unten).
+ */
+function fmtMenge(val: number): string {
+  if (!isFinite(val)) return "0,00";
+  const gerundet = r3(val);
+  // Zwei Nachkommastellen wie gewohnt — die dritte nur, wenn sie gebraucht
+  // wird (sonst stimmt Menge × Preis auf dem Papier nicht mehr).
+  const s = r2(gerundet) === gerundet ? gerundet.toFixed(2) : gerundet.toFixed(3);
+  const parts = s.split(".");
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return parts.join(",");
+}
+
 function fmtCurrency(val: number): string {
   return `€ ${fmt(val)}`;
 }
@@ -63,7 +92,7 @@ export async function generateInvoicePdf(
   const showFaelligAm = docCfg.showPaymentSection;      // nur Rechnungs-artige
   const showBank = docCfg.isInvoiceLike && docCfg.typ !== "gutschrift";
   const hidePrices = docCfg.hidePrices;                  // Lieferschein: keine Preise
-  const pdf = new jsPDF("p", "mm", "a4");
+  const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const ml = 25; // margin left – DIN 5008 Form B: Textbereich 25mm
@@ -492,6 +521,29 @@ export async function generateInvoicePdf(
   const CELL_PAD_BOTTOM = 1.5;  // enge Trennlinie direkt unter dem Text
   const LANG_GAP = 1.0;         // kleiner Abstand zwischen Kurz und Lang
 
+  /**
+   * Gedruckte Zeilenwerte — die Zeile MUSS nachrechenbar sein.
+   * Menge (3 NK) und Einzelpreis (2 NK) werden erst gerundet, dann
+   * miteinander multipliziert. Damit gilt auf dem Papier immer
+   *   gedruckte Menge × gedruckter Preis × (1 − Rabatt%) = gedruckte Summe.
+   * Die Belegsummen unten leiten sich aus genau diesen Zeilenwerten ab.
+   */
+  const printLines = items.map((item) => {
+    const menge = r3(Number(item.menge) || 0);
+    const einzelpreis = r2(Number(item.einzelpreis) || 0);
+    const rabattProz = Number((item as any).rabatt_prozent) || 0;
+    const listenwert = r2(menge * einzelpreis);
+    const gesamt = r2(menge * einzelpreis * (1 - rabattProz / 100));
+    return {
+      menge,
+      einzelpreis,
+      rabattProz,
+      listenwert,
+      gesamt,
+      exempt: !!(item as any).mwst_exempt,
+    };
+  });
+
   const langtextInfo: Record<number, { kurztext: string; langtext: string }> = {};
   const tableBody: string[][] = [];
   items.forEach((item, idx) => {
@@ -500,20 +552,20 @@ export async function generateInvoicePdf(
     if (langtext && langtext !== kurztext) {
       langtextInfo[idx] = { kurztext, langtext };
     }
+    const p = printLines[idx];
     // Nur Kurztext in die Zelle. Langtext wird in didDrawCell manuell
     // darunter gezeichnet; die zusätzliche Höhe reserviert didParseCell
     // via minCellHeight.
     const row = [
       String(item.position).padStart(2, "0"),
-      fmt(Number(item.menge)),
+      fmtMenge(p.menge),
       item.einheit || "Stk.",
       kurztext,
     ];
     if (!hidePrices) {
-      const itemRabattProz = Number((item as any).rabatt_prozent) || 0;
-      row.push(fmtCurrency(Number(item.einzelpreis)));
-      row.push(itemRabattProz > 0 ? `${itemRabattProz}%` : "—");
-      row.push(fmtCurrency(Number(item.gesamtpreis)));
+      row.push(fmtCurrency(p.einzelpreis));
+      row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
+      row.push(fmtCurrency(p.gesamt));
     }
     tableBody.push(row);
   });
@@ -524,22 +576,28 @@ export async function generateInvoicePdf(
   // dem Bruttobetrag ausgewiesen.
   const rabattProzent = Number(invoice.rabatt_prozent) || 0;
   const rabattBetrag = Number(invoice.rabatt_betrag) || 0;
-  const exemptBrutto = items.filter(it => (it as any).mwst_exempt).reduce((s, it) => s + Number(it.gesamtpreis), 0);
-  // positionenNetto = Summe der gesamtpreise NACH Item-Rabatt (mwst_exempt
-  // ausgenommen). Item-Rabatt-Total = Differenz zwischen "Menge × Einzelpreis"
-  // (Listenpreis) und gesamtpreis pro Position — wird im Footer als
+  const exemptBrutto = r2(printLines.filter(p => p.exempt).reduce((s, p) => s + p.gesamt, 0));
+  // positionenNetto = Summe der GEDRUCKTEN Zeilensummen NACH Item-Rabatt
+  // (mwst_exempt ausgenommen). Item-Rabatt-Total = Differenz zwischen
+  // "Menge × Einzelpreis" (Listenpreis) und Zeilensumme — wird im Footer als
   // Aufschlüsselung "Zwischensumme → Rabatt Positionen → Netto" gezeigt.
-  const positionenNetto = items.filter(it => !(it as any).mwst_exempt).reduce((s, it) => s + Number(it.gesamtpreis), 0);
-  const itemRabattTotal = items.filter(it => !(it as any).mwst_exempt).reduce((s, it) => {
-    const rabProz = Number((it as any).rabatt_prozent) || 0;
-    if (rabProz <= 0) return s;
-    const original = Number(it.menge) * Number(it.einzelpreis);
-    return s + (original - Number(it.gesamtpreis));
-  }, 0);
-  const positionenBrutto = positionenNetto + itemRabattTotal; // = sum(menge * einzelpreis)
-  const rabattWert = rabattProzent > 0 ? positionenNetto * (rabattProzent / 100) : rabattBetrag;
-  const bezahltBetrag = Number(invoice.bezahlt_betrag) || 0;
-  const restBetrag = Number(invoice.brutto_summe) - bezahltBetrag;
+  // Beides aus printLines, damit der Summenblock exakt zu den gedruckten
+  // Zeilen passt (sonst geht der Beleg um Cent-Beträge nicht auf).
+  const positionenNetto = r2(printLines.filter(p => !p.exempt).reduce((s, p) => s + p.gesamt, 0));
+  const itemRabattTotal = r2(printLines.filter(p => !p.exempt).reduce((s, p) => {
+    if (p.rabattProz <= 0) return s;
+    return s + (p.listenwert - p.gesamt);
+  }, 0));
+  const positionenBrutto = r2(positionenNetto + itemRabattTotal); // = sum(menge * einzelpreis)
+  const rabattWert = r2(rabattProzent > 0 ? positionenNetto * (rabattProzent / 100) : rabattBetrag);
+  // Netto / USt / Brutto ebenfalls aus den gedruckten Zeilen ableiten —
+  // identische Formel wie im Beleg-Editor (InvoiceDetail).
+  const nettoGedruckt = r2(positionenNetto - rabattWert);
+  const mwstSatzPdf = Number(invoice.mwst_satz) || 0;
+  const mwstGedruckt = (invoice as any).reverse_charge === true
+    ? 0
+    : r2(nettoGedruckt * (mwstSatzPdf / 100));
+  const bruttoGedruckt = r2(nettoGedruckt + mwstGedruckt + exemptBrutto);
 
   // Footer-Zeile: der manuelle Renderer weiter unten liest row[3] (Label)
   // und row[5] (Wert) — unabhängig von der Spaltenzahl der Items-Tabelle.
@@ -554,26 +612,35 @@ export async function generateInvoicePdf(
       tableFoot.push(footRow("Zwischensumme", fmtCurrency(positionenBrutto)));
       tableFoot.push(footRow("Rabatt Positionen", `- ${fmtCurrency(itemRabattTotal)}`));
     }
-    // Block 2: Globaler Rabatt
-    if (rabattWert > 0) {
+    // Block 2: Globaler Rabatt — IMMER drucken, wenn er ≠ 0 ist.
+    // Ein negativer Rabatt (Altdaten / Fehleingabe) erhöht die Summe; wurde er
+    // hier verschwiegen, passten die gedruckten Positionen nicht zur
+    // Nettosumme und der Beleg war nicht nachvollziehbar.
+    if (rabattWert !== 0) {
       tableFoot.push(footRow("Zwischensumme", fmtCurrency(positionenNetto)));
-      tableFoot.push(footRow(`Rabatt${rabattProzent > 0 ? ` (${rabattProzent}%)` : ""}`, `- ${fmtCurrency(rabattWert)}`));
+      const rabattLabel = rabattWert < 0
+        ? `Aufschlag${rabattProzent !== 0 ? ` (${rabattProzent}%)` : ""}`
+        : `Rabatt${rabattProzent > 0 ? ` (${rabattProzent}%)` : ""}`;
+      const rabattValue = rabattWert < 0
+        ? `+ ${fmtCurrency(Math.abs(rabattWert))}`
+        : `- ${fmtCurrency(rabattWert)}`;
+      tableFoot.push(footRow(rabattLabel, rabattValue));
     }
     if (isReverseCharge) {
-      tableFoot.push(footRow("Rechnungsbetrag", fmtCurrency(Number(invoice.netto_summe))));
+      tableFoot.push(footRow("Rechnungsbetrag", fmtCurrency(nettoGedruckt)));
     } else if (exemptBrutto !== 0) {
       // Schlussrechnung mit Anzahlungs-Abzug: expliziter Block
       // Netto → USt → Zwischensumme brutto → Abzug → Verbleibend
-      const bruttoVorAbzug = Number(invoice.netto_summe) + Number(invoice.mwst_betrag || 0);
-      tableFoot.push(footRow("Nettobetrag", fmtCurrency(Number(invoice.netto_summe))));
-      tableFoot.push(footRow(`USt. ${(Number(invoice.mwst_satz) || 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
+      const bruttoVorAbzug = r2(nettoGedruckt + mwstGedruckt);
+      tableFoot.push(footRow("Nettobetrag", fmtCurrency(nettoGedruckt)));
+      tableFoot.push(footRow(`USt. ${mwstSatzPdf.toFixed(0)}%`, fmtCurrency(mwstGedruckt)));
       tableFoot.push(footRow("Zwischensumme brutto", fmtCurrency(bruttoVorAbzug)));
       tableFoot.push(footRow("Anzahlungs-Abzug (brutto)", fmtCurrency(exemptBrutto)));
-      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(Number(invoice.brutto_summe))));
+      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(bruttoGedruckt)));
     } else {
-      tableFoot.push(footRow("Nettobetrag", fmtCurrency(Number(invoice.netto_summe))));
-      tableFoot.push(footRow(`USt. ${(Number(invoice.mwst_satz) || 20).toFixed(0)}%`, fmtCurrency(Number(invoice.mwst_betrag) || 0)));
-      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(Number(invoice.brutto_summe))));
+      tableFoot.push(footRow("Nettobetrag", fmtCurrency(nettoGedruckt)));
+      tableFoot.push(footRow(`USt. ${mwstSatzPdf.toFixed(0)}%`, fmtCurrency(mwstGedruckt)));
+      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(bruttoGedruckt)));
     }
   }
 
@@ -873,9 +940,11 @@ export async function generateInvoicePdf(
 
   // ======= SKONTO INFO (only for Rechnung with Skonto) =======
   if (showFaelligAm && skontoProzent > 0 && skontoTage > 0) {
-    const brutto = Number(invoice.brutto_summe);
-    const skontoAbzug = brutto * (skontoProzent / 100);
-    const skontoBetrag = brutto - skontoAbzug;
+    // Basis ist der GEDRUCKTE Bruttobetrag — sonst weicht der Skonto-Betrag
+    // im Kasten vom Bruttobetrag im Summenblock ab.
+    const brutto = bruttoGedruckt;
+    const skontoAbzug = r2(brutto * (skontoProzent / 100));
+    const skontoBetrag = r2(brutto - skontoAbzug);
     const skontoDatum = new Date(invoice.datum + "T12:00:00");
     skontoDatum.setDate(skontoDatum.getDate() + skontoTage);
     const skontoDateStr = skontoDatum.toLocaleDateString("de-AT");
@@ -1009,7 +1078,7 @@ export function generateStornoPdf(
 ): Blob {
   const L = layout || DEFAULT_LAYOUT;
   const [acR, acG, acB] = hexToRgb(L.accent_color);
-  const pdf = new jsPDF("p", "mm", "a4");
+  const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const ml = LETTERHEAD_MARGIN.left;
@@ -1107,7 +1176,7 @@ export function generateMahnungPdf(
   const stufeConfig = MS.stufen[stufeIdx];
   // Mahngebühr aus Config, wenn nicht explizit mitgegeben
   const effektiveGebuehr = mahngebuehr > 0 ? mahngebuehr : stufeConfig.gebuehr;
-  const pdf = new jsPDF("p", "mm", "a4");
+  const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
   const ml = LETTERHEAD_MARGIN.left;

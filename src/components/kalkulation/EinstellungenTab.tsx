@@ -13,7 +13,8 @@ import { useEffect, useState } from "react";
 import { Plus, Save, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
-import { num, round4 } from "@/lib/kalkulationEngine";
+import { round4 } from "@/lib/kalkulationEngine";
+import { formatForInput, parseDecimal } from "@/lib/num";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable } from "./useKalkKatalog";
 
 const BETRIEBSDATEN_FELDER: { key: string; label: string; hinweis?: string }[] = [
@@ -60,7 +61,7 @@ function BlurInput({ value, onCommit, className, numeric }: {
   useEffect(() => { setText(value); }, [value]);
   return (
     <input
-      className={className || "kb-input h-8 min-h-0 px-2 py-1 text-sm"}
+      className={className || "kb-input h-11 min-h-0 px-2 py-1 text-sm sm:h-8"}
       inputMode={numeric ? "decimal" : undefined}
       value={text}
       onChange={(e) => setText(e.target.value)}
@@ -70,11 +71,17 @@ function BlurInput({ value, onCommit, className, numeric }: {
   );
 }
 
-const parseNum = (t: string): number | null => {
-  const s = t.trim();
-  if (s === "") return null;
-  const n = parseFloat(s.replace(",", "."));
-  return Number.isFinite(n) ? n : null;
+// Edge-Case-Review 2026-07-21: Hier stand `parseFloat(s.replace(",", "."))`.
+// Ein Katalogpreis "1.250" (österreichische Schreibweise mit Tausenderpunkt)
+// wurde damit zu 1,25 € — Faktor 1000 daneben, ohne jede Warnung. Jetzt über
+// parseDecimal() aus src/lib/num.ts (versteht "1.250", "1.250,50" und "12,50").
+const parseNum = (t: string): number | null => parseDecimal(t);
+
+/** DB-Wert (immer mit Punkt) für die Anzeige im Feld: 1250.5 → "1250,5". */
+const dbZuAnzeige = (v: string | number | null | undefined): string => {
+  if (v === null || v === undefined || v === "") return "";
+  const n = typeof v === "number" ? v : Number(String(v));
+  return Number.isFinite(n) ? formatForInput(n) : String(v);
 };
 
 export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
@@ -83,16 +90,36 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const [savingBd, setSavingBd] = useState(false);
   const [neueKategorie, setNeueKategorie] = useState<Record<string, string>>({});
 
-  useEffect(() => { setWerte(katalog.settings); }, [katalog.settings]);
+  // Die DB speichert Zahlen immer mit Punkt; im Feld steht die österreichische
+  // Schreibweise mit Komma (sonst liest der Anwender "0.85" als 85 Cent falsch
+  // ab und tippt beim Korrigieren "0,85" ein, was früher verlorenging).
+  useEffect(() => {
+    const anzeige: Record<string, string> = {};
+    for (const [k, v] of Object.entries(katalog.settings)) anzeige[k] = dbZuAnzeige(v);
+    setWerte(anzeige);
+  }, [katalog.settings]);
 
   const fehler = (message: string) =>
     toast({ variant: "destructive", title: "Fehler", description: message });
 
   const saveBetriebsdaten = async () => {
+    const befuellt = BETRIEBSDATEN_FELDER.filter(
+      (f) => werte[f.key] !== undefined && String(werte[f.key]).trim() !== "",
+    );
+    // Unlesbare Eingaben VOR dem Speichern abfangen — sonst landet ein
+    // stillschweigendes 0 (bzw. ein Postgres-Fehler) in den Stammdaten.
+    const ungueltig = befuellt.filter((f) => parseDecimal(werte[f.key]) === null);
+    if (ungueltig.length > 0) {
+      fehler(`Bitte Zahlen eingeben — ungültig: ${ungueltig.map((f) => f.label).join(", ")}`);
+      return;
+    }
+    const negativ = befuellt.filter((f) => (parseDecimal(werte[f.key]) as number) < 0);
+    if (negativ.length > 0) {
+      fehler(`Negative Werte sind hier nicht sinnvoll: ${negativ.map((f) => f.label).join(", ")}`);
+      return;
+    }
     setSavingBd(true);
-    const rows = BETRIEBSDATEN_FELDER
-      .filter((f) => werte[f.key] !== undefined && werte[f.key] !== "")
-      .map((f) => ({ key: f.key, value: String(werte[f.key]).replace(",", ".") }));
+    const rows = befuellt.map((f) => ({ key: f.key, value: String(parseDecimal(werte[f.key])) }));
     const { error } = await supabase.from("app_settings").upsert(rows, { onConflict: "key" });
     setSavingBd(false);
     if (error) {
@@ -103,8 +130,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     katalog.reload();
   };
 
-  const vkFaktor = num(werte["kalk_vk_faktor"]) || 1.35;
-  const lackFaktor = num(werte["kalk_lack_vierseitig_faktor"]) || 1.65;
+  const vkFaktor = (parseDecimal(werte["kalk_vk_faktor"]) ?? 0) || 1.35;
+  const lackFaktor = (parseDecimal(werte["kalk_lack_vierseitig_faktor"]) ?? 0) || 1.65;
 
   const addKategorie = async (typ: KatalogKategorie["typ"]) => {
     const name = (neueKategorie[typ] || "").trim();
@@ -156,14 +183,40 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     katalog.reload();
   };
 
+  /**
+   * Preiseingabe prüfen: leer = "kein Preis" (null), unlesbar wird abgelehnt
+   * (früher wurde daraus stillschweigend NaN/0). Negative Preise sind nur bei
+   * Auf-/Minderpreisen sinnvoll.
+   */
+  const preisEingabe = (text: string, typ: KatalogKategorie["typ"]): number | null | undefined => {
+    if (text.trim() === "") return null;
+    const n = parseNum(text);
+    if (n === null) {
+      fehler(`„${text}“ ist keine Zahl. Beispiel: 1.250,50 oder 12,5`);
+      return undefined;
+    }
+    if (n < 0 && typ !== "aufpreis") {
+      fehler("Negative Preise sind hier nicht zulässig (nur bei Auf-/Minderpreisen).");
+      return undefined;
+    }
+    return n;
+  };
+
   /** EK committen; VK automatisch ableiten, wenn er noch leer ist. */
   const commitEk = (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
-    const ek = parseNum(text);
+    const ek = preisEingabe(text, typ);
+    if (ek === undefined) return;
     const patch: Record<string, unknown> = { ek };
     if (ek !== null && (a.vk === null || a.vk === 0)) {
       patch.vk = round4(ek * (typ === "lack" ? lackFaktor : vkFaktor));
     }
     updateArtikel(a.id, patch);
+  };
+
+  const commitVk = (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
+    const vk = preisEingabe(text, typ);
+    if (vk === undefined) return;
+    updateArtikel(a.id, { vk });
   };
 
   return (
@@ -200,25 +253,26 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
             <div className="space-y-4 p-4">
               <p className="text-xs text-muted-foreground">{block.hinweis}</p>
               {kats.map((kat) => (
-                <div key={kat.id} className="rounded border">
+                <div key={kat.id} className="min-w-0 rounded border">
                   <div className="flex items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
                     <BlurInput
                       value={kat.name}
                       onCommit={(v) => renameKategorie(kat, v)}
-                      className="kb-input h-7 min-h-0 max-w-xs px-2 py-1 text-sm font-semibold"
+                      className="kb-input h-11 min-h-0 min-w-0 max-w-xs px-2 py-1 text-sm font-semibold sm:h-7"
                     />
                     <span className="flex-1" />
-                    <button type="button" className="kb-btn h-7 min-h-0 px-2 py-1 text-xs" onClick={() => addArtikel(kat)}>
+                    <button type="button" className="kb-btn h-11 min-h-0 shrink-0 px-3 py-1 text-xs sm:h-7 sm:px-2" onClick={() => addArtikel(kat)}>
                       <Plus className="h-3.5 w-3.5 text-kb-green" /> Artikel
                     </button>
                     <button
                       type="button"
-                      className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:h-7 sm:w-7"
                       onClick={() => deleteKategorie(kat)}
                       title="Kategorie löschen"
                     ><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
-                  <table className="w-full text-xs">
+                  <div className="overflow-x-auto">
+                  <table className="w-full min-w-[420px] text-xs">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
                         <th className="px-2 py-1 font-semibold">Bezeichnung</th>
@@ -236,28 +290,28 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                         <tr key={a.id} className="border-b last:border-b-0">
                           <td className="px-2 py-1">
                             <BlurInput value={a.name} onCommit={(v) => v.trim() && updateArtikel(a.id, { name: v.trim() })}
-                              className="kb-input h-7 min-h-0 px-2 py-1 text-xs" />
+                              className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
                           </td>
                           {block.typ !== "aufpreis" && (
                             <td className="px-2 py-1">
-                              <BlurInput numeric value={a.ek === null ? "" : String(a.ek).replace(".", ",")}
+                              <BlurInput numeric value={dbZuAnzeige(a.ek)}
                                 onCommit={(v) => commitEk(a, block.typ, v)}
-                                className="kb-input h-7 min-h-0 px-2 py-1 text-right text-xs tabular-nums" />
+                                className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums sm:h-7" />
                             </td>
                           )}
                           <td className="px-2 py-1">
-                            <BlurInput numeric value={a.vk === null ? "" : String(a.vk).replace(".", ",")}
-                              onCommit={(v) => updateArtikel(a.id, { vk: parseNum(v) })}
-                              className="kb-input h-7 min-h-0 px-2 py-1 text-right text-xs tabular-nums" />
+                            <BlurInput numeric value={dbZuAnzeige(a.vk)}
+                              onCommit={(v) => commitVk(a, block.typ, v)}
+                              className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
                             <BlurInput value={a.einheit || ""} onCommit={(v) => updateArtikel(a.id, { einheit: v })}
-                              className="kb-input h-7 min-h-0 px-2 py-1 text-xs" />
+                              className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
                             <button
                               type="button"
-                              className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              className="flex h-11 w-11 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive sm:h-7 sm:w-7"
                               onClick={() => deleteArtikel(a)}
                               title="Artikel löschen"
                             ><Trash2 className="h-3.5 w-3.5" /></button>
@@ -266,17 +320,18 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                       ))}
                     </tbody>
                   </table>
+                  </div>
                 </div>
               ))}
               <div className="flex items-center gap-2">
                 <input
-                  className="kb-input h-8 min-h-0 max-w-xs px-2 py-1 text-sm"
+                  className="kb-input h-11 min-h-0 min-w-0 max-w-xs px-2 py-1 text-sm sm:h-8"
                   placeholder="Neue Kategorie …"
                   value={neueKategorie[block.typ] || ""}
                   onChange={(e) => setNeueKategorie((p) => ({ ...p, [block.typ]: e.target.value }))}
                   onKeyDown={(e) => { if (e.key === "Enter") addKategorie(block.typ); }}
                 />
-                <button type="button" className="kb-btn h-8 min-h-0 px-2 py-1 text-xs" onClick={() => addKategorie(block.typ)}>
+                <button type="button" className="kb-btn h-11 min-h-0 shrink-0 px-3 py-1 text-xs sm:h-8 sm:px-2" onClick={() => addKategorie(block.typ)}>
                   <Plus className="h-3.5 w-3.5 text-kb-green" /> Neue Kategorie
                 </button>
               </div>

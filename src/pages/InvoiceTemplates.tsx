@@ -125,7 +125,7 @@ export default function InvoiceTemplates() {
       .order("kategorie, name")
       .limit(5000);
     if (error) {
-      toast({ variant: "destructive", title: "Fehler", description: "Materialien konnten nicht geladen werden" });
+      toast({ variant: "destructive", title: "Fehler", description: "Artikel konnten nicht geladen werden" });
     } else {
       const rows = (data || []).map(t => {
         const nettoPreis = Number((t as any).netto_preis) || Number(t.einzelpreis);
@@ -462,7 +462,12 @@ export default function InvoiceTemplates() {
       {/* KingBill-Toolbar: [Zurück] [+ Neuer Artikel] [Bearbeiten] [Löschen] [Import] [Preise] [Liste drucken] */}
       <KBToolbar onBack={() => navigate("/")} title="Artikel">
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neuer Artikel" onClick={openNew} />
+        {/*
+          Zeilenabhängige + Büro-Aktionen am Handy ausgeblendet — dort wird über
+          die Karten bearbeitet, sonst wäre die Toolbar 6 Zeilen hoch.
+        */}
         <KBToolbarButton
+          className="hidden md:inline-flex"
           icon={Pencil}
           label="Bearbeiten"
           onClick={editSelected}
@@ -470,15 +475,16 @@ export default function InvoiceTemplates() {
           title={selectedRow ? `${selectedRow.kurzbezeichnung || selectedRow.name} bearbeiten` : "Zuerst eine Zeile markieren"}
         />
         <KBToolbarButton
+          className="hidden md:inline-flex"
           icon={Trash2}
           label="Löschen"
           onClick={deleteSelected}
           disabled={!selectedRow}
           title={selectedRow ? `${selectedRow.kurzbezeichnung || selectedRow.name} löschen` : "Zuerst eine Zeile markieren"}
         />
-        <KBToolbarButton icon={Upload} label="Import" onClick={() => setImportOpen(true)} />
-        <KBToolbarButton icon={TrendingUp} label="Preise anpassen" onClick={() => setBulkPriceOpen(true)} />
-        <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+        <KBToolbarButton className="hidden md:inline-flex" icon={Upload} label="Import" onClick={() => setImportOpen(true)} />
+        <KBToolbarButton className="hidden md:inline-flex" icon={TrendingUp} label="Preise anpassen" onClick={() => setBulkPriceOpen(true)} />
+        <KBToolbarButton className="hidden md:inline-flex" icon={Printer} label="Liste drucken" onClick={() => window.print()} />
       </KBToolbar>
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
@@ -489,7 +495,7 @@ export default function InvoiceTemplates() {
             {/* Mobile: Filterspalte auf-/zuklappen */}
             <button
               type="button"
-              className="kb-btn w-full justify-between lg:hidden"
+              className="kb-btn min-h-[44px] w-full justify-between lg:hidden"
               onClick={() => setFiltersOpen(o => !o)}
               aria-expanded={filtersOpen}
             >
@@ -556,7 +562,86 @@ export default function InvoiceTemplates() {
                   )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <>
+                {/*
+                  ── Mobil (< md): Karten statt Tabelle ──
+                  Am Handy ist die Tabelle zu schmal (Preis/Nummer werden
+                  abgeschnitten). Tippen = bearbeiten, wie der Doppelklick am
+                  Desktop.
+                */}
+                <ul className="flex flex-col gap-2 md:hidden print:hidden">
+                  {filtered.map(t => {
+                    const vk = t.vk_netto || t.einzelpreis;
+                    return (
+                      <li key={t.id}>
+                        <div className="kb-panel flex items-start gap-2 p-3">
+                          <button
+                            type="button"
+                            aria-label={t.ist_favorit ? "Favorit entfernen" : "Als Favorit merken"}
+                            className="-m-1 flex h-11 w-11 shrink-0 items-center justify-center"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              const newVal = !t.ist_favorit;
+                              await supabase.from("invoice_templates").update({ ist_favorit: newVal } as any).eq("id", t.id);
+                              setTemplates(prev => prev.map(item => item.id === t.id ? { ...item, ist_favorit: newVal } : item));
+                            }}
+                          >
+                            <Star className={`h-5 w-5 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"}`} />
+                          </button>
+                          <button
+                            type="button"
+                            className="min-h-[44px] min-w-0 flex-1 text-left"
+                            onClick={() => { setSelectedId(t.id); openEdit(t); }}
+                          >
+                            <div className="flex items-start gap-2">
+                              <div className="min-w-0 flex-1">
+                                <p className="font-bold leading-tight break-words">
+                                  {t.kurzbezeichnung || t.name}
+                                </p>
+                                <p className="mt-0.5 text-xs text-muted-foreground">
+                                  {t.kategorie}
+                                  {(t.produktnummer || t.artikelnummer) && (
+                                    <span className="font-mono"> · {t.produktnummer || t.artikelnummer}</span>
+                                  )}
+                                </p>
+                              </div>
+                              <span className="shrink-0 font-mono text-sm font-bold">
+                                {vk > 0 ? `€ ${vk.toFixed(2)}` : "–"}
+                              </span>
+                            </div>
+                            {(t.ist_set || t.ist_lagerartikel) && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {t.ist_set && (
+                                  <Badge variant="outline" className="h-5 gap-1 border-primary/40 px-1.5 text-[10px] text-primary">
+                                    <Boxes className="h-3 w-3" /> Set
+                                  </Badge>
+                                )}
+                                {t.ist_lagerartikel && (
+                                  <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Lager</Badge>
+                                )}
+                              </div>
+                            )}
+                          </button>
+                          {/* Löschen klein rechts — mit Sicherheitsabfrage wie am Desktop. */}
+                          <button
+                            type="button"
+                            aria-label={`${t.kurzbezeichnung || t.name} löschen`}
+                            title={`${t.kurzbezeichnung || t.name} löschen`}
+                            className="-m-1 flex h-11 w-11 shrink-0 items-center justify-center"
+                            onClick={() => {
+                              if (!confirm(`Artikel „${t.kurzbezeichnung || t.name}" wirklich löschen?`)) return;
+                              handleDelete(t.id);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4 text-destructive" />
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+
+                <div className="hidden overflow-x-auto md:block print:block">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -624,6 +709,7 @@ export default function InvoiceTemplates() {
                     </TableBody>
                   </Table>
                 </div>
+                </>
               )}
             </div>
           </section>
@@ -632,7 +718,7 @@ export default function InvoiceTemplates() {
         <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
           <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>{editId ? "Material bearbeiten" : "Neues Material"}</DialogTitle>
+              <DialogTitle>{editId ? "Artikel bearbeiten" : "Neuer Artikel"}</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <div className="grid grid-cols-3 gap-3">
@@ -679,7 +765,7 @@ export default function InvoiceTemplates() {
               </div>
               <div>
                 <Label>Kurzbezeichnung *</Label>
-                <Input value={form.kurzbezeichnung} onChange={(e) => setForm(f => ({ ...f, kurzbezeichnung: e.target.value }))} placeholder="Kurzname des Materials" />
+                <Input value={form.kurzbezeichnung} onChange={(e) => setForm(f => ({ ...f, kurzbezeichnung: e.target.value }))} placeholder="Kurzname des Artikels" />
               </div>
               <div>
                 <Label>Langbezeichnung</Label>

@@ -46,6 +46,18 @@ interface PriceAdjustDialogProps {
   /** MwSt-Satz für die Brutto-Vorschau (0 bei Reverse Charge). */
   mwstSatz: number;
   /**
+   * Global-Rabatt des Belegs (Prozent) — wirkt auf die Positions-Netto-Summe.
+   * Ohne diese Angabe zeigte der Dialog eine zu hohe Belegsumme/Brutto an.
+   */
+  rabattProzent?: number;
+  /** Global-Rabatt des Belegs als Fixbetrag € (greift nur, wenn Prozent = 0). */
+  rabattBetrag?: number;
+  /**
+   * Bereits als BRUTTO verrechnete, MwSt-freie Zeilen (Anzahlungs-Abzüge).
+   * Sie sind nicht Teil von `lines`, gehören aber in die Brutto-Vorschau.
+   */
+  exemptBrutto?: number;
+  /**
    * Übernimmt die neuen Einzelpreise: Map Positionsindex → neuer Einzelpreis.
    * InvoiceDetail rechnet damit Gesamtpreise + Summen neu und setzt isDirty.
    */
@@ -67,6 +79,9 @@ export function PriceAdjustDialog({
   onClose,
   lines,
   mwstSatz,
+  rabattProzent = 0,
+  rabattBetrag = 0,
+  exemptBrutto = 0,
   onApply,
 }: PriceAdjustDialogProps) {
   const { toast } = useToast();
@@ -146,9 +161,27 @@ export function PriceAdjustDialog({
     return r2(belegSummeAlt - aktivesResult.summeAlt + aktivesResult.summeNeu);
   }, [aktivesResult, belegSummeAlt]);
 
+  /**
+   * Global-Rabatt des Belegs — exakt die Formel aus InvoiceDetail:
+   * Prozent hat Vorrang, sonst der Fixbetrag. Ohne diese Berücksichtigung
+   * zeigte der Dialog die Belegsumme und den Bruttobetrag zu hoch an.
+   */
+  const rabattP = Number(rabattProzent) || 0;
+  const rabattB = Number(rabattBetrag) || 0;
+  const rabattAlt = r2(rabattP > 0 ? belegSummeAlt * (rabattP / 100) : rabattB);
+  const rabattNeu = r2(rabattP > 0 ? belegSummeNeu * (rabattP / 100) : rabattB);
+  const hatGlobalRabatt = rabattAlt !== 0 || rabattNeu !== 0;
+
+  /** Netto NACH Global-Rabatt — das ist die Netto-Summe des Belegs. */
+  const nettoAlt = useMemo(() => r2(belegSummeAlt - rabattAlt), [belegSummeAlt, rabattAlt]);
+  const nettoNeu = useMemo(() => r2(belegSummeNeu - rabattNeu), [belegSummeNeu, rabattNeu]);
+
   const bruttoNeu = useMemo(
-    () => r2(belegSummeNeu * (1 + (Number(mwstSatz) || 0) / 100)),
-    [belegSummeNeu, mwstSatz]
+    () =>
+      r2(
+        nettoNeu * (1 + (Number(mwstSatz) || 0) / 100) + (Number(exemptBrutto) || 0)
+      ),
+    [nettoNeu, mwstSatz, exemptBrutto]
   );
 
   // ── Auswahl ───────────────────────────────────────────────────────────────
@@ -259,7 +292,7 @@ export function PriceAdjustDialog({
       title: "Preise angepasst",
       description:
         `${aktivesResult.lines.length} Position(en) geändert — ` +
-        `Netto ${fmtDelta(diff)} € auf ${fmt(belegSummeNeu)} €.`,
+        `Netto ${fmtDelta(diff)} € auf ${fmt(nettoNeu)} € (Belegsumme).`,
     });
     onClose();
   };
@@ -280,7 +313,12 @@ export function PriceAdjustDialog({
 
   return (
     <Dialog open={open} onOpenChange={v => !v && onClose()}>
-      <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto">
+      {/* Am Handy darf der Dialog nicht breiter als der Bildschirm werden:
+          DialogContent ist ein CSS-Grid, dessen Spalte sonst auf die
+          max-content-Breite der Inhalte wächst (Kopftext, Positionszeilen) —
+          dann muss man im Dialog seitwärts scrollen und findet „Übernehmen"
+          nicht mehr. Feste Breite + min-w-0 auf den Grid-Kindern verhindert das. */}
+      <DialogContent className="w-[calc(100vw-1rem)] sm:w-full max-w-4xl max-h-[92vh] overflow-y-auto overflow-x-hidden p-4 sm:p-6 [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Percent className="w-5 h-5" />
@@ -302,7 +340,7 @@ export function PriceAdjustDialog({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-sm font-medium">Positionen auswählen</Label>
-                <Button variant="ghost" size="sm" onClick={toggleAlle} className="h-7 text-xs">
+                <Button variant="ghost" size="sm" onClick={toggleAlle} className="h-9 px-3 text-xs sm:h-7">
                   {alleAusgewaehlt ? "Keine" : "Alle"}
                 </Button>
               </div>
@@ -312,7 +350,7 @@ export function PriceAdjustDialog({
                   return (
                     <label
                       key={l.index}
-                      className={`flex items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 ${
+                      className={`flex min-h-[44px] items-center gap-3 px-3 py-2 cursor-pointer hover:bg-muted/50 sm:min-h-0 ${
                         aktiv ? "" : "opacity-55"
                       }`}
                     >
@@ -343,12 +381,12 @@ export function PriceAdjustDialog({
 
             {/* ── Modus ─────────────────────────────────────────────────── */}
             <Tabs value={modus} onValueChange={v => setModus(v as Modus)}>
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="manuell" className="gap-1.5">
+              <TabsList className="grid h-auto w-full grid-cols-2">
+                <TabsTrigger value="manuell" className="gap-1.5 py-2.5 sm:py-1.5">
                   <Percent className="w-4 h-4" />
                   Rabatt / Aufschlag
                 </TabsTrigger>
-                <TabsTrigger value="ki" className="gap-1.5">
+                <TabsTrigger value="ki" className="gap-1.5 py-2.5 sm:py-1.5">
                   <Sparkles className="w-4 h-4" />
                   KI-Anpassung
                 </TabsTrigger>
@@ -403,7 +441,7 @@ export function PriceAdjustDialog({
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="h-7 text-xs tabular-nums"
+                      className="h-9 text-xs tabular-nums sm:h-7"
                       onClick={() => setWertInput(v)}
                     >
                       {Number(v) > 0 ? "+" : ""}
@@ -607,14 +645,34 @@ export function PriceAdjustDialog({
                         € {fmt(aktivesResult.summeAlt)} → <strong>€ {fmt(aktivesResult.summeNeu)}</strong>
                       </span>
                     </div>
-                    <div className="flex justify-between font-medium">
-                      <span>Belegsumme neu (netto)</span>
+                    <div className={`flex justify-between ${hatGlobalRabatt ? "text-muted-foreground" : "font-medium"}`}>
+                      <span>Positionen netto</span>
                       <span className="tabular-nums">
                         € {fmt(belegSummeAlt)} → <strong>€ {fmt(belegSummeNeu)}</strong>
                       </span>
                     </div>
+                    {hatGlobalRabatt && (
+                      <div className="flex justify-between text-orange-600">
+                        <span>
+                          Beleg-Rabatt
+                          {(Number(rabattProzent) || 0) > 0 ? ` (${Number(rabattProzent)}%)` : ""}
+                        </span>
+                        <span className="tabular-nums">
+                          − € {fmt(rabattAlt)} → <strong>− € {fmt(rabattNeu)}</strong>
+                        </span>
+                      </div>
+                    )}
+                    <div className="flex justify-between font-medium">
+                      <span>Belegsumme neu (netto)</span>
+                      <span className="tabular-nums">
+                        € {fmt(nettoAlt)} → <strong>€ {fmt(nettoNeu)}</strong>
+                      </span>
+                    </div>
                     <div className="flex justify-between text-xs text-muted-foreground">
-                      <span>inkl. {Number(mwstSatz) || 0} % MwSt (Vorschau)</span>
+                      <span>
+                        inkl. {Number(mwstSatz) || 0} % MwSt (Vorschau)
+                        {(Number(exemptBrutto) || 0) !== 0 ? " inkl. Anzahlungs-Abzug" : ""}
+                      </span>
                       <span className="tabular-nums">€ {fmt(bruttoNeu)}</span>
                     </div>
                   </div>

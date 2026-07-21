@@ -18,18 +18,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { AlertTriangle, FileText, Home, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
-import { KBToolbar, KBButton } from "@/components/kingbill";
+import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { CustomerSelect } from "@/components/CustomerSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
   KalkulationState, KalkModule, MaterialRow, PaintModule,
   normalizeKalkulationState, newModule, newPaintModule, newMaterialRow, nextId,
   resolveBetriebsdaten, resolveLackSaetze, calcProjekt, calcPaintProjekt,
-  buildAngebotItems, globalFaktor, margeUnterSchwelle,
+  buildAngebotItems, globalFaktor, margeUnterSchwelle, margeStatus,
   LackPreisResolver, AufpreisResolver,
   AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
   fmt, fmtEuro, round2, num,
@@ -58,6 +59,16 @@ export default function KalkulationEditor() {
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [tab, setTab] = useState<TabId>("aufbau");
+  /**
+   * Optimistisches Sperren gegen Lost Updates (Handy + PC gleichzeitig offen):
+   * Der beim Laden gesehene updated_at-Stand. Jedes Update läuft mit
+   * `.eq("updated_at", stand)` — trifft es 0 Zeilen, hat inzwischen jemand
+   * anderer gespeichert; dann wird NICHT überschrieben, sondern der Autosave
+   * gestoppt und der Konflikt angezeigt.
+   */
+  const standRef = useRef<string | null>(null);
+  const [konflikt, setKonflikt] = useState(false);
+  const konfliktRef = useRef(false); konfliktRef.current = konflikt;
 
   // Vorlage-Dialog
   const [vorlageOpen, setVorlageOpen] = useState(false);
@@ -73,7 +84,7 @@ export default function KalkulationEditor() {
     (async () => {
       if (!id) return;
       const { data } = await kalkTable()
-        .select("id, name, customer_id, data").eq("id", id).maybeSingle();
+        .select("id, name, customer_id, data, updated_at").eq("id", id).maybeSingle();
       if (cancelled) return;
       if (!data) {
         toast({ variant: "destructive", title: "Nicht gefunden", description: "Kalkulation existiert nicht (mehr)." });
@@ -82,6 +93,9 @@ export default function KalkulationEditor() {
       }
       setName((data as any).name || "");
       setCustomerId((data as any).customer_id || null);
+      standRef.current = (data as any).updated_at ?? null;
+      setKonflikt(false);
+      lastSavedRef.current = "";
       // Konverter: alter iframe-localStorage-Shape ODER neuer nativer State.
       const st = normalizeKalkulationState((data as any).data);
       // Neue, leere Kalkulation: direkt mit einem Aufbau starten.
@@ -125,30 +139,65 @@ export default function KalkulationEditor() {
   // ------------------------------------------------------------ Persistenz
   const stateRef = useRef(state); stateRef.current = state;
   const nameRef = useRef(name); nameRef.current = name;
+  const customerIdRef = useRef(customerId); customerIdRef.current = customerId;
   const summeRef = useRef(0); summeRef.current = round2(projekt.totalGesamt);
   const loadedRef = useRef(loaded); loadedRef.current = loaded;
   const lastSavedRef = useRef<string>("");
 
   const persist = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id || !loadedRef.current) return;
+    // Nach einem erkannten Konflikt wird NICHTS mehr geschrieben, bis der
+    // Anwender neu geladen hat — sonst überschriebe dieser Tab doch noch die
+    // fremden Änderungen.
+    if (konfliktRef.current) {
+      if (!opts?.silent) {
+        toast({
+          variant: "destructive",
+          title: "Speichern gesperrt",
+          description: "Die Kalkulation wurde anderswo geändert — bitte die Seite neu laden.",
+        });
+      }
+      return;
+    }
     // projectName im Blob mitführen (Kompatibilität zum alten Shape; Name
     // führt weiterhin die Supabase-Spalte `name`).
     const data = { ...stateRef.current, projectName: nameRef.current };
-    const fingerprint = JSON.stringify({ data, name: nameRef.current });
+    const fingerprint = JSON.stringify({ data, name: nameRef.current, customer: customerIdRef.current });
     if (fingerprint === lastSavedRef.current) {
       if (!opts?.silent) toast({ title: "Gespeichert", description: "Kalkulation ist aktuell." });
       setDirty(false);
       return;
     }
     if (!opts?.silent) setSaving(true);
-    const { error } = await kalkTable()
-      .update({ name: nameRef.current || "Kalkulation", data, summe: summeRef.current })
+    // Optimistisches Sperren: nur schreiben, wenn der Datensatz noch auf dem
+    // Stand ist, den dieser Tab geladen/zuletzt geschrieben hat.
+    let q = kalkTable()
+      .update({
+        name: nameRef.current || "Kalkulation",
+        customer_id: customerIdRef.current,
+        data,
+        summe: summeRef.current,
+      })
       .eq("id", id);
+    if (standRef.current) q = q.eq("updated_at", standRef.current);
+    const { data: rows, error } = await q.select("updated_at");
     if (!opts?.silent) setSaving(false);
     if (error) {
       if (!opts?.silent) toast({ variant: "destructive", title: "Fehler", description: error.message });
       return;
     }
+    if (standRef.current && (!rows || (rows as unknown[]).length === 0)) {
+      // 0 Treffer trotz vorhandener Zeile = jemand anderer hat gespeichert.
+      setKonflikt(true);
+      setDirty(true);
+      toast({
+        variant: "destructive",
+        title: "Kalkulation wurde anderswo geändert",
+        description: "Es wurde nichts überschrieben. Bitte die Seite neu laden.",
+      });
+      return;
+    }
+    standRef.current = (rows as any[])?.[0]?.updated_at ?? standRef.current;
     lastSavedRef.current = fingerprint;
     setDirty(false);
     if (!opts?.silent) toast({ title: "Gespeichert", description: "Kalkulation gespeichert." });
@@ -161,7 +210,7 @@ export default function KalkulationEditor() {
     setDirty(true);
     const t = setTimeout(() => { persistRef.current({ silent: true }); }, 1200);
     return () => clearTimeout(t);
-  }, [state, name, loaded]);
+  }, [state, name, customerId, loaded]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -308,6 +357,7 @@ export default function KalkulationEditor() {
 
   const faktor = globalFaktor(state.surchargePercent, state.discontPercent);
   const margeWarnung = margeUnterSchwelle(projekt.verdienst, projekt.warnMargeProzent);
+  const status = margeStatus(projekt.verdienst, projekt.warnMargeProzent);
 
   return (
     <div className="kb-page min-h-screen pb-10">
@@ -319,49 +369,69 @@ export default function KalkulationEditor() {
             <span className="hidden text-xs text-white/85 md:block">
               {saving ? "Speichert …" : dirty ? "Ungespeicherte Änderungen" : "Gespeichert"}
             </span>
-            <KBButton icon={Save} label="Speichern" variant="green" onClick={() => persist()} disabled={saving} />
+            <KBToolbarButton icon={Save} label="Speichern" variant="green" onClick={() => persist()} disabled={saving} />
           </div>
         }
       >
-        <KBButton icon={Home} label="Hauptmenü"
-          onClick={() => { persist({ silent: true }); navigate("/"); }}
-          title="Speichert und wechselt zur Startmaske" />
-        <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
-          onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
-        <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}
-          title="Aufbauten als Positionen in ein neues Angebot übernehmen" />
+        {/* Am Handy passen diese Labels nicht in die Toolbar (sie würde über den
+            Bildschirmrand laufen) — dort steht stattdessen die Aktionsleiste
+            unter der Toolbar. */}
+        <div className="hidden flex-wrap items-center gap-2 sm:flex">
+          <KBButton icon={Home} label="Hauptmenü"
+            onClick={() => { persist({ silent: true }); navigate("/"); }}
+            title="Speichert und wechselt zur Startmaske" />
+          <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
+            onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
+          <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}
+            title="Aufbauten als Positionen in ein neues Angebot übernehmen" />
+        </div>
       </KBToolbar>
 
       <div className="mx-auto max-w-[1500px] space-y-4 px-3 py-4 sm:px-4">
+        {/* Handy-Aktionsleiste: große Flächen zum Antippen */}
+        <div className="flex gap-2 sm:hidden">
+          <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={FileText} label="Als Angebot übernehmen"
+            variant="blue" onClick={handleAngebot} />
+          <KBButton className="h-11 shrink-0 justify-center" icon={LayoutTemplate} label="Vorlage"
+            onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
+        </div>
         {/* Global-Settings-Bar */}
         <div className="kb-panel flex flex-wrap items-end gap-3 px-4 py-3">
-          <label className="block min-w-[220px] flex-1 text-xs">
+          <label className="block min-w-[200px] flex-1 text-xs">
             <span className="mb-0.5 block text-muted-foreground">Projektname</span>
-            <input className="kb-input h-9 min-h-0 px-2 py-1 text-sm font-semibold" value={name}
+            <input className="kb-input h-11 min-h-0 px-2 py-1 text-sm font-semibold sm:h-9" value={name}
               placeholder="Projektname" onChange={(e) => setName(e.target.value)} />
           </label>
-          <label className="block w-32 text-xs">
+          {/* Kunde direkt hier änderbar — sonst kann ein vergessener Kunde nur
+              durch Neuanlage der Kalkulation nachgetragen werden, und die
+              Angebots-Übernahme bliebe ohne Empfänger. */}
+          <label className="block min-w-[200px] flex-1 text-xs">
+            <span className="mb-0.5 block text-muted-foreground">Kunde</span>
+            <CustomerSelect value={customerId} onChange={(cid) => { setCustomerId(cid); setDirty(true); }}
+              className="h-11 sm:h-9" />
+          </label>
+          <label className="block w-28 text-xs sm:w-32">
             <span className="mb-0.5 block text-muted-foreground">Aufschlag %</span>
-            <select className="kb-input h-9 min-h-0 px-2 py-1 text-sm"
+            <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-9"
               value={state.surchargePercent === null ? "" : String(state.surchargePercent)}
               onChange={(e) => patchState({ surchargePercent: e.target.value === "" ? null : num(e.target.value) })}>
               <option value="">—</option>
               {AUFSCHLAG_OPTIONEN.map((p) => <option key={p} value={String(p)}>{p} %</option>)}
             </select>
           </label>
-          <label className="block w-32 text-xs">
+          <label className="block w-28 text-xs sm:w-32">
             <span className="mb-0.5 block text-muted-foreground">Skonto %</span>
-            <select className="kb-input h-9 min-h-0 px-2 py-1 text-sm"
+            <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-9"
               value={state.discontPercent === null ? "" : String(state.discontPercent)}
               onChange={(e) => patchState({ discontPercent: e.target.value === "" ? null : num(e.target.value) })}>
               <option value="">—</option>
               {SKONTO_OPTIONEN.map((p) => <option key={p} value={String(p)}>{p} %</option>)}
             </select>
           </label>
-          <label className="block w-36 text-xs">
+          <label className="block w-32 text-xs sm:w-36">
             <span className="mb-0.5 block text-muted-foreground">Mittellohn €/h</span>
-            <NumInput value={num(state.settings.businessData["Mittellohn"]) || bd.mittellohn}
-              onCommit={setMittellohn} className="h-9"
+            <NumInput min={0} value={num(state.settings.businessData["Mittellohn"]) || bd.mittellohn}
+              onCommit={setMittellohn} className="h-11 sm:h-9"
               title="Gilt für diese Kalkulation; Standard aus den Betriebsdaten (Excel: 65 €/h)" />
           </label>
           {faktor !== 1 && (
@@ -369,21 +439,43 @@ export default function KalkulationEditor() {
               Faktor {fmt(faktor)} (additiv: 1 + Aufschlag − Skonto)
             </span>
           )}
-          <span className="flex-1" />
-          <div className="pb-1 text-right">
-            <div className="text-xs text-muted-foreground">Projektsumme (netto)</div>
-            <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.totalGesamt)}</div>
-          </div>
-          <div className="pb-1 text-right">
-            <div className="text-xs text-muted-foreground">Deckungsbeitrag</div>
-            <div className={`text-lg font-bold tabular-nums ${margeWarnung ? "text-destructive" : "text-kb-green"}`}>
-              {fmtEuro(projekt.verdienst.deckungsbeitrag)}
-              {projekt.verdienst.erloes > 0 && (
-                <span className="ml-1.5 text-xs font-semibold">({fmt(projekt.verdienst.margeProzent)} %)</span>
-              )}
+          {/* Beide Summen bleiben zusammen (sonst rutscht der Deckungsbeitrag
+              beim Umbrechen allein in die nächste Zeile). */}
+          <div className="ml-auto flex flex-wrap items-end justify-end gap-x-6 gap-y-1">
+            <div className="pb-1 text-right">
+              <div className="text-xs text-muted-foreground">Projektsumme (netto)</div>
+              <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.totalGesamt)}</div>
+            </div>
+            <div className="pb-1 text-right">
+              <div className="text-xs text-muted-foreground">Deckungsbeitrag</div>
+              <div className={`text-lg font-bold tabular-nums ${margeWarnung ? "text-destructive" : "text-kb-green"}`}>
+                {fmtEuro(projekt.verdienst.deckungsbeitrag)}
+                {projekt.verdienst.erloes > 0 && (
+                  <span className="ml-1.5 text-xs font-semibold">({fmt(projekt.verdienst.margeProzent)} %)</span>
+                )}
+              </div>
             </div>
           </div>
         </div>
+
+        {/* Konflikt-Hinweis: zwei Geräte/Tabs haben dieselbe Kalkulation offen.
+            Der Autosave ist gestoppt, damit nichts überschrieben wird. */}
+        {konflikt && (
+          <div
+            role="alert"
+            className="flex flex-wrap items-center gap-2.5 rounded border-2 border-destructive bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          >
+            <AlertTriangle className="h-5 w-5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-bold">Kalkulation wurde anderswo geändert — bitte neu laden</div>
+              <div className="mt-0.5 text-xs">
+                Jemand hat diese Kalkulation zwischenzeitlich gespeichert (anderes Gerät oder zweiter Tab).
+                Automatisches Speichern ist gestoppt; es wurde nichts überschrieben.
+              </div>
+            </div>
+            <Button variant="destructive" size="sm" onClick={() => window.location.reload()}>Neu laden</Button>
+          </div>
+        )}
 
         {/* Margen-Warnung — der Chef soll sie nicht übersehen können. */}
         {margeWarnung && (
@@ -393,11 +485,20 @@ export default function KalkulationEditor() {
           >
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
+              {/* Kosten ohne Erlös sind keine "zu kleine Marge", sondern eine
+                  reine Verlustkalkulation — sie braucht einen eigenen Text
+                  (früher blieb dieser Fall komplett unbeanstandet). */}
               <div className="font-bold">
-                ⚠ Marge {fmt(projekt.verdienst.margeProzent)} % liegt unter der Warnschwelle von {fmt(projekt.warnMargeProzent)} %
+                {status === "keinErloes"
+                  ? `⚠ Verlustkalkulation: ${fmtEuro(projekt.verdienst.selbstkosten)} Kosten, aber 0,00 € Erlös`
+                  : status === "verlust"
+                    ? `⚠ Verlust: Deckungsbeitrag ${fmtEuro(projekt.verdienst.deckungsbeitrag)} — die Kosten übersteigen den Erlös`
+                    : `⚠ Marge ${fmt(projekt.verdienst.margeProzent)} % liegt unter der Warnschwelle von ${fmt(projekt.warnMargeProzent)} %`}
               </div>
               <div className="mt-0.5 text-xs">
-                Deckungsbeitrag {fmtEuro(projekt.verdienst.deckungsbeitrag)} bei {fmtEuro(projekt.verdienst.erloes)} Erlös
+                {status === "keinErloes"
+                  ? "Es sind keine Verkaufspreise hinterlegt (Material-VK bzw. Arbeitszeit). So wandert die Position mit 0 € ins Angebot."
+                  : <>Deckungsbeitrag {fmtEuro(projekt.verdienst.deckungsbeitrag)} bei {fmtEuro(projekt.verdienst.erloes)} Erlös</>}
                 {projekt.verdienst.unsicher && " (enthält geschätzte Material-EK)"}
                 {" — "}Details im Panel „Verdienst (Deckungsbeitrag)“.
               </div>
@@ -452,7 +553,8 @@ export default function KalkulationEditor() {
               />
             ))}
 
-            <KBButton icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
+            <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
+              icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
               onClick={addModule} disabled={state.modules.length >= MAX_MODULE} />
           </div>
         )}

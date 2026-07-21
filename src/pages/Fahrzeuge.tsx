@@ -20,8 +20,9 @@ import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { matchesSearch } from "@/lib/searchUtils";
+import { parseDecimal } from "@/lib/num";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
@@ -70,6 +71,8 @@ interface VehicleUsage {
   mitarbeiter: string;
   stunden: number | null;
   km: number | null;
+  /** Zählerstand am Ende der Fahrt (nur bei Modus „km Start/Ende" erfasst). */
+  kmStand: number | null;
 }
 
 /** Kennzahlen des laufenden Jahres je Fahrzeug (Grid-Spalten rechts). */
@@ -266,17 +269,24 @@ export default function Fahrzeuge() {
       return;
     }
 
-    // Mitarbeitername über employees.user_id auflösen (time_entries kennt nur user_id).
+    // Mitarbeitername über employees.user_id auflösen (time_entries kennt nur
+    // user_id). Nicht jeder Login hat einen employees-Datensatz — dann greift
+    // der Fallback auf profiles, sonst stünde in der Spalte nur „–".
     const rows = (data as any[]) || [];
     const userIds = Array.from(new Set(rows.map(r => r.time_entries?.user_id).filter(Boolean)));
     const nameMap: Record<string, string> = {};
     if (userIds.length > 0) {
-      const { data: emps } = await supabase
-        .from("employees")
-        .select("user_id, vorname, nachname")
-        .in("user_id", userIds);
+      const [{ data: emps }, { data: profs }] = await Promise.all([
+        supabase.from("employees").select("user_id, vorname, nachname").in("user_id", userIds),
+        (supabase.from("profiles" as never) as any).select("id, vorname, nachname").in("id", userIds),
+      ]);
+      ((profs as any[]) || []).forEach((p: any) => {
+        const n = `${p.vorname || ""} ${p.nachname || ""}`.trim();
+        if (p.id && n) nameMap[p.id] = n;
+      });
       ((emps as any[]) || []).forEach((e: any) => {
-        if (e.user_id) nameMap[e.user_id] = `${e.vorname || ""} ${e.nachname || ""}`.trim();
+        const n = `${e.vorname || ""} ${e.nachname || ""}`.trim();
+        if (e.user_id && n) nameMap[e.user_id] = n;
       });
     }
 
@@ -289,6 +299,7 @@ export default function Fahrzeuge() {
         mitarbeiter: nameMap[r.time_entries?.user_id] || "–",
         stunden: r.stunden === null || r.stunden === undefined ? null : Number(r.stunden),
         km: kmOfUsage(r) || null,
+        kmStand: Number.isFinite(Number(r.km_ende)) ? Number(r.km_ende) : null,
       }))
       .sort((a, b) => (b.datum || "").localeCompare(a.datum || ""))
       .slice(0, 50);
@@ -296,6 +307,12 @@ export default function Fahrzeuge() {
     setUsages(mapped);
     setUsagesLoading(false);
   };
+
+  /** Höchster erfasster Zählerstand = aktueller km-Stand des Fahrzeugs. */
+  const aktuellerKmStand = usages.reduce<number | null>(
+    (max, u) => (u.kmStand != null && (max === null || u.kmStand > max) ? u.kmStand : max),
+    null
+  );
 
   // ── Filterung ──
   const filtered = vehicles.filter(v => {
@@ -307,6 +324,12 @@ export default function Fahrzeuge() {
   });
 
   const selectedRow = vehicles.find(v => v.id === selectedId) || null;
+
+  // Summen über die gefilterte Liste — der Chef will die Jahres-Gesamtkosten
+  // des Fuhrparks sehen, ohne selbst zusammenzuzählen.
+  const summeStunden = filtered.reduce((s, v) => s + (stats[v.id]?.stunden || 0), 0);
+  const summeKm = filtered.reduce((s, v) => s + (stats[v.id]?.km || 0), 0);
+  const summeKosten = filtered.reduce((s, v) => s + (stats[v.id]?.kosten || 0), 0);
 
   // ── Editor öffnen ──
   const openNew = () => {
@@ -396,26 +419,67 @@ export default function Fahrzeuge() {
   // ── Kosten anlegen / löschen ──
   const addCost = async () => {
     if (!editId) return;
-    const betrag = parseFloat(String(newCost.betrag).replace(",", "."));
-    if (!Number.isFinite(betrag) || betrag === 0) {
-      toast({ variant: "destructive", title: "Betrag fehlt", description: "Bitte einen gültigen Betrag eingeben." });
+    // parseDecimal versteht „249,90" UND „1.249,90" — parseFloat machte aus
+    // „1.249,90" die Zahl 1,25.
+    const betrag = parseDecimal(newCost.betrag);
+    if (betrag === null) {
+      toast({ variant: "destructive", title: "Betrag fehlt", description: "Bitte einen gültigen Betrag eingeben (z. B. 249,90)." });
+      return;
+    }
+    // Die DB lehnt seit Migration 20260721090000 Beträge <= 0 ab
+    // (CHECK betrag > 0). Vorher wurde nur `betrag === 0` geprüft, ein
+    // negativer Betrag lief in den rohen Postgres-Fehler.
+    if (betrag <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Betrag unplausibel",
+        description: "Fahrzeugkosten müssen größer als 0 sein. Für eine Gutschrift bitte die ursprüngliche Kostenzeile löschen.",
+        duration: 7000,
+      });
       return;
     }
     if (!newCost.datum) {
       toast({ variant: "destructive", title: "Datum fehlt", description: "Bitte ein Datum wählen." });
       return;
     }
+    // Datum plausibilisieren — ein Tippfehler im Jahr („2206") verfälscht
+    // sonst dauerhaft die Jahres-Auswertung.
+    const datumWert = new Date(`${newCost.datum}T00:00:00`);
+    if (Number.isNaN(datumWert.getTime())) {
+      toast({ variant: "destructive", title: "Datum ungültig", description: "Bitte ein gültiges Datum wählen." });
+      return;
+    }
+    const maxDatum = new Date();
+    maxDatum.setFullYear(maxDatum.getFullYear() + 1);
+    const minDatum = new Date("2000-01-01T00:00:00");
+    if (datumWert > maxDatum || datumWert < minDatum) {
+      toast({
+        variant: "destructive",
+        title: "Datum unplausibel",
+        description: `Das Datum ${format(datumWert, "dd.MM.yyyy", { locale: de })} liegt zu weit in der Zukunft bzw. Vergangenheit. Bitte prüfen (erlaubt: 01.01.2000 bis ${format(maxDatum, "dd.MM.yyyy", { locale: de })}).`,
+        duration: 8000,
+      });
+      return;
+    }
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await (supabase.from("vehicle_costs" as never) as any).insert({
       vehicle_id: editId,
       datum: newCost.datum,
-      betrag,
+      betrag: Math.round(betrag * 100) / 100,
       kategorie: newCost.kategorie,
       beschreibung: newCost.beschreibung.trim() || null,
       created_by: user?.id || null,
     });
     if (error) {
-      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      // DB-CHECK in Klartext übersetzen statt Postgres-Meldung durchreichen.
+      const raw = String(error.message || "");
+      toast({
+        variant: "destructive",
+        title: "Fehler",
+        description: /betrag/i.test(raw) && /check constraint/i.test(raw)
+          ? "Der Betrag muss größer als 0 sein."
+          : raw,
+      });
       return;
     }
     toast({ title: "Kosten gebucht", description: `${kategorieLabel(newCost.kategorie)}: € ${eur(betrag)}` });
@@ -435,6 +499,17 @@ export default function Fahrzeuge() {
   };
 
   const costSum = costs.reduce((s, c) => s + (Number(c.betrag) || 0), 0);
+  // Die Grid-Spalte „Kosten (Jahr)" zeigt nur das laufende Jahr — im Dialog
+  // stehen alle Jahre. Beides getrennt ausweisen, sonst wundert sich der Chef.
+  const costSumJahr = costs
+    .filter(c => (c.datum || "").slice(0, 4) === String(jahr))
+    .reduce((s, c) => s + (Number(c.betrag) || 0), 0);
+  const costsNachKategorie = KATEGORIE_OPTIONS
+    .map(o => ({
+      label: o.label,
+      betrag: costs.filter(c => c.kategorie === o.value).reduce((s, c) => s + (Number(c.betrag) || 0), 0),
+    }))
+    .filter(k => k.betrag > 0);
 
   // ── Editor-Dialog (KingBill-Look: Toolbar-Kopf + grünes „Speichern & Schließen") ──
   const editorDialog = (
@@ -560,16 +635,28 @@ export default function Fahrzeuge() {
                     </div>
                     <div className="sm:col-span-2">
                       <label className="block text-xs font-semibold mb-1" htmlFor="k-betrag">Betrag (€)</label>
+                      {/* type="text": bei type="number" verwirft der Browser das
+                          Komma — „249,90" wäre nicht eintippbar. */}
                       <input
                         id="k-betrag"
-                        type="number"
-                        step="0.01"
+                        type="text"
                         inputMode="decimal"
+                        data-testid="k-betrag"
                         className="kb-input w-full"
                         value={newCost.betrag}
-                        onChange={(e) => setNewCost(c => ({ ...c, betrag: e.target.value }))}
+                        onChange={(e) => {
+                          const v = e.target.value.replace(/[^0-9.,-]/g, "");
+                          setNewCost(c => ({ ...c, betrag: v }));
+                        }}
+                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCost(); } }}
                         placeholder="0,00"
                       />
+                      {/* Sofort-Hinweis: die DB lässt nur Beträge > 0 zu. */}
+                      {newCost.betrag.trim() !== "" && (parseDecimal(newCost.betrag) ?? 0) <= 0 && (
+                        <p className="mt-0.5 text-[11px] font-medium text-destructive" data-testid="k-betrag-warnung">
+                          Betrag muss größer als 0 sein.
+                        </p>
+                      )}
                     </div>
                     <div className="sm:col-span-3">
                       <label className="block text-xs font-semibold mb-1" htmlFor="k-text">Beschreibung</label>
@@ -632,16 +719,71 @@ export default function Fahrzeuge() {
                     </Table>
                   </div>
 
-                  <div className="flex justify-end border-t border-border pt-2 text-sm font-bold">
-                    Summe: € {eur(costSum)}
+                  <div className="border-t border-border pt-2 space-y-1">
+                    {costsNachKategorie.length > 0 && (
+                      <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        {costsNachKategorie.map(k => (
+                          <span key={k.label}>{k.label}: € {eur(k.betrag)}</span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex flex-wrap items-center justify-end gap-x-4 text-sm font-bold">
+                      <span className="text-xs font-normal text-muted-foreground">davon {jahr}: € {eur(costSumJahr)}</span>
+                      <span>Summe: € {eur(costSum)}</span>
+                    </div>
                   </div>
                 </div>
               )}
 
               {/* ── Tab „Einsätze": read-only ── */}
               {tab === "einsaetze" && (
-                <div className="pt-3">
-                  <div className="overflow-x-auto">
+                <div className="pt-3 space-y-3">
+                  {/* Kopfzeile: aktueller Zählerstand + Jahresleistung auf einen Blick */}
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    <div className="kb-panel p-2">
+                      <p className="text-[11px] text-muted-foreground">Aktueller km-Stand</p>
+                      <p className="text-base font-bold">
+                        {aktuellerKmStand !== null ? `${aktuellerKmStand.toLocaleString("de-AT")} km` : "–"}
+                      </p>
+                    </div>
+                    <div className="kb-panel p-2">
+                      <p className="text-[11px] text-muted-foreground">Gefahren ({jahr})</p>
+                      <p className="text-base font-bold">
+                        {(stats[editId || ""]?.km || 0).toLocaleString("de-AT")} km
+                      </p>
+                    </div>
+                    <div className="kb-panel p-2 col-span-2 sm:col-span-1">
+                      <p className="text-[11px] text-muted-foreground">Stunden ({jahr})</p>
+                      <p className="text-base font-bold">{(stats[editId || ""]?.stunden || 0).toFixed(2)} h</p>
+                    </div>
+                  </div>
+
+                  {/* Mobil: Karten — am Handy ist die 5-Spalten-Tabelle unlesbar */}
+                  <div className="space-y-2 sm:hidden">
+                    {usagesLoading ? (
+                      <p className="text-center text-muted-foreground py-6">Lädt…</p>
+                    ) : usages.length === 0 ? (
+                      <p className="text-center text-muted-foreground py-6">Keine Einsätze erfasst.</p>
+                    ) : (
+                      usages.map(u => (
+                        <div key={u.id} className="rounded-md border border-border p-2 text-sm">
+                          <div className="flex items-center justify-between font-medium">
+                            <span>{u.datum ? format(parseISO(u.datum), "dd.MM.yyyy", { locale: de }) : "–"}</span>
+                            <span>{u.stunden !== null ? `${u.stunden.toFixed(2)} h` : "–"}</span>
+                          </div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span className="truncate">{u.mitarbeiter}</span>
+                            <span>
+                              {u.km ? `${u.km.toLocaleString("de-AT")} km` : "– km"}
+                              {u.kmStand != null ? ` · Stand ${u.kmStand.toLocaleString("de-AT")}` : ""}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="hidden sm:block overflow-x-auto">
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -649,13 +791,14 @@ export default function Fahrzeuge() {
                           <TableHead>Mitarbeiter</TableHead>
                           <TableHead className="text-right whitespace-nowrap">Stunden</TableHead>
                           <TableHead className="text-right whitespace-nowrap">km</TableHead>
+                          <TableHead className="text-right whitespace-nowrap">km-Stand</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {usagesLoading ? (
-                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">Lädt…</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Lädt…</TableCell></TableRow>
                         ) : usages.length === 0 ? (
-                          <TableRow><TableCell colSpan={4} className="text-center text-muted-foreground py-6">Keine Einsätze erfasst.</TableCell></TableRow>
+                          <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground py-6">Keine Einsätze erfasst.</TableCell></TableRow>
                         ) : (
                           usages.map(u => (
                             <TableRow key={u.id}>
@@ -665,14 +808,18 @@ export default function Fahrzeuge() {
                               <TableCell>{u.mitarbeiter}</TableCell>
                               <TableCell className="text-right">{u.stunden !== null ? u.stunden.toFixed(2) : "–"}</TableCell>
                               <TableCell className="text-right">{u.km ? u.km.toLocaleString("de-AT") : "–"}</TableCell>
+                              <TableCell className="text-right text-muted-foreground">
+                                {u.kmStand != null ? u.kmStand.toLocaleString("de-AT") : "–"}
+                              </TableCell>
                             </TableRow>
                           ))
                         )}
                       </TableBody>
                     </Table>
                   </div>
-                  <p className="text-[11px] text-muted-foreground pt-2">
-                    Letzte 50 Einsätze aus der Zeiterfassung (nur Anzeige).
+                  <p className="text-[11px] text-muted-foreground">
+                    Letzte 50 Einsätze aus der Zeiterfassung (nur Anzeige). Der km-Stand
+                    kommt aus den Buchungen mit „km Start / Ende".
                   </p>
                 </div>
               )}
@@ -726,7 +873,7 @@ export default function Fahrzeuge() {
           <aside className="kb-panel w-full lg:w-64 shrink-0 p-3 print:hidden lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:overflow-y-auto">
             <button
               type="button"
-              className="kb-btn w-full justify-between lg:hidden"
+              className="kb-btn min-h-[44px] w-full justify-between lg:hidden"
               onClick={() => setFiltersOpen(o => !o)}
               aria-expanded={filtersOpen}
             >
@@ -806,7 +953,64 @@ export default function Fahrzeuge() {
                   </button>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
+                <>
+                {/* ── Mobil: Karten (die 8-Spalten-Tabelle ist am Handy unbrauchbar) ── */}
+                <div className="space-y-2 sm:hidden print:hidden">
+                  {filtered.map(v => {
+                    const isSelected = selectedId === v.id;
+                    const s = stats[v.id] || { stunden: 0, km: 0, kosten: 0 };
+                    const fahrer = standardFahrer[v.id] || [];
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        aria-pressed={isSelected}
+                        onClick={() => setSelectedId(v.id)}
+                        onDoubleClick={() => openEdit(v)}
+                        className={`w-full min-h-[44px] rounded-md border p-3 text-left transition-colors ${
+                          isSelected ? "border-kb-blue bg-kb-blue/15" : "border-border bg-card"
+                        } ${!v.aktiv ? "opacity-60" : ""}`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${v.aktiv ? "bg-green-500" : "bg-gray-400"}`} />
+                              <span className="font-semibold truncate">{v.bezeichnung}</span>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              {v.kennzeichen ? <span className="font-mono">{v.kennzeichen}</span> : "ohne Kennzeichen"} · {typLabel(v.typ)}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-sm font-bold whitespace-nowrap">
+                            {s.kosten > 0 ? `€ ${eur(s.kosten)}` : "€ 0,00"}
+                          </span>
+                        </div>
+                        <div className="mt-2 grid grid-cols-3 gap-1 text-xs">
+                          <span className="text-muted-foreground">Std. {jahr}: <b className="text-foreground">{s.stunden > 0 ? s.stunden.toFixed(2) : "–"}</b></span>
+                          <span className="text-muted-foreground">km {jahr}: <b className="text-foreground">{s.km > 0 ? s.km.toLocaleString("de-AT") : "–"}</b></span>
+                          <span className="text-muted-foreground truncate">Fahrer: <b className="text-foreground">{fahrer.length > 0 ? fahrer.join(", ") : "–"}</b></span>
+                        </div>
+                        {isSelected && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => { e.stopPropagation(); openEdit(v); }}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); openEdit(v); } }}
+                            className="mt-2 flex min-h-[44px] items-center justify-center rounded-md border border-kb-blue-dark bg-white text-sm font-semibold text-kb-blue-dark"
+                          >
+                            <Pencil className="mr-2 h-4 w-4" /> Öffnen / bearbeiten
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                  <div className="rounded-md border border-border bg-muted/40 p-3 text-sm font-bold flex items-center justify-between">
+                    <span>Summe {jahr}</span>
+                    <span>€ {eur(summeKosten)}</span>
+                  </div>
+                </div>
+
+                <div className="hidden sm:block print:block overflow-x-auto">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -850,8 +1054,17 @@ export default function Fahrzeuge() {
                         );
                       })}
                     </TableBody>
+                    <TableFooter>
+                      <TableRow>
+                        <TableCell colSpan={5} className="text-right font-bold">Summe {jahr}:</TableCell>
+                        <TableCell className="text-right font-bold whitespace-nowrap">{summeStunden > 0 ? summeStunden.toFixed(2) : "–"}</TableCell>
+                        <TableCell className="text-right font-bold whitespace-nowrap">{summeKm > 0 ? summeKm.toLocaleString("de-AT") : "–"}</TableCell>
+                        <TableCell className="text-right font-bold whitespace-nowrap">€ {eur(summeKosten)}</TableCell>
+                      </TableRow>
+                    </TableFooter>
                   </Table>
                 </div>
+                </>
               )}
             </div>
           </section>
