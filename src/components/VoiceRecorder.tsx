@@ -6,11 +6,64 @@ import { Badge } from "@/components/ui/badge";
 import { Mic, MicOff, Loader2, Check, X, RotateCcw, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useEinheiten } from "@/hooks/useEinheiten";
+import { parseDecimal, formatForInput } from "@/lib/num";
 
 interface ParsedItem {
   material: string;
   menge: number;
   einheit: string;
+  /** Roh-Eingabe des Mengenfelds — "2,5" muss tippbar bleiben. */
+  mengeInput?: string;
+}
+
+/**
+ * Mikrofon anfordern. Deckt die zwei Fälle ab, in denen der rote Knopf vorher
+ * einfach tot war: kein HTTPS (navigator.mediaDevices fehlt) und eine
+ * Freigabe-Abfrage, die nie beantwortet wird (Promise bleibt offen).
+ */
+async function requestMicrophone(timeoutMs = 20000): Promise<MediaStream> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    const err = new Error(
+      window.isSecureContext === false
+        ? "Sprachaufnahme braucht eine sichere Verbindung (https). Bitte die App über https:// öffnen."
+        : "Dieser Browser unterstützt keine Sprachaufnahme."
+    );
+    err.name = "NotSupportedError";
+    throw err;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      navigator.mediaDevices.getUserMedia({ audio: true }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(
+            "Keine Antwort vom Mikrofon. Bitte die Mikrofon-Freigabe im Browser bestätigen und noch einmal versuchen."
+          );
+          err.name = "TimeoutError";
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+function mikrofonFehlerText(err: any): string {
+  switch (err?.name) {
+    case "NotAllowedError":
+    case "PermissionDeniedError":
+      return "Mikrofon-Zugriff wurde blockiert. Bitte in den Browser-Einstellungen für diese Seite erlauben.";
+    case "NotFoundError":
+    case "DevicesNotFoundError":
+      return "Kein Mikrofon gefunden. Bitte die Positionen von Hand erfassen.";
+    case "NotSupportedError":
+    case "TimeoutError":
+      return err.message;
+    default:
+      return `Mikrofon konnte nicht gestartet werden: ${err?.message || "unbekannter Fehler"}`;
+  }
 }
 
 interface ExistingItem {
@@ -27,7 +80,7 @@ interface VoiceRecorderProps {
   onCancel: () => void;
 }
 
-type RecordingState = "idle" | "recording" | "processing" | "result" | "error";
+type RecordingState = "idle" | "requesting" | "recording" | "processing" | "result" | "error";
 
 export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceRecorderProps) {
   const einheiten = useEinheiten();
@@ -39,9 +92,21 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
   const chunksRef = useRef<Blob[]>([]);
 
   const startRecording = async () => {
+    setState("requesting"); // sofort sichtbares Feedback beim Klick
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: "audio/webm;codecs=opus" });
+      const stream = await requestMicrophone();
+      // Nicht jedes Gerät kann webm/opus (iOS/Safari!) — sonst warf der
+      // Konstruktor und der Knopf blieb ohne Erklärung stehen.
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+        ? "audio/webm;codecs=opus"
+        : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : MediaRecorder.isTypeSupported("audio/mp4")
+        ? "audio/mp4"
+        : "";
+      const mediaRecorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       chunksRef.current = [];
 
@@ -51,15 +116,20 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
 
       mediaRecorder.onstop = async () => {
         stream.getTracks().forEach(t => t.stop());
-        const blob = new Blob(chunksRef.current, { type: "audio/webm" });
+        const blob = new Blob(chunksRef.current, { type: mimeType || "audio/webm" });
+        if (blob.size < 1000) {
+          setErrorMsg("Aufnahme war zu kurz — bitte mindestens 2 Sekunden sprechen.");
+          setState("error");
+          return;
+        }
         await processAudio(blob);
       };
 
       mediaRecorder.start();
       setState("recording");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Microphone error:", err);
-      setErrorMsg("Mikrofon konnte nicht gestartet werden. Bitte Berechtigung erteilen.");
+      setErrorMsg(mikrofonFehlerText(err));
       setState("error");
     }
   };
@@ -99,7 +169,11 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
       }
 
       setTranscript(data.transcript || "");
-      setItems(data.items || []);
+      setItems(((data.items || []) as ParsedItem[]).map(it => ({
+        ...it,
+        menge: Number(it.menge) || 0,
+        mengeInput: formatForInput(Number(it.menge) || 0),
+      })));
       setState(data.items?.length > 0 ? "result" : "error");
       if (!data.items?.length) {
         setErrorMsg("Keine Materialien erkannt. Bitte nochmal versuchen.");
@@ -143,9 +217,9 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
       </div>
 
       {/* Info - always show hint and positions during idle/recording/processing */}
-      {(state === "idle" || state === "recording" || state === "processing") && (
+      {(state === "idle" || state === "requesting" || state === "recording" || state === "processing") && (
         <div className="space-y-2">
-          {(state === "idle" || state === "recording") && (
+          {(state === "idle" || state === "requesting" || state === "recording") && (
             <div className="text-xs text-muted-foreground bg-muted/50 rounded p-3">
               {typ === "entnahme" ? (
                 <>Sag z.B.: <strong>"Position 1, 2 Stück"</strong> oder <strong>"40 Quadratmeter Fliesen 60x60 mitgenommen"</strong></>
@@ -174,24 +248,32 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
       )}
 
       {/* Recording Button */}
-      {(state === "idle" || state === "recording") && (
+      {(state === "idle" || state === "requesting" || state === "recording") && (
         <div className="flex justify-center py-4">
-          {state === "idle" ? (
-            <button
-              onClick={startRecording}
-              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl active:scale-95"
-            >
-              <Mic className="h-8 w-8" />
-            </button>
-          ) : (
+          {state === "recording" ? (
             <button
               onClick={stopRecording}
+              aria-label="Aufnahme stoppen"
               className="w-20 h-20 rounded-full bg-red-600 text-white flex items-center justify-center animate-pulse shadow-lg"
             >
               <MicOff className="h-8 w-8" />
             </button>
+          ) : (
+            <button
+              onClick={startRecording}
+              disabled={state === "requesting"}
+              aria-label="Aufnahme starten"
+              className="w-20 h-20 rounded-full bg-red-500 hover:bg-red-600 disabled:opacity-70 text-white flex items-center justify-center transition-all shadow-lg hover:shadow-xl active:scale-95"
+            >
+              {state === "requesting"
+                ? <Loader2 className="h-8 w-8 animate-spin" />
+                : <Mic className="h-8 w-8" />}
+            </button>
           )}
         </div>
+      )}
+      {state === "requesting" && (
+        <p className="text-center text-sm text-muted-foreground">Warte auf Mikrofon-Freigabe...</p>
       )}
       {state === "recording" && (
         <p className="text-center text-sm text-red-600 font-medium">Aufnahme läuft... Drücke zum Stoppen</p>
@@ -252,16 +334,27 @@ export function VoiceRecorder({ typ, existingItems, onAccept, onCancel }: VoiceR
                 </div>
                 <div className="flex gap-2 items-center">
                   <Input
-                    type="number"
-                    value={item.menge}
-                    onChange={(e) => updateItem(idx, "menge", Number(e.target.value))}
-                    className="h-8 text-sm flex-1"
-                    min={0} step={0.1}
+                    type="text"
+                    inputMode="decimal"
+                    value={item.mengeInput ?? formatForInput(item.menge)}
+                    onChange={(e) => setItems(prev => prev.map((it, i) => i === idx
+                      ? { ...it, mengeInput: e.target.value, menge: parseDecimal(e.target.value) ?? 0 }
+                      : it))}
+                    onBlur={() => setItems(prev => prev.map((it, i) => i === idx
+                      ? { ...it, mengeInput: formatForInput(it.menge) }
+                      : it))}
+                    className="h-11 sm:h-9 text-sm flex-1"
                     placeholder="Menge"
+                    aria-label="Menge"
                   />
                   <Select value={item.einheit} onValueChange={(v) => updateItem(idx, "einheit", v)}>
-                    <SelectTrigger className="w-24 h-8 text-sm"><SelectValue /></SelectTrigger>
+                    <SelectTrigger className="w-24 h-11 sm:h-9 text-sm"><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      {/* Die KI liefert auch Einheiten, die nicht im Stamm
+                          stehen ("Packungen") — sonst bliebe das Feld leer. */}
+                      {item.einheit && !einheiten.includes(item.einheit) && (
+                        <SelectItem value={item.einheit}>{item.einheit}</SelectItem>
+                      )}
                       {einheiten.map(e => (
                         <SelectItem key={e} value={e}>{e}</SelectItem>
                       ))}

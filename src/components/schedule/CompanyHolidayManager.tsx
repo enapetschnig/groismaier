@@ -18,9 +18,11 @@ interface Props {
   holidays: CompanyHoliday[];
   onUpdate: () => void;
   userId: string;
+  /** Eigener Auslöser (z. B. KBToolbarButton). Ohne Angabe der Default-Button. */
+  trigger?: React.ReactNode;
 }
 
-export function CompanyHolidayManager({ holidays, onUpdate, userId }: Props) {
+export function CompanyHolidayManager({ holidays, onUpdate, userId, trigger }: Props) {
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [newDate, setNewDate] = useState("");
@@ -89,10 +91,12 @@ export function CompanyHolidayManager({ holidays, onUpdate, userId }: Props) {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm">
-          <CalendarOff className="h-4 w-4 mr-2" />
-          Betriebsurlaub
-        </Button>
+        {trigger ?? (
+          <Button variant="outline" size="sm">
+            <CalendarOff className="h-4 w-4 mr-2" />
+            Betriebsurlaub
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
@@ -126,7 +130,7 @@ export function CompanyHolidayManager({ holidays, onUpdate, userId }: Props) {
                 placeholder="Bezeichnung"
                 className="flex-1"
               />
-              <Button size="sm" onClick={handleAdd} disabled={!newDate}>
+              <Button size="sm" className="min-h-[44px] min-w-[44px]" onClick={handleAdd} disabled={!newDate} aria-label="Betriebsurlaub hinzufügen">
                 <Plus className="h-4 w-4" />
               </Button>
             </div>
@@ -153,7 +157,8 @@ export function CompanyHolidayManager({ holidays, onUpdate, userId }: Props) {
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7 text-destructive"
+                    className="h-11 w-11 shrink-0 text-destructive sm:h-8 sm:w-8"
+                    aria-label={`${format(parseISO(h.datum), "dd.MM.yyyy")} löschen`}
                     onClick={() => handleDelete(h.id)}
                   >
                     <Trash2 className="h-3.5 w-3.5" />

@@ -8,6 +8,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useNavigate } from "react-router-dom";
 import { Zap, Package, Minus, Plus } from "lucide-react";
 import { format } from "date-fns";
+import { parseDecimal, formatForInput } from "@/lib/num";
 import {
   Dialog,
   DialogContent,
@@ -16,6 +17,20 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { CustomerSelect, type CustomerData } from "@/components/CustomerSelect";
+
+/**
+ * Geldbetrag im österreichischen Format: 4.303,50 (statt 4303.50).
+ * Gleiche Schreibweise wie im Beleg-Editor (Punkt als Tausendertrenner) —
+ * toLocaleString("de-AT") würde ein schmales Leerzeichen setzen.
+ */
+const eur = (n: number): string => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "0,00";
+  const teile = Math.abs(v).toFixed(2).split(".");
+  teile[0] = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return (v < 0 ? "-" : "") + teile.join(",");
+};
+
 
 interface OfferPackage {
   id: string;
@@ -37,6 +52,8 @@ interface QuickItem {
   einheit: string;
   einzelpreis: number;
   menge: number;
+  /** Roh-Eingabe des Mengenfelds — "2,5" muss tippbar bleiben. */
+  mengeInput: string;
 }
 
 interface QuickOfferDialogProps {
@@ -83,19 +100,34 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
       .order("sort_order");
     
     if (data) {
-      setQuickItems(data.map((item: any) => ({
-        beschreibung: item.beschreibung,
-        einheit: item.einheit || "Stk.",
-        einzelpreis: Number(item.einzelpreis) || 0,
-        menge: Number(item.default_menge) || 1,
-      })));
+      setQuickItems(data.map((item: any) => {
+        const menge = Number(item.default_menge) || 1;
+        return {
+          beschreibung: item.beschreibung,
+          einheit: item.einheit || "Stk.",
+          einzelpreis: Number(item.einzelpreis) || 0,
+          menge,
+          mengeInput: formatForInput(menge),
+        };
+      }));
     }
     setStep("configure");
   };
 
   const updateItemMenge = (index: number, menge: number) => {
-    setQuickItems(prev => prev.map((item, i) => 
-      i === index ? { ...item, menge: Math.max(0, menge) } : item
+    setQuickItems(prev => prev.map((item, i) => {
+      if (i !== index) return item;
+      const neu = Math.max(0, menge);
+      return { ...item, menge: neu, mengeInput: formatForInput(neu) };
+    }));
+  };
+
+  /** Tippen im Mengenfeld: Roh-Text behalten, Zahl über parseDecimal. */
+  const typeItemMenge = (index: number, raw: string) => {
+    setQuickItems(prev => prev.map((item, i) =>
+      i === index
+        ? { ...item, mengeInput: raw, menge: Math.max(0, parseDecimal(raw) ?? 0) }
+        : item
     ));
   };
 
@@ -197,7 +229,7 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
       const { error: itemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
       if (itemsError) throw itemsError;
 
-      toast({ title: "Angebot erstellt!", description: `${nummer} – € ${brutto.toFixed(2)} brutto` });
+      toast({ title: "Angebot erstellt!", description: `${nummer} – € ${eur(brutto)} brutto` });
       onOpenChange(false);
       navigate(`/invoices/${newInvoice.id}`);
     } catch (err: any) {
@@ -273,39 +305,42 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
               </Label>
               <div className="space-y-2">
                 {quickItems.map((item, idx) => (
-                  <div key={idx} className="flex items-center gap-2 p-3 rounded-lg border bg-card">
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-medium truncate">{item.beschreibung}</div>
-                      <div className="text-xs text-muted-foreground">{item.einheit} × € {item.einzelpreis.toFixed(2)}</div>
+                  <div key={idx} className="flex flex-wrap items-center gap-2 p-3 rounded-lg border bg-card">
+                    <div className="flex-1 min-w-[9rem]">
+                      <div className="text-sm font-medium">{item.beschreibung}</div>
+                      <div className="text-xs text-muted-foreground">{item.einheit} × € {eur(item.einzelpreis)}</div>
                     </div>
                     <div className="flex items-center gap-1">
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8"
+                        className="h-11 w-11 sm:h-9 sm:w-9"
+                        aria-label="Menge verringern"
                         onClick={() => updateItemMenge(idx, item.menge - 1)}
                       >
-                        <Minus className="w-3 h-3" />
+                        <Minus className="w-4 h-4" />
                       </Button>
                       <Input
-                        type="number"
-                        value={item.menge}
-                        onChange={e => updateItemMenge(idx, Number(e.target.value))}
-                        className="w-20 text-center h-8"
-                        min={0}
-                        step={0.5}
+                        type="text"
+                        inputMode="decimal"
+                        value={item.mengeInput}
+                        onChange={e => typeItemMenge(idx, e.target.value)}
+                        onBlur={() => updateItemMenge(idx, item.menge)}
+                        className="w-20 text-center h-11 sm:h-9"
+                        aria-label={`Menge ${item.beschreibung}`}
                       />
                       <Button
                         variant="outline"
                         size="icon"
-                        className="h-8 w-8"
+                        className="h-11 w-11 sm:h-9 sm:w-9"
+                        aria-label="Menge erhöhen"
                         onClick={() => updateItemMenge(idx, item.menge + 1)}
                       >
-                        <Plus className="w-3 h-3" />
+                        <Plus className="w-4 h-4" />
                       </Button>
                     </div>
-                    <div className="text-right w-24 text-sm font-medium">
-                      € {(item.menge * item.einzelpreis).toFixed(2)}
+                    <div className="text-right w-24 ml-auto text-sm font-medium">
+                      € {eur(item.menge * item.einzelpreis)}
                     </div>
                   </div>
                 ))}
@@ -316,15 +351,15 @@ export function QuickOfferDialog({ open, onOpenChange }: QuickOfferDialogProps) 
             <div className="border-t pt-3 space-y-1">
               <div className="flex justify-between text-sm">
                 <span>Netto</span>
-                <span>€ {nettoSumme.toFixed(2)}</span>
+                <span>€ {eur(nettoSumme)}</span>
               </div>
               <div className="flex justify-between text-sm text-muted-foreground">
                 <span>{mwstSatz}% MwSt.</span>
-                <span>€ {mwstBetrag.toFixed(2)}</span>
+                <span>€ {eur(mwstBetrag)}</span>
               </div>
               <div className="flex justify-between font-bold text-lg pt-1 border-t">
                 <span>Brutto</span>
-                <span>€ {bruttoSumme.toFixed(2)}</span>
+                <span>€ {eur(bruttoSumme)}</span>
               </div>
             </div>
           </div>

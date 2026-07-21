@@ -59,24 +59,40 @@ export function ProjectPhotoGallery({ projectId }: { projectId: string }) {
     await fetchFiles();
   };
 
+  /**
+   * Kommentar zu einem Foto speichern.
+   *
+   * ACHTUNG RLS: public.documents hat SELECT/INSERT/DELETE-Policies, aber KEINE
+   * UPDATE-Policy. Das frühere `update({ beschreibung })` lief deshalb ohne
+   * Fehler ins Leere — der Kommentar war nach dem Neuladen wieder weg, sobald
+   * das Foto schon eine documents-Zeile hatte (also bei praktisch jedem Foto).
+   * Deshalb: Zeile ersetzen (löschen + neu anlegen), beides ist erlaubt.
+   */
   const handleUpdateComment = async (photoId: string, comment: string) => {
     const file = files.find(f => f.path === photoId);
     if (!file) return;
-    if (file.docId) {
-      const { error } = await supabase.from("documents").update({ beschreibung: comment } as any).eq("id", file.docId);
-      if (error) {
-        toast({ variant: "destructive", title: "Kommentar nicht gespeichert", description: error.message });
-        return;
-      }
-      setFiles(prev => prev.map(f => f.path === photoId ? { ...f, beschreibung: comment } : f));
-      return;
-    }
-    // Noch keine documents-Zeile (Foto über anderen Weg hochgeladen) → anlegen.
+
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast({ variant: "destructive", title: "Kommentar nicht gespeichert", description: "Nicht angemeldet." });
       return;
     }
+
+    if (file.docId) {
+      // .select() zeigt, ob wirklich gelöscht wurde — sonst würde ein zweiter,
+      // widersprüchlicher Eintrag für dasselbe Foto entstehen.
+      const { data: geloescht, error: delErr } = await supabase
+        .from("documents").delete().eq("id", file.docId).select("id");
+      if (delErr || !geloescht || geloescht.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Kommentar nicht gespeichert",
+          description: delErr?.message || "Keine Berechtigung, diesen Eintrag zu ändern.",
+        });
+        return;
+      }
+    }
+
     const { data: inserted, error } = await supabase.from("documents").insert({
       project_id: projectId,
       user_id: user.id,

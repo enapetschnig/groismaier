@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, MessageSquare, Send } from "lucide-react";
+import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, MessageSquare, Send, Users } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -17,6 +17,7 @@ import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
+import { parseDecimal, formatForInput } from "@/lib/num";
 import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 import LeaveManagement from "@/components/LeaveManagement";
@@ -31,6 +32,8 @@ import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings"
 import { ConfigOptionsManager } from "@/components/admin/ConfigOptionsManager";
 import { VehicleManager } from "@/components/admin/VehicleManager";
 import { PermissionMatrix } from "@/components/admin/PermissionMatrix";
+import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { useConfigOptions } from "@/hooks/useConfigOptions";
 import { Cloud, AlertTriangle, Truck, Briefcase, HardHat } from "lucide-react";
 
@@ -153,6 +156,8 @@ export default function Admin() {
   const [showSizesDialog, setShowSizesDialog] = useState(false);
   const [formData, setFormData] = useState<Partial<Employee>>({});
   const [activeEmployeeTab, setActiveEmployeeTab] = useState<'stammdaten' | 'dokumente' | 'stunden'>('stammdaten');
+  /** Roh-Text des Stundenlohn-Feldes (damit „25," beim Tippen nicht zerfällt). */
+  const [stundenlohnText, setStundenlohnText] = useState("");
   
   // Default Betreff
   const [defaultBetreffRechnung, setDefaultBetreffRechnung] = useState("");
@@ -161,8 +166,13 @@ export default function Admin() {
   // Sick notes states
   const [sickNotes, setSickNotes] = useState<SickNote[]>([]);
 
-  // Pending activation role selection
-  const [pendingRoles, setPendingRoles] = useState<Record<string, "administrator" | "mitarbeiter">>({});
+  // Pending activation role selection — die Auswahl bietet auch „vorarbeiter" an,
+  // also muss der Typ das abbilden (sonst kippt die Rolle stillschweigend).
+  type AppRole = "administrator" | "vorarbeiter" | "mitarbeiter";
+  const [pendingRoles, setPendingRoles] = useState<Record<string, AppRole>>({});
+
+  // Dialog „Neuen Benutzer anlegen" (Edge Function create-user)
+  const [showCreateUser, setShowCreateUser] = useState(false);
 
   // Delete user dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -353,10 +363,18 @@ export default function Admin() {
       prev.map((p) => (p.id === userId ? { ...p, is_active: activate } : p))
     );
 
+    // Freischalten allein reicht nicht: activate_user legt NUR profiles/user_roles
+    // an. Ohne employees-Datensatz hat der neue Benutzer keinen Stundenlohn, taucht
+    // in Zeiterfassung/Plantafel/Nachkalkulation nicht auf und ist damit praktisch
+    // unbenutzbar. Darum hier gleich den Mitarbeiterdatensatz sicherstellen.
+    if (activate) {
+      await ensureEmployeeForUser(userId);
+    }
+
     toast({
       title: activate ? "Benutzer aktiviert" : "Benutzer deaktiviert",
       description: activate
-        ? `Der Benutzer wurde als ${pendingRoles[userId] || "Mitarbeiter"} freigeschaltet.`
+        ? `Freigeschaltet als ${pendingRoles[userId] || "Mitarbeiter"}. Bitte noch Stundenlohn und Standard-Fahrzeug ergänzen.`
         : "Der Benutzer kann sich nicht mehr anmelden.",
     });
 
@@ -377,7 +395,7 @@ export default function Admin() {
       toast({ title: "Fehler", description: error.message, variant: "destructive" });
     } else {
       const hiddenIds = new Set(((hiddenProfs as any[]) || []).map((p: any) => p.id));
-      const visible = ((data || []) as Employee[]).filter((e) => !e.user_id || !hiddenIds.has(e.user_id));
+      const visible = ((data || []) as unknown as Employee[]).filter((e) => !e.user_id || !hiddenIds.has(e.user_id));
       setEmployees(visible);
     }
   };
@@ -479,11 +497,16 @@ export default function Admin() {
     }
   };
 
-  const handleRoleChange = async (userId: string, newRole: "administrator" | "mitarbeiter") => {
-    const { error } = await supabase
-      .from("user_roles")
-      .update({ role: newRole })
-      .eq("user_id", userId);
+  const handleRoleChange = async (userId: string, newRole: AppRole) => {
+    // user_roles hat UNIQUE (user_id, role). Ein reines UPDATE trifft null Zeilen,
+    // wenn der Benutzer (noch) gar keine Rolle hat — und meldete trotzdem Erfolg.
+    // Darum: alte Rollen entfernen, neue setzen (1 Rolle pro Benutzer).
+    const { error: delErr } = await supabase.from("user_roles").delete().eq("user_id", userId);
+    if (delErr) {
+      toast({ variant: "destructive", title: "Fehler", description: delErr.message });
+      return;
+    }
+    const { error } = await supabase.from("user_roles").insert({ user_id: userId, role: newRole });
 
     if (error) {
       toast({
@@ -491,10 +514,11 @@ export default function Admin() {
         title: "Fehler",
         description: error.message,
       });
+      fetchUsers({ silent: true });
     } else {
       toast({
-        title: "Erfolg",
-        description: "Rolle wurde geändert.",
+        title: "Rolle geändert",
+        description: "Die neuen Rechte gelten, sobald der Benutzer die Seite neu lädt.",
       });
       setUserRoles((prev) => ({ ...prev, [userId]: newRole }));
     }
@@ -512,7 +536,7 @@ export default function Admin() {
       toast({ variant: 'destructive', title: 'Fehler', description: findErr.message });
       return null;
     }
-    if (existing) return existing as Employee;
+    if (existing) return existing as unknown as Employee;
 
     // 2) If not found, try to attach an existing employee record by name (user_id currently null)
     const profile = profiles.find(p => p.id === userId);
@@ -534,7 +558,7 @@ export default function Admin() {
     }
 
     if (byName && byName.length === 1) {
-      const candidate = byName[0] as Employee;
+      const candidate = byName[0] as unknown as Employee;
       const { data: updated, error: attachErr } = await supabase
         .from('employees')
         .update({ user_id: userId })
@@ -549,7 +573,7 @@ export default function Admin() {
 
       toast({ title: 'Verbunden', description: 'Bestehender Mitarbeiterdatensatz wurde verknüpft.' });
       fetchEmployees();
-      return updated as Employee;
+      return updated as unknown as Employee;
     }
 
     // 3) Otherwise create a fresh employee record linked to the user
@@ -571,7 +595,7 @@ export default function Admin() {
     }
 
     fetchEmployees();
-    return inserted as Employee;
+    return inserted as unknown as Employee;
   };
 
   const openEmployeeEditorForUser = async (userId: string, tab: 'stammdaten' | 'dokumente' = 'stammdaten') => {
@@ -622,6 +646,7 @@ export default function Admin() {
   useEffect(() => {
     if (selectedEmployee) {
       setFormData(selectedEmployee);
+      setStundenlohnText(formatForInput(selectedEmployee.stundenlohn));
     }
   }, [selectedEmployee]);
 
@@ -634,31 +659,40 @@ export default function Admin() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      {/* Header */}
-      <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3 sm:py-4">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              <span className="hidden sm:inline">Zurück</span>
-            </Button>
-            <div className="flex-1">
-              <h1 className="text-xl sm:text-2xl font-bold">Admin-Bereich</h1>
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="kb-page min-h-screen">
+      {/* KingBill-Werkzeugleiste statt eigenem Kopf — „Zurück" ist Pflicht,
+          weil die App keine Sidebar hat. „Benutzer anlegen" liegt hier, weil
+          es die einzige Stelle ist, an der ein Zugang komplett entsteht. */}
+      {/* Titel bewusst kurz: auf 390 px frisst „Admin-Bereich" so viel Breite,
+          dass die Toolbar-Buttons nicht mehr umbrechen können und die Seite
+          horizontal scrollt. */}
+      <KBToolbar onBack={() => navigate("/")} title="Admin">
+        <KBToolbarButton
+          icon={UserPlus}
+          iconClassName="text-kb-green"
+          label="Benutzer anlegen"
+          title="Zugang mit Benutzername und Passwort anlegen (inkl. Mitarbeiterdatensatz)"
+          onClick={() => setShowCreateUser(true)}
+        />
+        <KBToolbarButton
+          icon={Users}
+          label="Mitarbeiter"
+          title="Zur Mitarbeiterverwaltung"
+          onClick={() => navigate("/employees")}
+        />
+      </KBToolbar>
 
       <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-8">
         <Tabs defaultValue={initialTab} className="w-full">
-          <TabsList className="flex w-full overflow-x-auto mb-6">
-            <TabsTrigger value="benutzer" className="flex-shrink-0">Benutzer & Mitarbeiter</TabsTrigger>
-            <TabsTrigger value="einstellungen" className="flex-shrink-0">Einstellungen</TabsTrigger>
-            <TabsTrigger value="rechnung" className="flex-shrink-0">Rechnungs-Layout</TabsTrigger>
-            <TabsTrigger value="farben" className="flex-shrink-0">Farben & Plantafel</TabsTrigger>
-            <TabsTrigger value="konfiguration" className="flex-shrink-0">Konfiguration</TabsTrigger>
-            <TabsTrigger value="berechtigungen" className="flex-shrink-0">Berechtigungen</TabsTrigger>
+          {/* h-auto + h-11-Trigger: die shadcn-Standardhöhe (32 px) ist auf der
+              Baustelle mit Handschuhen nicht treffsicher bedienbar. */}
+          <TabsList className="mb-6 flex h-auto w-full overflow-x-auto p-1">
+            <TabsTrigger value="benutzer" className="h-11 flex-shrink-0">Benutzer &amp; Mitarbeiter</TabsTrigger>
+            <TabsTrigger value="einstellungen" className="h-11 flex-shrink-0">Einstellungen</TabsTrigger>
+            <TabsTrigger value="rechnung" className="h-11 flex-shrink-0">Rechnungs-Layout</TabsTrigger>
+            <TabsTrigger value="farben" className="h-11 flex-shrink-0">Farben &amp; Plantafel</TabsTrigger>
+            <TabsTrigger value="konfiguration" className="h-11 flex-shrink-0">Konfiguration</TabsTrigger>
+            <TabsTrigger value="berechtigungen" className="h-11 flex-shrink-0">Berechtigungen</TabsTrigger>
           </TabsList>
 
           {/* ===== TAB 1: BENUTZER & MITARBEITER ===== */}
@@ -687,10 +721,10 @@ export default function Admin() {
                       onChange={(e) => setInvitePhone(e.target.value)}
                       onKeyDown={(e) => { if (e.key === "Enter") handleSendInvitation(); }}
                       disabled={inviteSending}
-                      className="pl-9"
+                      className="h-11 pl-9"
                     />
                   </div>
-                  <Button onClick={handleSendInvitation} disabled={inviteSending || !invitePhone.trim()} className="gap-2">
+                  <Button onClick={handleSendInvitation} disabled={inviteSending || !invitePhone.trim()} className="h-11 gap-2">
                     <Send className="h-4 w-4" />
                     {inviteSending ? "Wird gesendet…" : "Einladung senden"}
                   </Button>
@@ -721,16 +755,16 @@ export default function Admin() {
                   <CardContent>
                     <div className="space-y-3">
                       {profiles.filter(p => !p.is_active).map((profile) => (
-                        <div key={profile.id} className="flex items-center justify-between p-4 rounded-lg border bg-card">
-                          <div className="flex items-center gap-3">
+                        <div key={profile.id} className="flex flex-col gap-3 rounded-lg border bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex min-w-0 items-center gap-3">
                             <Avatar>
                               <AvatarFallback className="bg-destructive/10 text-destructive">
                                 {profile.vorname[0]}
                                 {profile.nachname[0]}
                               </AvatarFallback>
                             </Avatar>
-                            <div>
-                              <p className="font-medium">
+                            <div className="min-w-0">
+                              <p className="truncate font-medium">
                                 {profile.vorname} {profile.nachname}
                               </p>
                               <p className="text-sm text-muted-foreground">
@@ -738,12 +772,12 @@ export default function Admin() {
                               </p>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
+                          <div className="flex min-w-0 flex-wrap items-center gap-2">
                             <Select
                               value={pendingRoles[profile.id] || "mitarbeiter"}
-                              onValueChange={(val) => setPendingRoles(prev => ({...prev, [profile.id]: val as "administrator" | "mitarbeiter"}))}
+                              onValueChange={(val) => setPendingRoles(prev => ({...prev, [profile.id]: val as AppRole}))}
                             >
-                              <SelectTrigger className="w-[160px]">
+                              <SelectTrigger className="h-11 w-full sm:w-[160px]">
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
@@ -752,12 +786,12 @@ export default function Admin() {
                                 <SelectItem value="administrator">Administrator</SelectItem>
                               </SelectContent>
                             </Select>
-                            <Button onClick={() => handleActivateUser(profile.id, true)}>
+                            <Button className="h-11 flex-1 sm:flex-none" onClick={() => handleActivateUser(profile.id, true)}>
                               Freischalten
                             </Button>
                             <Button
                               variant="outline"
-                              className="text-destructive border-destructive/40 hover:bg-destructive/10"
+                              className="h-11 flex-1 border-destructive/40 text-destructive hover:bg-destructive/10 sm:flex-none"
                               onClick={() => {
                                 setUserToDelete(profile);
                                 setDeleteConfirmOpen(true);
@@ -799,12 +833,14 @@ export default function Admin() {
                   <CardHeader className="pb-3">
                     <CardTitle className="text-base sm:text-lg flex items-center gap-2">
                       <UserIcon className="h-5 w-5 text-accent" />
-                      Benutzerverwaltung
+                      Vorarbeiter &amp; Mitarbeiter
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
+                    {/* Vorher „Benutzerverwaltung" und nur mitarbeiter gezählt —
+                        Vorarbeiter tauchten in keiner der beiden Kacheln auf. */}
                     <p className="text-3xl font-bold text-accent">
-                      {profiles.filter(p => userRoles[p.id] === "mitarbeiter").length}
+                      {profiles.filter(p => userRoles[p.id] === "vorarbeiter" || userRoles[p.id] === "mitarbeiter").length}
                     </p>
                   </CardContent>
                 </Card>
@@ -819,7 +855,7 @@ export default function Admin() {
                   Rollen verwalten und Mitarbeiterdaten/Dokumente bearbeiten
                 </CardDescription>
               </div>
-              <Button variant="outline" onClick={() => setShowSizesDialog(true)}>
+              <Button variant="outline" className="h-11" onClick={() => setShowSizesDialog(true)}>
                 <Shirt className="w-4 h-4 mr-2" />
                 Arbeitskleidung/Schuhe Größen
               </Button>
@@ -861,9 +897,9 @@ export default function Admin() {
                         <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                           <Select
                             value={userRoles[profile.id]}
-                            onValueChange={(val) => handleRoleChange(profile.id, val as "administrator" | "mitarbeiter")}
+                            onValueChange={(val) => handleRoleChange(profile.id, val as AppRole)}
                           >
-                            <SelectTrigger className="w-full sm:w-[200px]">
+                            <SelectTrigger className="h-11 w-full sm:w-[200px]">
                               <SelectValue />
                             </SelectTrigger>
                             <SelectContent>
@@ -873,20 +909,26 @@ export default function Admin() {
                             </SelectContent>
                           </Select>
 
-                          <div className="flex gap-2">
+                          {/* flex-wrap + min-w-0: auf 390 px ragten die drei Buttons
+                              bisher aus der Karte und dem Viewport heraus. */}
+                          <div className="flex min-w-0 flex-wrap gap-2">
                             <Button
                               variant="outline"
+                              className="h-11 flex-1 sm:flex-none"
                               onClick={() => openEmployeeEditorForUser(profile.id, 'stammdaten')}
                             >
                               Bearbeiten
                             </Button>
-                            <Button onClick={() => openEmployeeEditorForUser(profile.id, 'dokumente')}>
+                            <Button
+                              className="h-11 flex-1 sm:flex-none"
+                              onClick={() => openEmployeeEditorForUser(profile.id, 'dokumente')}
+                            >
                               <FileText className="w-4 h-4 mr-2" />
                               Dokumente
                             </Button>
                             <Button
                               variant="outline"
-                              size="sm"
+                              className="h-11 flex-1 sm:flex-none"
                               onClick={() => {
                                 setUserToDelete(profile);
                                 setDeleteDialogOpen(true);
@@ -1097,10 +1139,12 @@ export default function Admin() {
                   <p className="text-sm text-muted-foreground">
                     Die UID-Nummer wird auf allen Rechnungs-PDFs angezeigt (Pflicht bei Rechnungen über €400).
                   </p>
-                  <div className="flex gap-3 items-end">
-                    <div className="space-y-1 flex-1 max-w-xs">
-                      <Label>UID-Nummer</Label>
-                      <Input value={firmenUid} onChange={(e) => setFirmenUid(e.target.value)} disabled={loadingSettings} placeholder="ATU12345678" />
+                  {/* flex-wrap: auf 390 px passten Feld (max-w-xs) und Button
+                      nicht nebeneinander → die Seite scrollte horizontal. */}
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="min-w-0 flex-1 space-y-1 sm:max-w-xs">
+                      <Label htmlFor="firmen-uid">UID-Nummer</Label>
+                      <Input id="firmen-uid" value={firmenUid} onChange={(e) => setFirmenUid(e.target.value)} disabled={loadingSettings} placeholder="ATU12345678" />
                     </div>
                     <Button
                       onClick={async () => {
@@ -1118,7 +1162,7 @@ export default function Admin() {
                         }
                       }}
                       disabled={savingSettings || loadingSettings}
-                      size="sm"
+                      className="h-11"
                     >
                       <Save className="h-4 w-4 mr-2" />
                       Speichern
@@ -1531,12 +1575,20 @@ export default function Admin() {
                         />
                       </div>
                       <div>
-                        <Label>Stundenlohn (€)</Label>
+                        <Label htmlFor="admin-emp-stundenlohn">Stundenlohn (€)</Label>
+                        {/* type="text" + parseDecimal: „25,50" darf nicht als 2550
+                            in der Datenbank landen (type="number" verwirft das Komma). */}
                         <Input
-                          type="number"
-                          step="0.01"
-                          value={formData.stundenlohn || ""}
-                          onChange={(e) => setFormData({ ...formData, stundenlohn: parseFloat(e.target.value) || null })}
+                          id="admin-emp-stundenlohn"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="z.B. 25,50"
+                          value={stundenlohnText}
+                          onChange={(e) => {
+                            setStundenlohnText(e.target.value);
+                            setFormData({ ...formData, stundenlohn: parseDecimal(e.target.value) });
+                          }}
+                          onBlur={() => setStundenlohnText(formatForInput(parseDecimal(stundenlohnText)))}
                         />
                       </div>
                       <div>
@@ -1861,6 +1913,16 @@ export default function Admin() {
           </ScrollArea>
         </DialogContent>
       </Dialog>
+
+      {/* Neuen Benutzer anlegen (create-user Edge Function) */}
+      <CreateUserDialog
+        open={showCreateUser}
+        onOpenChange={setShowCreateUser}
+        onCreated={() => {
+          fetchUsers({ silent: true });
+          fetchEmployees();
+        }}
+      />
 
       {/* Delete User Dialog - Step 1: Deaktivieren oder Löschen? */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

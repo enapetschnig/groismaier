@@ -179,6 +179,14 @@ export function TeamSection({
                   key={dateStr}
                   data-cell-user={profile.id}
                   data-cell-day={dateStr}
+                  // Gesperrte Zellen sagen jetzt, warum nichts passiert.
+                  title={
+                    holiday
+                      ? `${holiday.bezeichnung || "Betriebsurlaub"} – kein Einsatz planbar`
+                      : leave
+                        ? `${profile.vorname} ${profile.nachname} ist abwesend – kein Einsatz planbar`
+                        : undefined
+                  }
                   className={`border-r border-gray-100 ${
                     holiday ? "bg-gray-50" : leave ? "bg-orange-50" : ""
                   } ${isDragSelected ? "bg-blue-100" : ""} ${
@@ -236,19 +244,28 @@ export function TeamSection({
   return (
     <div className="border-b">
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
-          style={{ width: 280 }}
-          onClick={() => setSectionCollapsed(!sectionCollapsed)}
-        >
-          {sectionCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-          <span className="font-semibold text-sm">Teams</span>
+        <div className="flex items-center" style={{ width: 280 }}>
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+            onClick={() => setSectionCollapsed(!sectionCollapsed)}
+            aria-expanded={!sectionCollapsed}
+          >
+            {sectionCollapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+            <span className="font-semibold text-sm">Teams</span>
+          </button>
           {onAddTeam && (
-            <button className="ml-auto p-1 rounded hover:bg-muted/40" onClick={(e) => { e.stopPropagation(); onAddTeam(); }}>
+            <button
+              type="button"
+              className="mr-2 rounded p-1 hover:bg-muted/40"
+              onClick={onAddTeam}
+              title="Team anlegen"
+              aria-label="Team anlegen"
+            >
               <Plus className="h-4 w-4 text-muted-foreground" />
             </button>
           )}
-        </button>
+        </div>
       </div>
 
       {!sectionCollapsed && teams.map((team) => {
@@ -258,18 +275,27 @@ export function TeamSection({
         return (
           <div key={team.id}>
             <div className="flex items-center border-t bg-muted/20">
-              <button
-                className="flex items-center gap-2 px-3 py-1.5 hover:bg-muted/40 transition-colors text-left"
-                style={{ width: 280 }}
-                onClick={() => toggleTeam(team.id)}
-              >
-                {isTeamCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
-                <span className="text-sm font-medium truncate">{team.name}</span>
-                <span className="text-xs text-muted-foreground">{teamProfiles.length}</span>
-                <button className="p-0.5 rounded hover:bg-muted/60 ml-auto" onClick={(e) => { e.stopPropagation(); onEditTeam(team); }}>
+              <div className="flex items-center" style={{ width: 280 }}>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-muted/40"
+                  onClick={() => toggleTeam(team.id)}
+                  aria-expanded={!isTeamCollapsed}
+                >
+                  {isTeamCollapsed ? <ChevronRight className="h-3.5 w-3.5 shrink-0" /> : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+                  <span className="text-sm font-medium truncate">{team.name}</span>
+                  <span className="text-xs text-muted-foreground">{teamProfiles.length}</span>
+                </button>
+                <button
+                  type="button"
+                  className="mr-2 rounded p-0.5 hover:bg-muted/60"
+                  onClick={() => onEditTeam(team)}
+                  title={`${team.name} bearbeiten`}
+                  aria-label={`${team.name} bearbeiten`}
+                >
                   <Pencil className="h-3 w-3 text-muted-foreground" />
                 </button>
-              </button>
+              </div>
             </div>
             {!isTeamCollapsed && teamProfiles.map((p, idx) => renderMemberRow(p, team.id, idx))}
             {!isTeamCollapsed && teamProfiles.length === 0 && (

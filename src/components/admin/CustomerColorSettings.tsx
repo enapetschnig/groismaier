@@ -126,14 +126,16 @@ export function CustomerColorSettings() {
   return (
     <Card>
       <CardHeader>
-        <div className="flex items-center justify-between">
+        {/* flex-wrap: Titel + Umschalter passen auf 390 px nicht in eine Zeile
+            und schoben die Seite in den Horizontal-Scroll. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="flex items-center gap-2">
             <Palette className="h-5 w-5" />
             Kunden-Farbcodierung
           </CardTitle>
           <Button
             variant="ghost"
-            size="sm"
+            className="h-11"
             onClick={() => setShowAll(!showAll)}
           >
             {showAll ? "Nur aktive Kunden" : "Alle Kunden anzeigen"}
@@ -153,7 +155,9 @@ export function CustomerColorSettings() {
           const text = customer.farbe_text || "#ffffff";
 
           return (
-            <div key={customer.id} className="flex items-center gap-3 p-3 border rounded-lg">
+            /* flex-wrap: Vorschau + Name + 8 Preset-Farben + Reset passen auf
+               390 px nicht in eine Zeile. */
+            <div key={customer.id} className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
               {/* Color preview */}
               <div
                 className="w-10 h-10 rounded-full flex items-center justify-center text-xs font-bold shrink-0 border"

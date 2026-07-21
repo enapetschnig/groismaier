@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, Download, Check, ChevronsUpDown, FolderOpen, ImagePlus } from "lucide-react";
+import { BarChart3, Download, Check, ChevronsUpDown, FolderOpen, ImagePlus, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { QuickUploadDialog } from "@/components/QuickUploadDialog";
 import { ProjectFilesManager } from "@/components/ProjectFilesManager";
-import { PageHeader } from "@/components/PageHeader";
+import { KBToolbar } from "@/components/kingbill";
 
 type Project = {
   id: string;
@@ -24,13 +24,20 @@ type TimeEntry = {
   taetigkeit: string;
   stunden: number;
   notizen: string | null;
-  profiles: {
-    vorname: string;
-    nachname: string;
-  } | null;
-  projects: {
-    name: string;
-  } | null;
+  user_id: string;
+  mitarbeiter: string;
+  projektName: string;
+};
+
+/** Rohzeile aus time_entries inkl. Left-Join auf projects. */
+type RawEntry = {
+  id: string;
+  datum: string;
+  taetigkeit: string;
+  stunden: number | string;
+  notizen: string | null;
+  user_id: string;
+  projects: { name: string } | null;
 };
 
 type StorageFile = {
@@ -63,6 +70,7 @@ const Reports = () => {
     } else {
       setProjectPhotos([]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject]);
 
   const fetchProjects = async () => {
@@ -83,7 +91,11 @@ const Reports = () => {
 
   const fetchTimeEntries = async () => {
     setLoading(true);
-    
+
+    // WICHTIG: projects(name) ist ein LEFT JOIN. Vorher stand hier
+    // projects!inner(name) — dadurch verschwanden ALLE Buchungen ohne Projekt
+    // (z. B. Werkstatt-/Regiestunden) lautlos aus der Auswertung; die Maske
+    // meldete „Keine Zeiteinträge gefunden", obwohl Stunden gebucht waren.
     let query = supabase
       .from('time_entries')
       .select(`
@@ -93,7 +105,7 @@ const Reports = () => {
         stunden,
         notizen,
         user_id,
-        projects!inner(name)
+        projects(name)
       `)
       .order('datum', { ascending: false });
 
@@ -110,33 +122,42 @@ const Reports = () => {
       return;
     }
 
-    const entriesWithProfiles = await Promise.all(
-      (data || []).map(async (entry) => {
-        const { data: profileData } = await supabase
-          .from('profiles')
-          .select('vorname, nachname')
-          .eq('id', entry.user_id)
-          .single();
+    const rows = (data || []) as unknown as RawEntry[];
 
-        return {
-          ...entry,
-          profiles: profileData,
-        };
-      })
-    );
+    // Namen in EINER Abfrage holen (vorher: eine profiles-Abfrage pro Zeile —
+    // bei 500 Buchungen 500 Requests und eine sichtbar hängende Maske).
+    const userIds = Array.from(new Set(rows.map(r => r.user_id).filter(Boolean)));
+    const nameById = new Map<string, string>();
+    if (userIds.length > 0) {
+      const { data: profs } = await supabase
+        .from('profiles')
+        .select('id, vorname, nachname')
+        .in('id', userIds);
+      (profs || []).forEach((p) => {
+        nameById.set(p.id, [p.vorname, p.nachname].filter(Boolean).join(" ").trim() || "Unbekannt");
+      });
+    }
 
-    setTimeEntries(entriesWithProfiles as any);
-    
-    const total = (data || []).reduce((sum, entry) => sum + Number(entry.stunden), 0);
-    setTotalHours(total);
-    
+    const entries: TimeEntry[] = rows.map(r => ({
+      id: r.id,
+      datum: r.datum,
+      taetigkeit: r.taetigkeit,
+      stunden: Number(r.stunden) || 0,
+      notizen: r.notizen,
+      user_id: r.user_id,
+      mitarbeiter: nameById.get(r.user_id) || "Unbekannt",
+      projektName: r.projects?.name || "Ohne Projekt",
+    }));
+
+    setTimeEntries(entries);
+    setTotalHours(entries.reduce((sum, e) => sum + e.stunden, 0));
     setLoading(false);
   };
 
   const fetchProjectPhotos = async (projectId: string) => {
     const { data, error } = await supabase.storage
       .from('project-photos')
-      .list(projectId, { 
+      .list(projectId, {
         limit: 4,
         sortBy: { column: 'created_at', order: 'desc' }
       });
@@ -156,20 +177,26 @@ const Reports = () => {
     return data.publicUrl;
   };
 
+  // Einfacher HTML-Escape — Projekt-/Tätigkeitstexte kommen aus Nutzereingaben
+  // und landen im Export-HTML.
+  const esc = (s: unknown) =>
+    String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
   const exportToPDF = async () => {
     setExporting(true);
-    
+
     try {
-      const projectName = selectedProject === "all" 
-        ? "Alle Projekte" 
+      const projectName = selectedProject === "all"
+        ? "Alle Projekte"
         : projects.find(p => p.id === selectedProject)?.name || "Unbekanntes Projekt";
-      
+
       const htmlContent = `
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
-          <title>Stundenauswertung - ${projectName}</title>
+          <title>Stundenauswertung - ${esc(projectName)}</title>
           <style>
             body { font-family: Arial, sans-serif; padding: 20px; }
             h1 { color: #333; border-bottom: 2px solid #666; padding-bottom: 10px; }
@@ -178,27 +205,26 @@ const Reports = () => {
             table { width: 100%; border-collapse: collapse; margin-top: 20px; }
             th { background: #333; color: white; padding: 12px; text-align: left; }
             td { padding: 10px; border-bottom: 1px solid #ddd; }
-            tr:hover { background: #f9f9f9; }
             .total { font-weight: bold; font-size: 18px; color: #2563eb; }
             .footer { margin-top: 30px; padding-top: 20px; border-top: 1px solid #ddd; text-align: center; color: #666; font-size: 12px; }
           </style>
         </head>
         <body>
-          <h1>Stundenauswertung - ${projectName}</h1>
+          <h1>Stundenauswertung - ${esc(projectName)}</h1>
           <div class="summary">
             <h2>Zusammenfassung</h2>
-            <p><strong>Projekt:</strong> ${projectName}</p>
+            <p><strong>Projekt:</strong> ${esc(projectName)}</p>
             <p><strong>Anzahl Einträge:</strong> ${timeEntries.length}</p>
             <p><strong>Gesamtstunden:</strong> <span class="total">${totalHours.toFixed(2)} h</span></p>
-            <p><strong>Erstellt am:</strong> ${new Date().toLocaleDateString('de-DE', { 
-              day: '2-digit', 
-              month: '2-digit', 
+            <p><strong>Erstellt am:</strong> ${new Date().toLocaleDateString('de-DE', {
+              day: '2-digit',
+              month: '2-digit',
               year: 'numeric',
               hour: '2-digit',
               minute: '2-digit'
             })}</p>
           </div>
-          
+
           <table>
             <thead>
               <tr>
@@ -214,16 +240,16 @@ const Reports = () => {
               ${timeEntries.map(entry => `
                 <tr>
                   <td>${new Date(entry.datum).toLocaleDateString('de-DE')}</td>
-                  <td>${entry.profiles ? `${entry.profiles.vorname} ${entry.profiles.nachname}` : 'Unbekannt'}</td>
-                  <td>${entry.projects?.name || 'Unbekanntes Projekt'}</td>
-                  <td>${entry.taetigkeit}</td>
-                  <td><strong>${entry.stunden} h</strong></td>
-                  <td>${entry.notizen || '-'}</td>
+                  <td>${esc(entry.mitarbeiter)}</td>
+                  <td>${esc(entry.projektName)}</td>
+                  <td>${esc(entry.taetigkeit)}</td>
+                  <td><strong>${entry.stunden.toFixed(2)} h</strong></td>
+                  <td>${esc(entry.notizen || '-')}</td>
                 </tr>
               `).join('')}
             </tbody>
           </table>
-          
+
           <div class="footer">
             <p>Holzbau Groismaier — Stundenauswertung</p>
           </div>
@@ -236,11 +262,11 @@ const Reports = () => {
         printWindow.document.write(htmlContent);
         printWindow.document.close();
         printWindow.focus();
-        
+
         printWindow.onload = () => {
           printWindow.print();
         };
-        
+
         toast.success('PDF-Export vorbereitet');
       } else {
         toast.error('Pop-up blockiert. Bitte erlauben Sie Pop-ups für diese Seite.');
@@ -253,60 +279,59 @@ const Reports = () => {
     }
   };
 
+  const selectedProjectName = selectedProject === "all"
+    ? "Alle Projekte"
+    : projects.find((project) => project.id === selectedProject)?.name || "Projekt auswählen";
+
   return (
-    <div className="min-h-screen bg-background">
-      <PageHeader title="Projektberichte & Dateien" />
-      
-      <main className="container mx-auto p-6">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2 flex items-center gap-3">
-            <BarChart3 className="w-8 h-8" />
-            Projektberichte & Dateien
-          </h1>
-          <p className="text-muted-foreground">Arbeitszeiten und Dokumente nach Projekt</p>
-        </div>
+    <div className="kb-page min-h-screen">
+      <KBToolbar
+        title="Projektberichte & Dateien"
+        onBack={() => navigate(-1)}
+        rightActions={
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            aria-label="Zur Startmaske"
+            title="Zur Startmaske"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
+          >
+            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
+          </button>
+        }
+      />
 
-        <div className="mb-6 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <div className="mt-0.5">
-              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div className="flex-1">
-              <h3 className="font-semibold text-blue-900 dark:text-blue-100 mb-1">Hinweis</h3>
-              <p className="text-sm text-blue-800 dark:text-blue-200">
-                Suchen Sie die <strong>Stundenauswertung</strong> nach Mitarbeitern?{" "}
-                <Button 
-                  variant="link" 
-                  className="p-0 h-auto text-blue-600 dark:text-blue-400 font-semibold underline" 
-                  onClick={() => navigate("/hours-report")}
-                >
-                  Hier klicken →
-                </Button>
-              </p>
-            </div>
-          </div>
-        </div>
+      <main className="container mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
+        {/* Der Seitentitel steht bereits in der blauen Leiste — hier nur noch
+            die Erklärung, sonst stand „Projektberichte & Dateien" doppelt. */}
+        <p className="mb-4 text-sm text-muted-foreground">
+          <BarChart3 className="mr-1.5 inline h-4 w-4 align-text-bottom" />
+          Gebuchte Arbeitszeiten und Dateien nach Projekt.{" "}
+          <button
+            type="button"
+            className="font-semibold text-kb-blue-dark underline"
+            onClick={() => navigate("/hours-report")}
+          >
+            Auswertung nach Mitarbeitern
+          </button>
+        </p>
 
-        <div className="mb-6 flex flex-col sm:flex-row gap-3 sm:items-end">
-          <div className="flex-1">
-            <label className="text-sm font-medium mb-2 block">Projekt auswählen</label>
+        <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <label className="mb-1.5 block text-sm font-medium">Projekt auswählen</label>
             <Popover open={open} onOpenChange={setOpen}>
               <PopoverTrigger asChild>
                 <Button
                   variant="outline"
                   role="combobox"
                   aria-expanded={open}
-                  className="w-full justify-between"
+                  className="h-11 w-full justify-between bg-white"
                 >
-                  {selectedProject === "all"
-                    ? "Alle Projekte"
-                    : projects.find((project) => project.id === selectedProject)?.name || "Projekt auswählen"}
+                  <span className="truncate">{selectedProjectName}</span>
                   <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
               </PopoverTrigger>
-              <PopoverContent className="w-full p-0" align="start">
+              <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
                   <CommandInput placeholder="Projekt suchen..." />
                   <CommandList>
@@ -351,69 +376,70 @@ const Reports = () => {
               </PopoverContent>
             </Popover>
           </div>
-          
-          <Button
+
+          <button
+            type="button"
             onClick={exportToPDF}
             disabled={exporting || timeEntries.length === 0}
-            className="gap-2"
-            variant="outline"
+            className="kb-btn min-h-[44px] justify-center"
+            title={timeEntries.length === 0 ? "Keine Einträge zum Exportieren" : "Liste als PDF drucken"}
           >
-            <Download className="w-4 h-4" />
+            <Download className="h-4 w-4 text-kb-blue-dark" />
             {exporting ? 'Exportiert...' : 'Als PDF exportieren'}
-          </Button>
+          </button>
         </div>
 
-        <Card className="mb-6">
-          <CardHeader>
-            <CardTitle className="text-2xl">
-              Gesamtstunden: <span className="text-primary">{totalHours.toFixed(2)}h</span>
-            </CardTitle>
-          </CardHeader>
-        </Card>
+        <div className="kb-panel mb-4 flex flex-wrap items-baseline justify-between gap-2 px-4 py-3">
+          <span className="text-lg font-bold">
+            Gesamtstunden: <span className="text-primary">{totalHours.toFixed(2)} h</span>
+          </span>
+          <span className="text-sm text-muted-foreground">{timeEntries.length} Einträge</span>
+        </div>
 
         {/* Projektdateien Sektion - nur wenn Projekt ausgewählt */}
         {selectedProject && selectedProject !== "all" && (
-          <Card className="mb-6">
+          <Card className="kb-panel mb-4">
             <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-xl flex items-center gap-2">
-                  <FolderOpen className="w-5 h-5" />
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FolderOpen className="h-5 w-5" />
                   Projektdateien
                 </CardTitle>
-                <div className="flex gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="kb-btn min-h-[44px]"
                     onClick={() => setShowFilesManager(true)}
                   >
                     Alle Dateien anzeigen
-                  </Button>
-                  <Button
-                    size="sm"
+                  </button>
+                  <button
+                    type="button"
+                    className="kb-btn min-h-[44px]"
                     onClick={() => setShowQuickUpload(true)}
-                    className="gap-2"
                   >
-                    <ImagePlus className="w-4 h-4" />
+                    <ImagePlus className="h-4 w-4 text-kb-blue-dark" />
                     Foto hochladen
-                  </Button>
+                  </button>
                 </div>
               </div>
             </CardHeader>
             {projectPhotos.length > 0 && (
               <CardContent>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                   {projectPhotos.map((photo) => (
-                    <div 
+                    <button
                       key={photo.id}
-                      className="aspect-square rounded-lg overflow-hidden border cursor-pointer hover:opacity-80 transition-opacity"
+                      type="button"
+                      className="aspect-square overflow-hidden rounded-lg border transition-opacity hover:opacity-80"
                       onClick={() => navigate(`/projects/${selectedProject}/photos`)}
                     >
                       <img
                         src={getPhotoUrl(selectedProject, photo.name)}
                         alt={photo.name}
-                        className="w-full h-full object-cover"
+                        className="h-full w-full object-cover"
                       />
-                    </div>
+                    </button>
                   ))}
                 </div>
               </CardContent>
@@ -422,56 +448,38 @@ const Reports = () => {
         )}
 
         {loading ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Lädt...</p>
-          </div>
+          <p className="py-12 text-center text-muted-foreground">Lädt...</p>
         ) : timeEntries.length === 0 ? (
-          <Card>
-            <CardContent className="py-12 text-center">
-              <p className="text-muted-foreground">Keine Zeiteinträge gefunden</p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            {timeEntries.map((entry) => (
-              <Card key={entry.id}>
-                <CardContent className="pt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Datum</p>
-                      <p className="font-semibold">
-                        {new Date(entry.datum).toLocaleDateString('de-DE')}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Mitarbeiter</p>
-                      <p className="font-semibold">
-                        {entry.profiles ? `${entry.profiles.vorname} ${entry.profiles.nachname}` : 'Unbekannt'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Projekt</p>
-                      <p className="font-semibold">{entry.projects?.name || 'Unbekanntes Projekt'}</p>
-                    </div>
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">Stunden</p>
-                      <p className="font-semibold text-primary text-lg">{entry.stunden}h</p>
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <p className="text-sm font-medium text-muted-foreground">Tätigkeit</p>
-                    <p className="mt-1">{entry.taetigkeit}</p>
-                  </div>
-                  {entry.notizen && (
-                    <div className="mt-3">
-                      <p className="text-sm font-medium text-muted-foreground">Notizen</p>
-                      <p className="mt-1 text-sm">{entry.notizen}</p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            ))}
+          <div className="kb-panel py-12 text-center text-muted-foreground">
+            Keine Zeiteinträge gefunden
           </div>
+        ) : (
+          <ul className="space-y-2">
+            {timeEntries.map((entry) => (
+              <li key={entry.id} className="kb-panel p-3">
+                <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                  <span className="font-bold">
+                    {new Date(entry.datum + "T12:00:00").toLocaleDateString('de-DE', {
+                      weekday: "short", day: "2-digit", month: "2-digit", year: "numeric",
+                    })}
+                  </span>
+                  <span className="text-lg font-bold text-primary">{entry.stunden.toFixed(2)} h</span>
+                </div>
+                <div className="mt-1 grid grid-cols-1 gap-x-4 gap-y-0.5 text-sm sm:grid-cols-2">
+                  <p><span className="text-muted-foreground">Mitarbeiter: </span>{entry.mitarbeiter}</p>
+                  <p><span className="text-muted-foreground">Projekt: </span>{entry.projektName}</p>
+                </div>
+                {entry.taetigkeit && (
+                  <p className="mt-1 break-words text-sm">
+                    <span className="text-muted-foreground">Tätigkeit: </span>{entry.taetigkeit}
+                  </p>
+                )}
+                {entry.notizen && (
+                  <p className="mt-0.5 break-words text-sm text-muted-foreground">{entry.notizen}</p>
+                )}
+              </li>
+            ))}
+          </ul>
         )}
       </main>
 
@@ -489,14 +497,14 @@ const Reports = () => {
       {/* Project Files Manager Dialog */}
       {selectedProject && selectedProject !== "all" && (
         <Dialog open={showFilesManager} onOpenChange={setShowFilesManager}>
-          <DialogContent className="max-w-4xl max-h-[85vh] overflow-hidden">
+          <DialogContent className="max-h-[85vh] max-w-4xl overflow-hidden">
             <DialogHeader>
               <DialogTitle>Projektdateien verwalten</DialogTitle>
               <DialogDescription>
                 Alle Dateien für {projects.find(p => p.id === selectedProject)?.name}
               </DialogDescription>
             </DialogHeader>
-            <ProjectFilesManager 
+            <ProjectFilesManager
               projectId={selectedProject}
               defaultTab="photos"
             />

@@ -73,7 +73,19 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
 
   const handleSaveNew = async () => {
     if (!newName.trim()) { toast({ variant: "destructive", title: "Projektname erforderlich" }); return; }
+    // projects.plz ist in der DB NOT NULL — ohne diese Prüfung schlug das
+    // Anlegen mit einem rohen Postgres-Fehler fehl ("null value in column plz").
+    // Gleiche Regel wie in der Projektmaske: 4–5 Ziffern.
+    if (!newPlz.trim()) { toast({ variant: "destructive", title: "PLZ erforderlich" }); return; }
+    if (!/^\d{4,5}$/.test(newPlz.trim())) {
+      toast({ variant: "destructive", title: "PLZ ungültig", description: "PLZ muss 4–5 Ziffern enthalten." });
+      return;
+    }
     if (!startDate || !endDate) { toast({ variant: "destructive", title: "Start und Ende erforderlich" }); return; }
+    if (endDate < startDate) {
+      toast({ variant: "destructive", title: "Ungültiger Zeitraum", description: "Das Ende darf nicht vor dem Start liegen." });
+      return;
+    }
     setSaving(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -85,7 +97,7 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
         .insert({
           name: newName.trim(),
           adresse: newAdresse.trim() || null,
-          plz: newPlz.trim() || null,
+          plz: newPlz.trim(),
           ort: newOrt.trim() || null,
           status: "In Arbeit",
           geplanter_start: startDate,
@@ -190,7 +202,7 @@ export function AddProjectToBoardDialog({ open, onOpenChange, availableProjects,
               placeholder="Straße und Nr."
             />
             <div className="grid grid-cols-3 gap-3">
-              <div><Label>PLZ</Label><Input value={newPlz} onChange={e => setNewPlz(e.target.value)} placeholder="PLZ" /></div>
+              <div><Label>PLZ *</Label><Input value={newPlz} onChange={e => setNewPlz(e.target.value)} placeholder="8850" inputMode="numeric" /></div>
               <div className="col-span-2"><Label>Ort</Label><Input value={newOrt} onChange={e => setNewOrt(e.target.value)} placeholder="Ort" /></div>
             </div>
             <div className="grid grid-cols-2 gap-3">

@@ -3,7 +3,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { parseDecimal, toNumber, formatForInput } from "@/lib/num";
 
 type ImportItem = {
   beschreibung: string;
@@ -23,6 +25,11 @@ type GroupedMaterial = {
   einheit: string;
   einzelpreis: number;
   selected: boolean;
+  /** Roh-Eingabe des Preisfeldes (deutsches Komma erlaubt). */
+  preisInput: string;
+  /** Für die Anzeige: was wurde entnommen / zurückgegeben. */
+  entnommen: number;
+  zurueck: number;
 };
 
 type ImportMaterialsDialogProps = {
@@ -32,18 +39,24 @@ type ImportMaterialsDialogProps = {
   projectId?: string | null;
 };
 
-function parseMenge(mengeStr: string | null): { value: number; einheit: string } {
-  if (!mengeStr) return { value: 1, einheit: "Stk" };
+/**
+ * Menge aus dem Textfeld `material_entries.menge` lesen. Die Einheit steht in
+ * einer eigenen Spalte — sie wird nur benutzt, wenn im Mengentext
+ * ausnahmsweise eine mitgeschrieben wurde ("150 lfm").
+ * parseDecimal versteht dabei auch "12,5".
+ */
+function parseMenge(mengeStr: string | null): { value: number; einheit: string | null } {
+  if (!mengeStr) return { value: 0, einheit: null };
 
   const trimmed = mengeStr.trim();
-  const match = trimmed.match(/^([\d.,]+)\s*(.*)/);
+  const match = trimmed.match(/^(-?[\d.,]+)\s*(.*)$/);
   if (match) {
-    const value = parseFloat(match[1].replace(",", ".")) || 1;
-    const einheit = match[2].trim() || "Stk";
+    const value = parseDecimal(match[1]) ?? 0;
+    const einheit = match[2].trim() || null;
     return { value, einheit };
   }
 
-  return { value: 1, einheit: "Stk" };
+  return { value: 0, einheit: null };
 }
 
 export const ImportMaterialsDialog = ({
@@ -94,7 +107,7 @@ export const ImportMaterialsDialog = ({
 
     const { data, error } = await supabase
       .from("material_entries")
-      .select("material, menge, notizen")
+      .select("material, menge, einheit, typ, einzelpreis, notizen")
       .eq("project_id", projectId)
       .order("material");
 
@@ -103,39 +116,47 @@ export const ImportMaterialsDialog = ({
       return;
     }
 
-    // Group by material name and sum up quantities
-    const grouped = new Map<string, { totalMenge: number; einheit: string }>();
+    // Je Material aufsummieren. WICHTIG: Rückgaben werden ABGEZOGEN — vorher
+    // wurde alles addiert, dadurch stieg der "Verbrauch" bei jeder Rückgabe
+    // (150 lfm raus + 20 lfm retour ergab 170 statt 130).
+    // Ebenso: die Einheit steht in einer eigenen Spalte; sie wurde ignoriert,
+    // sodass jede Position als "Stk" in die Rechnung ging.
+    const grouped = new Map<string, {
+      name: string; entnommen: number; zurueck: number; einheit: string; einzelpreis: number;
+    }>();
 
-    for (const entry of data) {
-      const { value, einheit } = parseMenge(entry.menge);
-      const key = entry.material.trim().toLowerCase();
+    for (const entry of data as any[]) {
+      const key = (entry.material || "").trim().toLowerCase();
+      if (!key) continue;
+      const { value, einheit: einheitAusText } = parseMenge(entry.menge);
+      const einheit = (entry.einheit || "").trim() || einheitAusText || "Stk.";
 
-      if (grouped.has(key)) {
-        const existing = grouped.get(key)!;
-        existing.totalMenge += value;
-      } else {
-        grouped.set(key, { totalMenge: value, einheit });
+      if (!grouped.has(key)) {
+        grouped.set(key, {
+          name: (entry.material || "").trim(),
+          entnommen: 0, zurueck: 0, einheit, einzelpreis: 0,
+        });
       }
-    }
-
-    // Build display list using original casing from first occurrence
-    const nameMap = new Map<string, string>();
-    for (const entry of data) {
-      const key = entry.material.trim().toLowerCase();
-      if (!nameMap.has(key)) {
-        nameMap.set(key, entry.material.trim());
-      }
+      const g = grouped.get(key)!;
+      if (entry.typ === "rueckgabe") g.zurueck += value;
+      else g.entnommen += value; // "entnahme" und Alt-Buchungen ohne typ
+      const preis = toNumber(entry.einzelpreis, 0);
+      if (preis > 0 && g.einzelpreis === 0) g.einzelpreis = preis;
     }
 
     const result: GroupedMaterial[] = [];
-    for (const [key, { totalMenge, einheit }] of grouped) {
-      if (totalMenge > 0) {
+    for (const g of grouped.values()) {
+      const verbrauch = Math.round((g.entnommen - g.zurueck) * 1000) / 1000;
+      if (verbrauch > 0) {
         result.push({
-          material: nameMap.get(key) || key,
-          totalMenge,
-          einheit,
-          einzelpreis: 0,
+          material: g.name,
+          totalMenge: verbrauch,
+          einheit: g.einheit,
+          einzelpreis: g.einzelpreis,
+          preisInput: g.einzelpreis > 0 ? formatForInput(g.einzelpreis, 2) : "",
           selected: true,
+          entnommen: g.entnommen,
+          zurueck: g.zurueck,
         });
       }
     }
@@ -151,9 +172,18 @@ export const ImportMaterialsDialog = ({
   };
 
   const updateEinzelpreis = (index: number, value: string) => {
-    const parsed = parseFloat(value.replace(",", ".")) || 0;
     setMaterials((prev) =>
-      prev.map((m, i) => (i === index ? { ...m, einzelpreis: parsed } : m))
+      prev.map((m, i) => (i === index
+        ? { ...m, preisInput: value, einzelpreis: parseDecimal(value) ?? 0 }
+        : m))
+    );
+  };
+
+  const blurEinzelpreis = (index: number) => {
+    setMaterials((prev) =>
+      prev.map((m, i) => (i === index
+        ? { ...m, preisInput: m.einzelpreis > 0 ? formatForInput(m.einzelpreis, 2) : "" }
+        : m))
     );
   };
 
@@ -215,24 +245,32 @@ export const ImportMaterialsDialog = ({
                   className="flex items-center gap-3 p-3 border rounded-lg"
                 >
                   <Checkbox
+                    className="h-5 w-5"
+                    aria-label={`${m.material} auswählen`}
                     checked={m.selected}
                     onCheckedChange={() => toggleItem(index)}
                   />
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate">{m.material}</p>
                     <p className="text-xs text-muted-foreground">
-                      Verbrauch: {m.totalMenge} {m.einheit}
+                      Verbrauch: {formatForInput(m.totalMenge)} {m.einheit}
+                      {m.zurueck > 0 && (
+                        <span className="ml-1">
+                          ({formatForInput(m.entnommen)} entnommen − {formatForInput(m.zurueck)} retour)
+                        </span>
+                      )}
                     </p>
                   </div>
-                  <div className="w-24">
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
+                  <div className="w-28 shrink-0">
+                    <Input
+                      type="text"
+                      inputMode="decimal"
                       placeholder="Preis"
-                      className="w-full text-sm border rounded px-2 py-1"
-                      value={m.einzelpreis || ""}
+                      aria-label={`Preis ${m.material}`}
+                      className="h-9 text-sm text-right"
+                      value={m.preisInput}
                       onChange={(e) => updateEinzelpreis(index, e.target.value)}
+                      onBlur={() => blurEinzelpreis(index)}
                     />
                   </div>
                 </div>

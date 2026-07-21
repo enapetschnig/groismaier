@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus } from "lucide-react";
+import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -17,19 +17,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
 import { istArbeitszeitZeile } from "@/lib/stunden";
+import { toNumber } from "@/lib/num";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
 import { ProjektNachkalkulation } from "@/components/project/ProjektNachkalkulation";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 
 type DocumentCategory = {
-  type: "plans" | "reports" | "photos" | "chef";
+  type: "plans" | "reports" | "photos" | "chef" | "materials";
   title: string;
   description: string;
   icon: React.ReactNode;
   count: number;
   adminOnly?: boolean;
 };
+
+/** Geldbetrag österreichisch: € 1.234,56 (nicht das englische 1234.56). */
+const eur = (n: number) =>
+  `€ ${(Number.isFinite(n) ? n : 0).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const ProjectOverview = () => {
   const { projectId } = useParams<{ projectId: string }>();
@@ -56,6 +61,10 @@ const ProjectOverview = () => {
   const [customerPopoverOpen, setCustomerPopoverOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [invoiceCount, setInvoiceCount] = useState(0);
+  // Materialbewegungen: Anzahl + Wert — damit die Karte genauso eine Zahl trägt
+  // wie die Dateiordner und man ohne Öffnen sieht, ob schon etwas erfasst ist.
+  const [materialCount, setMaterialCount] = useState(0);
+  const [materialWert, setMaterialWert] = useState(0);
   const [regieCount, setRegieCount] = useState(0);
   // Regiestunden = EIGENER Topf (aus den Regieberichten) — zählt NICHT zu
   // den Projektstunden aus der Zeiterfassung.
@@ -83,6 +92,17 @@ const ProjectOverview = () => {
       title: "Pläne",
       description: "Baupläne und technische Zeichnungen",
       icon: <FileText className="h-8 w-8" />,
+      count: 0,
+    },
+    {
+      // project-reports: hier landen die automatisch erzeugten Angebots-,
+      // Rechnungs- und Regiebericht-PDFs (siehe lib/pdfUploader.ts) sowie die
+      // beim Projektanlegen hochgeladenen Dokumente. Ohne diese Karte war der
+      // Ordner aus dem Projekt heraus überhaupt nicht erreichbar.
+      type: "reports",
+      title: "Dokumente & Berichte",
+      description: "Angebots-/Rechnungs-PDFs, Regieberichte, Schriftverkehr",
+      icon: <FolderOpen className="h-8 w-8" />,
       count: 0,
     },
     {
@@ -304,6 +324,10 @@ const ProjectOverview = () => {
       }
     }
     setProjectName(editForm.name.trim());
+    // Maske neu laden: sonst zeigte die Übersicht nach dem Speichern weiter den
+    // ALTEN Kunden und die alte Adresse an (gespeichert war es, angezeigt nicht)
+    // — man konnte nicht erkennen, ob die Änderung angekommen ist.
+    await fetchProjectName();
     setEditSaving(false);
     setEditDialogOpen(false);
     toast({ title: "Projekt aktualisiert" });
@@ -391,6 +415,24 @@ const ProjectOverview = () => {
       .order("datum", { ascending: false })
       .then(({ data: pdfData }: any) => setRegiePdfs(pdfData || []));
 
+    // Materialbewegungen (gleiche Rechnung wie Materialliste + Nachkalkulation:
+    // Entnahme + Verbrauch − Rückgabe, je × EK)
+    supabase.from("material_entries")
+      .select("typ, menge, einzelpreis")
+      .eq("project_id", projectId)
+      .then(({ data }) => {
+        const rows = (data as any[]) || [];
+        setMaterialCount(rows.length);
+        setMaterialWert(
+          rows.reduce((s, m) => {
+            const menge = toNumber(m.menge, 0);
+            const ek = Number(m.einzelpreis) || 0;
+            if (m.typ === "rueckgabe") return s - menge * ek;
+            return s + menge * ek;
+          }, 0),
+        );
+      });
+
     // Fetch Eingangsrechnungen for this project
     supabase.from("purchase_invoices")
       .select("id, lieferant, rechnungsdatum, betrag_brutto, status, kategorie")
@@ -458,7 +500,7 @@ const ProjectOverview = () => {
         <KBToolbarButton icon={Settings} label="Bearbeiten" onClick={openEditDialog} />
       </KBToolbar>
 
-      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 max-w-4xl">
+      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-28 max-w-4xl">
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-2">
             {editingName ? (
@@ -513,7 +555,7 @@ const ProjectOverview = () => {
                       onValueChange={handleStatusChange}
                       disabled={updatingStatus}
                     >
-                      <SelectTrigger className="h-8 w-[180px] text-xs">
+                      <SelectTrigger className="h-11 w-[180px] text-xs">
                         <SelectValue placeholder="Status ändern..." />
                       </SelectTrigger>
                       <SelectContent>
@@ -539,17 +581,17 @@ const ProjectOverview = () => {
             feature-gated (rechnungen), Mitarbeiter liefen sonst auf "Kein Zugriff". */}
         <div className="flex flex-wrap gap-2 mb-4">
           {isAdmin && (
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
-              <FileText className="h-3.5 w-3.5" />Neues Angebot
+            <Button variant="outline" className="h-11 gap-1.5" onClick={() => navigate(`/invoices/new?typ=angebot&project=${projectId}`)}>
+              <FileText className="h-4 w-4" />Neues Angebot
             </Button>
           )}
           {isAdmin && (
-            <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
-              <FileDown className="h-3.5 w-3.5" />Neue Rechnung
+            <Button variant="outline" className="h-11 gap-1.5" onClick={() => navigate(`/invoices/new?typ=rechnung&project=${projectId}`)}>
+              <FileDown className="h-4 w-4" />Neue Rechnung
             </Button>
           )}
-          <Button size="sm" variant="outline" className="gap-1.5" onClick={() => navigate(`/disturbances?new=${projectId}`)}>
-            <FileText className="h-3.5 w-3.5" />Neuer Regiebericht
+          <Button variant="outline" className="h-11 gap-1.5" onClick={() => navigate(`/disturbances?new=${projectId}`)}>
+            <FileText className="h-4 w-4" />Neuer Regiebericht
           </Button>
         </div>
 
@@ -557,6 +599,31 @@ const ProjectOverview = () => {
         {projectData && (
           <Card className="mb-4">
             <CardContent className="p-4 space-y-2">
+              {/* Kunde IMMER zeigen — vorher tauchte der Kunde nur auf, wenn er
+                  eine Adresse hatte; ohne Adresse stand nirgends, für wen
+                  gebaut wird. */}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                <span className="text-muted-foreground">Kunde:</span>
+                {customerData ? (
+                  // min-h-11: am Handy ein sauber treffbares Ziel, ohne die
+                  // Zeile optisch zu einem Button zu machen.
+                  <button
+                    className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-2"
+                    onClick={() => navigate(`/customers?q=${encodeURIComponent(customerData.name)}`)}
+                  >
+                    {customerData.name}
+                  </button>
+                ) : (
+                  <span className="text-muted-foreground italic">
+                    kein Kunde verknüpft — über „Bearbeiten" zuordnen
+                  </span>
+                )}
+                {(projectData as any).projektnummer && (
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                    Projekt-Nr. {(projectData as any).projektnummer}
+                  </span>
+                )}
+              </div>
               {/* Leistungsort / Durchführungsort (aus projects-Tabelle) */}
               {(projectData.adresse || projectData.plz || (projectData as any).ort) && (
                 <div className="text-sm">
@@ -768,9 +835,15 @@ const ProjectOverview = () => {
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div className="text-primary"><Package className="h-8 w-8" /></div>
+                <div className="text-2xl font-bold">{materialCount}</div>
               </div>
               <CardTitle className="text-xl">Materialliste</CardTitle>
-              <CardDescription>Entnahmen, Verbrauch & Rückgaben</CardDescription>
+              <CardDescription>
+                Entnahmen, Verbrauch & Rückgaben
+                {isAdmin && materialWert > 0 && (
+                  <> · <b className="text-foreground">{eur(materialWert)}</b> Materialkosten</>
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent>
               <Button variant="outline" className="w-full">
@@ -848,17 +921,17 @@ const ProjectOverview = () => {
           {isAdmin && (
             <Card>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <FileDown className="h-5 w-5 text-purple-600" />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                    <FileDown className="h-5 w-5 text-purple-600 shrink-0" />
                     Eingangsrechnungen
                     {purchaseInvoices.length > 0 && (
                       <span className="text-xs text-muted-foreground font-normal">
-                        · € {purchaseInvoices.reduce((s, i) => s + Number(i.betrag_brutto), 0).toFixed(2)}
+                        · {eur(purchaseInvoices.reduce((s, i) => s + Number(i.betrag_brutto), 0))}
                       </span>
                     )}
                   </CardTitle>
-                  <Button variant="outline" size="sm" onClick={() => navigate(`/eingangsrechnungen?project=${projectId}`)}>
+                  <Button variant="outline" className="h-11 shrink-0" onClick={() => navigate(`/eingangsrechnungen?project=${projectId}`)}>
                     {purchaseInvoices.length === 0 ? "Hinzufügen" : "Verwalten"}
                   </Button>
                 </div>
@@ -884,7 +957,7 @@ const ProjectOverview = () => {
                           </div>
                         )}
                       </div>
-                      <span className="text-sm font-medium whitespace-nowrap">€ {Number(inv.betrag_brutto).toFixed(2)}</span>
+                      <span className="text-sm font-medium whitespace-nowrap tabular-nums">{eur(Number(inv.betrag_brutto))}</span>
                     </button>
                   ))}
                   {purchaseInvoices.length > 5 && (
@@ -901,12 +974,12 @@ const ProjectOverview = () => {
           {isAdmin && projectInvoices.length > 0 && (
             <Card>
               <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <FileText className="h-5 w-5 text-primary" />
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base flex flex-wrap items-center gap-2">
+                    <FileText className="h-5 w-5 text-primary shrink-0" />
                     Angebote & Rechnungen
                   </CardTitle>
-                  <Button variant="outline" size="sm" onClick={() => navigate(`/invoices?project=${projectId}`)}>
+                  <Button variant="outline" className="h-11 shrink-0" onClick={() => navigate(`/invoices?project=${projectId}`)}>
                     Alle anzeigen
                   </Button>
                 </div>
@@ -934,7 +1007,7 @@ const ProjectOverview = () => {
                           {inv.kunde_name} · {new Date(inv.datum).toLocaleDateString("de-AT")}
                         </div>
                       </div>
-                      <span className="text-sm font-medium whitespace-nowrap">€ {Number(inv.brutto_summe).toFixed(2)}</span>
+                      <span className="text-sm font-medium whitespace-nowrap tabular-nums">{eur(Number(inv.brutto_summe))}</span>
                     </button>
                   );
                 })}

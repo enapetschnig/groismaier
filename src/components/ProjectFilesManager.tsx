@@ -25,15 +25,6 @@ const bucketMap: Record<DocumentType, string> = {
   notizen: 'project-notizen',
 };
 
-const titleMap: Record<DocumentType, string> = {
-  photos: '📷 Fotos',
-  plans: '📋 Pläne',
-  reports: '📄 Berichte',
-  materials: '📦 Material',
-  chef: '🔒 Chefordner',
-  notizen: '📝 Notizen',
-};
-
 const iconMap: Record<DocumentType, React.ReactNode> = {
   photos: <Camera className="w-4 h-4" />,
   plans: <FileText className="w-4 h-4" />,
@@ -204,11 +195,14 @@ export function ProjectFilesManager({ projectId, defaultTab = 'photos' }: Projec
       <div className="space-y-4">
         {/* Upload Area */}
         <div className="border-2 border-dashed rounded-lg p-6 text-center hover:border-primary transition-colors cursor-pointer">
+          {/* KEIN capture="environment": das zwang am Handy für JEDEN Tab die
+              Kamera auf — Pläne oder Materiallisten aus der Dateiablage konnte
+              man gar nicht auswählen. Ohne das Attribut bietet das Handy beides
+              an (Kamera ODER Datei). */}
           <input
             type="file"
             multiple
-            accept={type === 'photos' ? 'image/*,application/pdf' : '*'}
-            capture="environment"
+            accept={type === 'photos' ? 'image/*,application/pdf' : undefined}
             onChange={(e) => handleUpload(type, e.target.files)}
             className="hidden"
             id={`upload-${type}`}

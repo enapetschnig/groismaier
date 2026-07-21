@@ -133,11 +133,14 @@ export function MahnungSettings() {
           ))
         )}
 
-        <div className="flex justify-between gap-2">
-          <Button variant="ghost" size="sm" onClick={handleReset} disabled={saving} className="gap-1.5">
+        {/* flex-wrap: „Vorgaben wiederherstellen" + „Speichern" passen auf
+            390 px nicht nebeneinander und schoben die Seite in den
+            Horizontal-Scroll. */}
+        <div className="flex flex-wrap justify-between gap-2">
+          <Button variant="ghost" onClick={handleReset} disabled={saving} className="h-11 gap-1.5">
             <RotateCcw className="h-3.5 w-3.5" /> Vorgaben wiederherstellen
           </Button>
-          <Button onClick={handleSave} disabled={saving || loading} className="gap-2">
+          <Button onClick={handleSave} disabled={saving || loading} className="h-11 gap-2">
             <Save className="h-4 w-4" />
             {saving ? "Speichert…" : "Speichern"}
           </Button>

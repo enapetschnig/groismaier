@@ -62,6 +62,44 @@ interface UploadedFile {
   path: string;
 }
 
+/**
+ * Nächste Projektnummer (Format P26-001).
+ *
+ * Es gibt in `number_ranges` KEINEN Kreis 'projekt' — der frühere Aufruf
+ * next_document_number('projekt') lief deshalb bei JEDEM Projekt auf
+ * "Unknown document type" (HTTP 400) und projects.projektnummer blieb still
+ * NULL, obwohl die Maske "(wird automatisch vergeben)" verspricht.
+ *
+ * Deshalb: Nummernkreis benutzen, falls ein Admin ihn anlegt — sonst
+ * clientseitig aus der höchsten vorhandenen Nummer des Jahres weiterzählen.
+ */
+async function nextProjektNummer(): Promise<string | null> {
+  const jahr = new Date().getFullYear();
+  const yy = String(jahr % 100).padStart(2, "0");
+
+  // 1) Offizieller Nummernkreis, falls vorhanden.
+  const { data: range } = await (supabase.from("number_ranges" as never) as any)
+    .select("typ")
+    .eq("typ", "projekt")
+    .maybeSingle();
+  if (range) {
+    const { data, error } = await supabase.rpc("next_document_number" as never, { p_typ: "projekt" } as never);
+    if (!error && data) return data as unknown as string;
+  }
+
+  // 2) Fallback: höchste bestehende P<YY>-NNN dieses Jahres + 1.
+  const prefix = `P${yy}-`;
+  const { data: rows } = await supabase
+    .from("projects")
+    .select("projektnummer")
+    .like("projektnummer", `${prefix}%`)
+    .order("projektnummer", { ascending: false })
+    .limit(1);
+  const letzte = (rows as any[])?.[0]?.projektnummer as string | undefined;
+  const laufend = letzte ? (parseInt(letzte.slice(prefix.length), 10) || 0) + 1 : 1;
+  return `${prefix}${String(laufend).padStart(3, "0")}`;
+}
+
 export function CreateProjectDialog({
   open,
   onClose,
@@ -321,10 +359,7 @@ export function CreateProjectDialog({
         }
       }
 
-      // Get next project number
-      const { data: projektNummer } = await supabase.rpc("next_document_number" as never, {
-        p_typ: "projekt",
-      } as never);
+      const projektNummer = await nextProjektNummer();
 
       const { data: newProject, error } = await supabase
         .from("projects")

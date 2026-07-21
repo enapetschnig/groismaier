@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download, X, ZoomIn, ZoomOut, Loader2 } from "lucide-react";
+import { Download, ExternalLink, ZoomIn, ZoomOut, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "@/hooks/use-toast";
 
@@ -113,16 +113,20 @@ export function FileViewer({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-4xl h-[90vh] flex flex-col p-0">
-        <DialogHeader className="px-6 py-4 border-b">
-          <div className="flex items-center justify-between">
-            <DialogTitle className="text-lg truncate pr-4">{fileName}</DialogTitle>
-            <div className="flex gap-2">
+      <DialogContent className="max-w-4xl h-[90vh] w-[calc(100vw-1.5rem)] flex flex-col p-0">
+        <DialogHeader className="px-4 sm:px-6 py-3 sm:py-4 border-b">
+          {/* Kein eigener X-Button: DialogContent bringt bereits ein Schließen-X
+              oben rechts mit — vorher standen zwei X nebeneinander. */}
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:justify-between pr-8">
+            <DialogTitle className="text-base sm:text-lg break-words text-left">{fileName}</DialogTitle>
+            <div className="flex gap-2 shrink-0">
               {actualFileType === "image" && (
                 <>
                   <Button
                     variant="outline"
                     size="icon"
+                    className="h-11 w-11"
+                    aria-label="Verkleinern"
                     onClick={() => setZoom(Math.max(50, zoom - 25))}
                     disabled={zoom <= 50}
                   >
@@ -131,6 +135,8 @@ export function FileViewer({
                   <Button
                     variant="outline"
                     size="icon"
+                    className="h-11 w-11"
+                    aria-label="Vergrößern"
                     onClick={() => setZoom(Math.min(200, zoom + 25))}
                     disabled={zoom >= 200}
                   >
@@ -138,17 +144,24 @@ export function FileViewer({
                   </Button>
                 </>
               )}
+              {signedUrl && (
+                <Button
+                  variant="outline"
+                  className="h-11 gap-2"
+                  onClick={() => window.open(signedUrl, "_blank", "noopener")}
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  <span className="hidden sm:inline">Neuer Tab</span>
+                </Button>
+              )}
               <Button
                 variant="outline"
                 onClick={handleDownload}
                 disabled={loading}
-                className="gap-2"
+                className="h-11 gap-2"
               >
                 <Download className="w-4 h-4" />
-                Download
-              </Button>
-              <Button variant="ghost" size="icon" onClick={onClose}>
-                <X className="w-4 h-4" />
+                <span className="hidden sm:inline">Download</span>
               </Button>
             </div>
           </div>
@@ -183,13 +196,23 @@ export function FileViewer({
               />
             </div>
           ) : actualFileType === "pdf" ? (
-            <div className="flex flex-col items-center justify-center h-full gap-4">
-              <p className="text-muted-foreground text-center">
-                PDF-Vorschau nicht verfügbar
-              </p>
-              <Button onClick={handleDownload} disabled={loading} size="lg">
-                <Download className="w-4 h-4 mr-2" />
-                PDF herunterladen
+            /* PDF direkt anzeigen. Vorher stand hier nur "Vorschau nicht
+               verfügbar" + Download — der Ansehen-Button war damit wertlos.
+               Browser rendern PDFs nativ im iframe; auf iOS/Android, wo das
+               nicht immer klappt, liegt darunter der Öffnen-Fallback. */
+            <div className="flex h-full flex-col gap-2">
+              <iframe
+                src={signedUrl}
+                title={fileName}
+                className="w-full flex-1 rounded-lg border bg-white"
+              />
+              <Button
+                variant="outline"
+                className="h-11 shrink-0 sm:hidden"
+                onClick={() => window.open(signedUrl, "_blank", "noopener")}
+              >
+                <ExternalLink className="w-4 h-4 mr-2" />
+                PDF in neuem Tab öffnen
               </Button>
             </div>
           ) : (

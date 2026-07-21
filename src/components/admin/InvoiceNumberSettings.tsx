@@ -12,6 +12,8 @@ interface NumberConfig {
   format: string;
   start_nummer: string;
   stellen: string;
+  /** Zuletzt vergebene Nummer aus number_ranges — nur für die Vorschau. */
+  aktuelle_nummer?: number;
 }
 
 // Alle Dokumenttypen, die das UI konfigurieren kann.
@@ -19,16 +21,23 @@ interface NumberConfig {
 const TYPES: { key: string; label: string; defaults: NumberConfig; example: string; hint?: string }[] = [
   { key: "angebot",              label: "Angebote",              defaults: { prefix: "AN", format: "{PREFIX}{YY}{NNN}", start_nummer: "1", stellen: "3" }, example: "AN26001" },
   { key: "auftragsbestaetigung", label: "Auftragsbestätigungen", defaults: { prefix: "AB", format: "{PREFIX}{YY}{NNN}", start_nummer: "1", stellen: "3" }, example: "AB26001" },
-  { key: "rechnung",             label: "Rechnungen",            defaults: { prefix: "",   format: "{YY}{NNN}",         start_nummer: "1", stellen: "3" }, example: "26001", hint: "Anzahlungs- und Schlussrechnungen teilen sich diese Nummernfolge (einheitliches Format für alle Rechnungstypen)." },
+  { key: "rechnung",             label: "Rechnungen",            defaults: { prefix: "",   format: "{PREFIX}{YY}{NNN}", start_nummer: "1", stellen: "3" }, example: "RE26001", hint: "Anzahlungs- und Schlussrechnungen teilen sich diese Nummernfolge. Tipp: Ohne Prefix heißt eine Rechnung nur „26001“ und ist von Angeboten (AN26001) kaum zu unterscheiden — trage hier z. B. RE ein." },
   { key: "lieferschein",         label: "Lieferscheine",         defaults: { prefix: "LS", format: "{PREFIX}{YY}{NNN}", start_nummer: "1", stellen: "3" }, example: "LS26001" },
   { key: "gutschrift",           label: "Gutschriften",          defaults: { prefix: "GS", format: "{PREFIX}{YY}{NNN}", start_nummer: "1", stellen: "3" }, example: "GS26001" },
   { key: "kundennummer",         label: "Kundennummern",         defaults: { prefix: "K",  format: "{PREFIX}-{NNN}",    start_nummer: "1", stellen: "5" }, example: "K-00001", hint: "Ohne Jahresbezug. Wird beim Kunden-Anlegen automatisch vergeben." },
 ];
 
+/**
+ * Vorschau der NÄCHSTEN Nummer — exakt wie next_document_number() rechnet:
+ * GREATEST(aktuelle_nummer + 1, start_nummer). Vorher zeigte die Vorschau
+ * immer die Startnummer („26001"), obwohl real längst 26033 vergeben war —
+ * das las sich, als würde die Nummerierung neu beginnen.
+ */
 function generatePreview(cfg: NumberConfig): string {
   const yy = String(new Date().getFullYear()).slice(-2);
   const yyyy = String(new Date().getFullYear());
-  const num = parseInt(cfg.start_nummer) || 1;
+  const start = parseInt(cfg.start_nummer) || 1;
+  const num = Math.max((cfg.aktuelle_nummer ?? 0) + 1, start);
   const st = parseInt(cfg.stellen) || 3;
   const padded = String(num).padStart(st, "0");
 
@@ -67,7 +76,7 @@ export function InvoiceNumberSettings() {
     // number_ranges als Fallback / Single Source
     const { data: ranges } = await supabase
       .from("number_ranges" as never)
-      .select("typ, prefix, format_pattern, start_nummer, stellen" as never);
+      .select("typ, prefix, format_pattern, start_nummer, stellen, aktuelle_nummer" as never);
 
     const map: Record<string, string> = {};
     (appSettings || []).forEach((r: any) => { map[r.key] = r.value; });
@@ -75,14 +84,18 @@ export function InvoiceNumberSettings() {
     const rangeByTyp = new Map<string, any>();
     ((ranges as any[]) || []).forEach((r: any) => rangeByTyp.set(r.typ, r));
 
+    // number_ranges hat Vorrang: DIESE Tabelle liest next_document_number().
+    // app_settings ist nur ein Spiegel und darf nicht gewinnen — sonst zeigt
+    // die Maske ein anderes Präfix an, als auf den Belegen landet.
     const next: Record<string, NumberConfig> = {};
     for (const t of TYPES) {
       const r = rangeByTyp.get(t.key);
       next[t.key] = {
-        prefix: map[`${t.key}_prefix`] ?? r?.prefix ?? t.defaults.prefix,
-        format: map[`${t.key}_format`] ?? r?.format_pattern ?? t.defaults.format,
-        start_nummer: map[`${t.key}_start_nummer`] ?? (r?.start_nummer != null ? String(r.start_nummer) : t.defaults.start_nummer),
-        stellen: map[`${t.key}_stellen`] ?? (r?.stellen != null ? String(r.stellen) : t.defaults.stellen),
+        prefix: r?.prefix ?? map[`${t.key}_prefix`] ?? t.defaults.prefix,
+        format: r?.format_pattern ?? map[`${t.key}_format`] ?? t.defaults.format,
+        start_nummer: r?.start_nummer != null ? String(r.start_nummer) : (map[`${t.key}_start_nummer`] ?? t.defaults.start_nummer),
+        stellen: r?.stellen != null ? String(r.stellen) : (map[`${t.key}_stellen`] ?? t.defaults.stellen),
+        aktuelle_nummer: r?.aktuelle_nummer != null ? Number(r.aktuelle_nummer) : 0,
       };
     }
     setConfigs(next);
@@ -166,8 +179,11 @@ export function InvoiceNumberSettings() {
                   <span className="font-medium text-sm">{t.label}</span>
                   {t.hint && <p className="text-xs text-muted-foreground mt-0.5">{t.hint}</p>}
                 </div>
-                <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-0.5 rounded">
-                  Vorschau: {generatePreview(cfg)}
+                <span
+                  className="shrink-0 rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground"
+                  title="So sieht die nächste vergebene Nummer aus"
+                >
+                  Nächste: {generatePreview(cfg)}
                 </span>
               </div>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -188,7 +204,7 @@ export function InvoiceNumberSettings() {
                   <Input value={cfg.format} onChange={e => updateCfg(t.key, { format: e.target.value })} placeholder="{PREFIX}{YY}{NNN}" />
                 </div>
               </div>
-              <p className="text-xs text-muted-foreground">Beispiel: {t.example}</p>
+              <p className="text-xs text-muted-foreground">Empfohlenes Format: {t.example}</p>
             </div>
           );
         })}

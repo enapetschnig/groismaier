@@ -24,9 +24,44 @@ interface Props {
  * Erster Klick: Aufnahme starten (rotes Mic, pulsierend).
  * Zweiter Klick: Aufnahme stoppen → Text wird geschliffen und angehängt/ersetzt.
  */
+/**
+ * Mikrofon anfordern — mit den beiden Fällen, die im Baustellenalltag wirklich
+ * auftreten und vorher zu einem toten Knopf führten:
+ *  - Seite läuft nicht über HTTPS → navigator.mediaDevices ist undefined
+ *  - Berechtigungsdialog wird nie beantwortet → Promise bleibt für immer offen
+ */
+async function requestMicrophone(timeoutMs = 20000): Promise<MediaStream> {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+    const err = new Error(
+      window.isSecureContext === false
+        ? "Sprachaufnahme braucht eine sichere Verbindung (https). Bitte die App über https:// öffnen."
+        : "Dieser Browser unterstützt keine Sprachaufnahme."
+    );
+    err.name = "NotSupportedError";
+    throw err;
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      navigator.mediaDevices.getUserMedia({ audio: true }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const err = new Error(
+            "Keine Antwort vom Mikrofon. Bitte die Mikrofon-Freigabe im Browser bestätigen und noch einmal versuchen."
+          );
+          err.name = "TimeoutError";
+          reject(err);
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 export function DictateButton({ value, onResult, compact, label = "Diktieren", disabled, className = "" }: Props) {
   const { toast } = useToast();
-  const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
+  const [state, setState] = useState<"idle" | "requesting" | "recording" | "processing">("idle");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const streamRef = useRef<MediaStream | null>(null);
@@ -41,8 +76,11 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
   }, []);
 
   const startRecording = async () => {
+    // Sofort sichtbares Feedback — vorher passierte beim Klick optisch nichts,
+    // solange der Browser auf die Mikrofon-Freigabe wartete.
+    setState("requesting");
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const stream = await requestMicrophone();
       streamRef.current = stream;
       chunksRef.current = [];
 
@@ -105,8 +143,25 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
           title: "Mikrofon blockiert",
           description: "Bitte in den Browser-Einstellungen Mikrofon-Zugriff für diese Seite erlauben.",
         });
+      } else if (err.name === "NotFoundError" || err.name === "DevicesNotFoundError") {
+        toast({
+          variant: "destructive",
+          title: "Kein Mikrofon gefunden",
+          description: "An diesem Gerät ist kein Mikrofon angeschlossen. Text bitte tippen.",
+        });
+      } else if (err.name === "NotSupportedError" || err.name === "TimeoutError") {
+        toast({ variant: "destructive", title: "Diktat nicht möglich", description: err.message });
       } else {
-        toast({ variant: "destructive", title: "Mikrofon-Fehler", description: err.message });
+        toast({
+          variant: "destructive",
+          title: "Mikrofon-Fehler",
+          description: err.message || "Aufnahme konnte nicht gestartet werden.",
+        });
+      }
+      // Falls der Stream doch noch aufgeht (Timeout-Fall), nicht offen lassen
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
       }
       setState("idle");
     }
@@ -123,7 +178,7 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
     else if (state === "recording") stopRecording();
   };
 
-  const isActive = state === "recording" || state === "processing";
+  const busy = state === "processing" || state === "requesting";
 
   if (compact) {
     return (
@@ -132,11 +187,15 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
         variant={state === "recording" ? "destructive" : "ghost"}
         size="icon"
         onClick={handleClick}
-        disabled={disabled || state === "processing"}
-        className={`h-8 w-8 ${state === "recording" ? "animate-pulse" : ""} ${className}`}
-        title={state === "recording" ? "Aufnahme stoppen" : "Diktieren"}
+        disabled={disabled || busy}
+        className={`h-11 w-11 sm:h-8 sm:w-8 ${state === "recording" ? "animate-pulse" : ""} ${className}`}
+        title={
+          state === "recording" ? "Aufnahme stoppen"
+            : state === "requesting" ? "Warte auf Mikrofon-Freigabe..."
+            : "Diktieren"
+        }
       >
-        {state === "processing" ? (
+        {busy ? (
           <Loader2 className="h-4 w-4 animate-spin" />
         ) : state === "recording" ? (
           <MicOff className="h-4 w-4" />
@@ -153,10 +212,12 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
       variant={state === "recording" ? "destructive" : "outline"}
       size="sm"
       onClick={handleClick}
-      disabled={disabled || state === "processing"}
-      className={`gap-1.5 ${state === "recording" ? "animate-pulse" : ""} ${className}`}
+      disabled={disabled || busy}
+      className={`gap-1.5 min-h-[2.75rem] sm:min-h-0 ${state === "recording" ? "animate-pulse" : ""} ${className}`}
     >
-      {state === "processing" ? (
+      {state === "requesting" ? (
+        <><Loader2 className="h-4 w-4 animate-spin" /> Mikrofon...</>
+      ) : state === "processing" ? (
         <><Loader2 className="h-4 w-4 animate-spin" /> Verarbeite...</>
       ) : state === "recording" ? (
         <><MicOff className="h-4 w-4" /> Stop</>

@@ -5,6 +5,20 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { FileText, Check } from "lucide-react";
 
+/**
+ * Geldbetrag im österreichischen Format: 4.303,50 (statt 4303.50).
+ * Gleiche Schreibweise wie im Beleg-Editor (Punkt als Tausendertrenner) —
+ * toLocaleString("de-AT") würde ein schmales Leerzeichen setzen.
+ */
+const eur = (n: number): string => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "0,00";
+  const teile = Math.abs(v).toFixed(2).split(".");
+  teile[0] = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return (v < 0 ? "-" : "") + teile.join(",");
+};
+
+
 interface OfferItem {
   beschreibung: string;
   menge: number;
@@ -144,7 +158,7 @@ export function ImportFromOfferDialog({ open, onClose, projectId, onImport }: Im
                       {statusLabels[offer.status] || offer.status}
                     </Badge>
                   </div>
-                  <span className="text-sm font-medium">€ {Number(offer.brutto_summe).toFixed(2)}</span>
+                  <span className="text-sm font-medium">€ {eur(Number(offer.brutto_summe))}</span>
                 </div>
                 <div className="text-sm text-muted-foreground mt-1">
                   {offer.kunde_name} · {new Date(offer.datum).toLocaleDateString("de-AT")}
@@ -163,7 +177,7 @@ export function ImportFromOfferDialog({ open, onClose, projectId, onImport }: Im
                         {offerItems.map((item, idx) => (
                           <div key={idx} className="text-xs flex justify-between">
                             <span className="truncate flex-1">{item.beschreibung}</span>
-                            <span className="ml-2 shrink-0">{item.menge} {item.einheit} · € {Number(item.einzelpreis).toFixed(2)}</span>
+                            <span className="ml-2 shrink-0">{item.menge} {item.einheit} · € {eur(Number(item.einzelpreis))}</span>
                           </div>
                         ))}
                       </div>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import { Trash2, Search } from "lucide-react";
+import { Trash2, Search, AlertTriangle } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import type { Profile } from "./scheduleTypes";
 
 interface EinsatzData {
   id: string;
@@ -39,13 +40,19 @@ interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   projects: { id: string; name: string }[];
+  /** Auswahlliste für „Mitarbeiter" — ohne die konnte man einen Einsatz
+   *  nur durch Klick in die richtige Zeile anlegen (am Handy unmöglich). */
+  profiles?: Profile[];
   editEinsatz?: EinsatzData | null;
   prefillUserId?: string;
+  /** > 1 Einträge = Mehrfachanlage (Zeilen-Drag über mehrere Mitarbeiter). */
+  prefillUserIds?: string[];
   prefillStartDate?: string;
   prefillEndDate?: string;
   onSave: (data: {
     name: string;
     project_id: string;
+    user_id: string;
     adresse: string;
     start_date: string;
     end_date: string;
@@ -58,11 +65,20 @@ interface Props {
   onDelete?: (id: string) => Promise<void>;
 }
 
+/** Heute als yyyy-MM-dd (lokal, nicht UTC). */
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function EinsatzDialog({
   open,
   onOpenChange,
   projects,
+  profiles = [],
   editEinsatz,
+  prefillUserId,
+  prefillUserIds = [],
   prefillStartDate,
   prefillEndDate,
   onSave,
@@ -70,6 +86,7 @@ export function EinsatzDialog({
 }: Props) {
   const [name, setName] = useState("");
   const [projectId, setProjectId] = useState("");
+  const [userId, setUserId] = useState("");
   const [adresse, setAdresse] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -83,10 +100,13 @@ export function EinsatzDialog({
   const { toast } = useToast();
 
   const isEditing = !!editEinsatz;
+  // Mehrfachanlage: mehrere Mitarbeiter wurden im Raster markiert.
+  const isMulti = !isEditing && prefillUserIds.length > 1;
 
   useEffect(() => {
     if (!open) return;
 
+    setUserId(prefillUserId ?? "");
     if (editEinsatz) {
       setName(editEinsatz.name ?? "");
       setProjectId(editEinsatz.project_id);
@@ -101,15 +121,15 @@ export function EinsatzDialog({
       setName("");
       setProjectId("");
       setAdresse("");
-      setStartDate(prefillStartDate ?? "");
-      setEndDate(prefillEndDate ?? prefillStartDate ?? "");
+      setStartDate(prefillStartDate ?? todayISO());
+      setEndDate(prefillEndDate ?? prefillStartDate ?? todayISO());
       setGanztaegig(true);
       setStartTime("07:00");
       setEndTime("16:00");
       setBeschreibung("");
     }
     setProjectSearch("");
-  }, [open, editEinsatz, prefillStartDate, prefillEndDate]);
+  }, [open, editEinsatz, prefillUserId, prefillStartDate, prefillEndDate]);
 
   const filteredProjects = useMemo(() => {
     const q = projectSearch.toLowerCase().trim();
@@ -117,9 +137,25 @@ export function EinsatzDialog({
     return projects.filter((p) => p.name.toLowerCase().includes(q));
   }, [projects, projectSearch]);
 
+  const multiNames = useMemo(
+    () =>
+      prefillUserIds
+        .map((id) => profiles.find((p) => p.id === id))
+        .filter(Boolean)
+        .map((p) => `${p!.vorname} ${p!.nachname}`),
+    [prefillUserIds, profiles],
+  );
+
+  // Warnung (kein Verbot): Einsatz liegt ganz in der Vergangenheit.
+  const isPast = !!endDate && endDate < todayISO();
+
   async function handleSave() {
     if (saving) return; // Doppelklick-Schutz
     if (!projectId || !startDate || !endDate) return;
+    if (!isMulti && !userId) {
+      toast({ variant: "destructive", title: "Mitarbeiter fehlt", description: "Bitte einen Mitarbeiter auswählen." });
+      return;
+    }
 
     // Datum-Validierung
     if (endDate < startDate) {
@@ -138,6 +174,7 @@ export function EinsatzDialog({
       await onSave({
         name,
         project_id: projectId,
+        user_id: userId,
         adresse,
         start_date: startDate,
         end_date: endDate,
@@ -147,7 +184,6 @@ export function EinsatzDialog({
         beschreibung,
         ...(editEinsatz ? { id: editEinsatz.id } : {}),
       });
-      onOpenChange(false);
     } finally {
       setSaving(false);
     }
@@ -166,7 +202,7 @@ export function EinsatzDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[480px] max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="text-base font-semibold">
             {isEditing ? "Einsatz bearbeiten" : "Neuer Einsatz"}
@@ -184,6 +220,36 @@ export function EinsatzDialog({
           </TabsList>
 
           <TabsContent value="einsatz" className="space-y-4 mt-4">
+            {/* Mitarbeiter */}
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium text-muted-foreground">
+                Mitarbeiter <span className="text-red-500">*</span>
+              </Label>
+              {isMulti ? (
+                <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+                  {multiNames.length} Mitarbeiter: {multiNames.join(", ")}
+                </div>
+              ) : (
+                <Select value={userId} onValueChange={setUserId}>
+                  <SelectTrigger aria-label="Mitarbeiter">
+                    <SelectValue placeholder="Mitarbeiter auswählen..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {profiles.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.vorname} {p.nachname}
+                      </SelectItem>
+                    ))}
+                    {profiles.length === 0 && (
+                      <div className="py-4 text-center text-xs text-muted-foreground">
+                        Keine Mitarbeiter vorhanden
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
+              )}
+            </div>
+
             {/* Name */}
             <div className="space-y-1.5">
               <Label className="text-xs font-medium text-muted-foreground">
@@ -202,8 +268,8 @@ export function EinsatzDialog({
                 Projekt <span className="text-red-500">*</span>
               </Label>
               <Select value={projectId} onValueChange={setProjectId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Projekt auswahlen..." />
+                <SelectTrigger aria-label="Projekt">
+                  <SelectValue placeholder="Projekt auswählen..." />
                 </SelectTrigger>
                 <SelectContent>
                   <div className="px-2 pb-1.5">
@@ -252,8 +318,13 @@ export function EinsatzDialog({
                 </Label>
                 <Input
                   type="date"
+                  aria-label="Start"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    setStartDate(e.target.value);
+                    // Ende mitziehen, damit nie ein negativer Zeitraum entsteht
+                    if (endDate && e.target.value > endDate) setEndDate(e.target.value);
+                  }}
                 />
               </div>
               <div className="space-y-1.5">
@@ -262,18 +333,27 @@ export function EinsatzDialog({
                 </Label>
                 <Input
                   type="date"
+                  aria-label="Ende"
                   value={endDate}
+                  min={startDate || undefined}
                   onChange={(e) => setEndDate(e.target.value)}
                 />
               </div>
             </div>
 
+            {isPast && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <AlertTriangle className="h-4 w-4 shrink-0" />
+                <span>Dieser Einsatz liegt in der Vergangenheit — Nachtragen ist möglich.</span>
+              </div>
+            )}
+
             {/* Ganztaegig toggle */}
             <div className="flex items-center justify-between">
               <Label className="text-xs font-medium text-muted-foreground">
-                Ganztaegig
+                Ganztägig
               </Label>
-              <Switch checked={ganztaegig} onCheckedChange={setGanztaegig} />
+              <Switch checked={ganztaegig} onCheckedChange={setGanztaegig} aria-label="Ganztägig" />
             </div>
 
             {/* Time inputs when not ganztaegig */}
@@ -318,23 +398,26 @@ export function EinsatzDialog({
           </TabsContent>
 
           <TabsContent value="abwesenheit" className="mt-4">
-            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-              Kommt bald
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-center text-sm text-muted-foreground">
+              <span>Urlaub und Krankenstand werden im Urlaubsantrag erfasst.</span>
+              <span className="text-xs">
+                Genehmigte Abwesenheiten erscheinen automatisch orange auf der Plantafel.
+              </span>
             </div>
           </TabsContent>
         </Tabs>
 
-        <DialogFooter className="flex items-center justify-between sm:justify-between">
+        <DialogFooter className="flex items-center justify-between sm:justify-between gap-2">
           {isEditing && onDelete ? (
             <Button
               variant="destructive"
               size="sm"
               onClick={handleDelete}
               disabled={deleting}
-              className="gap-1.5"
+              className="gap-1.5 min-h-[44px]"
             >
               <Trash2 className="h-3.5 w-3.5" />
-              {deleting ? "Loschen..." : "Loschen"}
+              {deleting ? "Löschen..." : "Löschen"}
             </Button>
           ) : (
             <div />
@@ -343,13 +426,15 @@ export function EinsatzDialog({
             <Button
               variant="outline"
               size="sm"
+              className="min-h-[44px]"
               onClick={() => onOpenChange(false)}
             >
               Abbrechen
             </Button>
             <Button
               size="sm"
-              disabled={!projectId || !startDate || !endDate || saving}
+              className="min-h-[44px]"
+              disabled={!projectId || !startDate || !endDate || (!isMulti && !userId) || saving}
               onClick={handleSave}
             >
               {saving ? "Speichern..." : isEditing ? "Speichern" : "Erstellen"}

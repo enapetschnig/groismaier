@@ -259,33 +259,40 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Checkbox id="exportAll" checked={exportAll} onCheckedChange={(c) => setExportAll(!!c)} />
-            <Label htmlFor="exportAll">Ganzes Jahr exportieren</Label>
-          </div>
+          {/* Ganze Zeile ist antippbar (min. 44 px hoch) — eine 16-px-Checkbox
+              trifft man mit dem Finger auf der Baustelle nicht. */}
+          <Label htmlFor="exportAll" className="flex items-center gap-3 min-h-11 sm:min-h-0 cursor-pointer font-normal">
+            <Checkbox id="exportAll" className="h-5 w-5" checked={exportAll} onCheckedChange={(c) => setExportAll(!!c)} />
+            <span>Ganzes Jahr exportieren</span>
+          </Label>
 
-          <div className="flex items-center gap-2">
-            <Checkbox id="includeStorno" checked={includeStorno} onCheckedChange={(c) => setIncludeStorno(!!c)} />
-            <Label htmlFor="includeStorno">Stornierte Rechnungen einschließen</Label>
-          </div>
+          <Label htmlFor="includeStorno" className="flex items-center gap-3 min-h-11 sm:min-h-0 cursor-pointer font-normal">
+            <Checkbox id="includeStorno" className="h-5 w-5" checked={includeStorno} onCheckedChange={(c) => setIncludeStorno(!!c)} />
+            <span>Stornierte Rechnungen einschließen</span>
+          </Label>
 
           <div className="space-y-2 pt-1 border-t">
             <Label className="text-xs text-muted-foreground">Welche Dokumenttypen?</Label>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 sm:gap-2">
               {([
                 ["rechnung", "Rechnungen"],
                 ["anzahlungsrechnung", "Anzahlungsrechnungen"],
                 ["schlussrechnung", "Schlussrechnungen"],
                 ["gutschrift", "Gutschriften"],
               ] as const).map(([key, label]) => (
-                <div key={key} className="flex items-center gap-2">
+                <Label
+                  key={key}
+                  htmlFor={`typ-${key}`}
+                  className="flex items-center gap-3 min-h-11 sm:min-h-0 text-sm font-normal cursor-pointer"
+                >
                   <Checkbox
                     id={`typ-${key}`}
+                    className="h-5 w-5"
                     checked={selectedTypes[key]}
                     onCheckedChange={(c) => setSelectedTypes(prev => ({ ...prev, [key]: !!c }))}
                   />
-                  <Label htmlFor={`typ-${key}`} className="text-sm">{label}</Label>
-                </div>
+                  <span>{label}</span>
+                </Label>
               ))}
             </div>
           </div>

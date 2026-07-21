@@ -32,7 +32,8 @@ interface Props {
   leaveRequests: LeaveRequest[];
   holidays: CompanyHoliday[];
   employeeColors?: Record<string, EmployeeColor>;
-  onManageClick: () => void;
+  /** Optional — ohne Handler wird der Stift-Knopf gar nicht gerendert. */
+  onManageClick?: () => void;
   onCellClick?: (userId: string, startDate: string, endDate: string) => void;
   onEinsatzClick: (einsatz: Einsatz) => void;
   /** Drag-&-Drop: Einsatz-Bars greifbar (nur für Admin/Vorarbeiter). */
@@ -150,6 +151,14 @@ export function MitarbeiterSection({
                   key={dateStr}
                   data-cell-user={profile.id}
                   data-cell-day={dateStr}
+                  // Gesperrte Zellen sagen jetzt, warum nichts passiert.
+                  title={
+                    holiday
+                      ? `${holiday.bezeichnung || "Betriebsurlaub"} – kein Einsatz planbar`
+                      : leave
+                        ? `${profile.vorname} ${profile.nachname} ist abwesend – kein Einsatz planbar`
+                        : undefined
+                  }
                   className={`border-r border-gray-100 ${
                     holiday ? "bg-gray-50" : leave ? "bg-orange-50" : ""
                   } ${isDragSelected ? "bg-blue-100" : ""} ${
@@ -203,19 +212,31 @@ export function MitarbeiterSection({
 
   return (
     <div className="border-b">
-      {/* Header */}
+      {/* Header — der frühere Stift-Knopf war ohne Funktion und wird nur
+          noch gezeigt, wenn ein Handler übergeben wird. */}
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
-          style={{ width: 280 }}
-          onClick={() => setCollapsed(!collapsed)}
-        >
-          {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-          <span className="font-semibold text-sm">Mitarbeiter</span>
-          <button className="ml-auto p-1 rounded hover:bg-muted/40" onClick={(e) => { e.stopPropagation(); onManageClick(); }}>
-            <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+        <div className="flex items-center" style={{ width: 280 }}>
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+            <span className="font-semibold text-sm">Mitarbeiter</span>
           </button>
-        </button>
+          {onManageClick && (
+            <button
+              type="button"
+              className="mr-2 rounded p-1 hover:bg-muted/40"
+              onClick={onManageClick}
+              title="Mitarbeiter verwalten"
+              aria-label="Mitarbeiter verwalten"
+            >
+              <Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
+          )}
+        </div>
       </div>
 
       {!collapsed && profiles.map(renderMemberRow)}

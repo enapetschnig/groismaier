@@ -11,11 +11,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
-import { Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt } from "lucide-react";
+import { Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt, Trash2, EyeOff, Eye } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { format } from "date-fns";
+import { parseDecimal, formatForInput } from "@/lib/num";
 import EmployeeDocumentsManager from "@/components/EmployeeDocumentsManager";
 
 interface Employee {
@@ -41,6 +47,9 @@ interface Employee {
   kleidungsgroesse: string | null;
   schuhgroesse: string | null;
   notizen: string | null;
+  /** Aktiv-Kennzeichen (Migration 20260413300000). Inaktive Mitarbeiter
+   *  verschwinden aus allen „WHERE aktiv = true"-Auswahllisten. */
+  aktiv: boolean | null;
   /** Standard-Fahrzeug (Migration 20260719100000, nicht in types.ts) */
   standard_vehicle_id?: string | null;
 }
@@ -76,6 +85,13 @@ export default function Employees() {
   const [showSizesDialog, setShowSizesDialog] = useState(false);
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
+  /** Inaktive (ausgetretene) Mitarbeiter ein-/ausblenden. */
+  const [showInactive, setShowInactive] = useState(false);
+  /** Mitarbeiter, für den die Löschabfrage offen ist. */
+  const [employeeToDelete, setEmployeeToDelete] = useState<Employee | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  /** Roh-Text des Stundenlohn-Feldes (damit „25,“ beim Tippen nicht zerfällt). */
+  const [stundenlohnText, setStundenlohnText] = useState("");
 
   useEffect(() => {
     checkAdminAccess();
@@ -187,11 +203,108 @@ export default function Employees() {
     }
   };
 
+  /**
+   * Mitarbeiter löschen — aber nur, wenn wirklich nichts daran hängt.
+   *
+   * Stundenbuchungen sind der häufigste Grund, warum ein Datensatz bleiben
+   * muss (Nachkalkulation, Lohnverrechnung, Aufbewahrungspflicht). Deshalb
+   * wird VOR dem Löschen geprüft und im Zweifel „inaktiv setzen" angeboten,
+   * statt den Anwender in einen rohen Postgres-Fehler laufen zu lassen.
+   */
+  const handleDeleteEmployee = async () => {
+    if (!employeeToDelete) return;
+    setDeleting(true);
+    try {
+      // 1) Stundenbuchungen? (time_entries hängen am Login, nicht am Mitarbeiter)
+      if (employeeToDelete.user_id) {
+        const { count } = await supabase
+          .from("time_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("user_id", employeeToDelete.user_id);
+        if ((count ?? 0) > 0) {
+          toast({
+            title: "Löschen nicht möglich",
+            description:
+              `Für ${employeeToDelete.vorname} ${employeeToDelete.nachname} sind ${count} Stundenbuchungen erfasst. ` +
+              "Diese werden für Nachkalkulation und Lohnverrechnung gebraucht. " +
+              "Setze den Mitarbeiter stattdessen auf „Inaktiv“ — er verschwindet dann aus allen Auswahllisten.",
+            variant: "destructive",
+          });
+          setDeleting(false);
+          setEmployeeToDelete(null);
+          return;
+        }
+      }
+
+      // 2) Verknüpftes Benutzerkonto? Dann gehört das Löschen in den Admin-Bereich,
+      //    weil auch profiles/user_roles/auth.users aufgeräumt werden müssen.
+      if (employeeToDelete.user_id) {
+        toast({
+          title: "Löschen nicht möglich",
+          description:
+            "Diesem Mitarbeiter ist ein Benutzerkonto (Login) zugeordnet. " +
+            "Bitte im Admin-Bereich unter „Registrierte Benutzer“ löschen — " +
+            "dort werden Zugang, Rollen und Mitarbeiterdaten gemeinsam entfernt.",
+          variant: "destructive",
+        });
+        setDeleting(false);
+        setEmployeeToDelete(null);
+        return;
+      }
+
+      const { error } = await supabase.from("employees").delete().eq("id", employeeToDelete.id);
+      if (error) {
+        // 23503 = foreign_key_violation → irgendwo wird der Mitarbeiter noch referenziert
+        const fk = error.code === "23503";
+        toast({
+          title: "Löschen nicht möglich",
+          description: fk
+            ? "Der Mitarbeiter ist noch mit Projekten, Berichten oder Plantafel-Einträgen verknüpft. " +
+              "Setze ihn stattdessen auf „Inaktiv“."
+            : error.message,
+          variant: "destructive",
+        });
+        setDeleting(false);
+        setEmployeeToDelete(null);
+        return;
+      }
+
+      toast({ title: "Gelöscht", description: `${employeeToDelete.vorname} ${employeeToDelete.nachname} wurde entfernt.` });
+      setEmployeeToDelete(null);
+      setSelectedEmployee(null);
+      fetchEmployees();
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  /** Aktiv/Inaktiv sofort umschalten (ohne den ganzen Datensatz zu speichern). */
+  const toggleAktiv = async (emp: Employee, aktiv: boolean) => {
+    const { error } = await supabase.from("employees").update({ aktiv }).eq("id", emp.id);
+    if (error) {
+      toast({ title: "Fehler", description: error.message, variant: "destructive" });
+      return;
+    }
+    setFormData((prev) => ({ ...prev, aktiv }));
+    setEmployees((prev) => prev.map((e) => (e.id === emp.id ? { ...e, aktiv } : e)));
+    toast({
+      title: aktiv ? "Mitarbeiter aktiv" : "Mitarbeiter inaktiv",
+      description: aktiv
+        ? "Er erscheint wieder in Zeiterfassung, Plantafel und Auswahllisten."
+        : "Er verschwindet aus Zeiterfassung, Plantafel und Auswahllisten — die Daten bleiben erhalten.",
+    });
+  };
+
   useEffect(() => {
     if (selectedEmployee) {
       setFormData(selectedEmployee);
+      setStundenlohnText(formatForInput(selectedEmployee.stundenlohn));
     }
   }, [selectedEmployee]);
+
+  /** Sichtbare Mitarbeiter — inaktive nur auf Wunsch. */
+  const visibleEmployees = employees.filter((e) => showInactive || e.aktiv !== false);
+  const inactiveCount = employees.filter((e) => e.aktiv === false).length;
 
   if (loading) {
     return (
@@ -218,6 +331,15 @@ export default function Employees() {
           title="Arbeitskleidung- & Schuhgrößen-Übersicht"
           onClick={() => setShowSizesDialog(true)}
         />
+        {inactiveCount > 0 && (
+          <KBToolbarButton
+            icon={showInactive ? EyeOff : Eye}
+            /* Kurzes Label: lange Beschriftungen sprengen die Toolbar auf 390 px. */
+            label={showInactive ? "Nur aktive" : `Inaktive (${inactiveCount})`}
+            title="Ausgetretene bzw. inaktiv gesetzte Mitarbeiter ein-/ausblenden"
+            onClick={() => setShowInactive((v) => !v)}
+          />
+        )}
       </KBToolbar>
 
       <div className="container mx-auto p-3 sm:p-4">
@@ -235,10 +357,12 @@ export default function Employees() {
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {employees.map((emp) => (
+        {visibleEmployees.map((emp) => (
           <Card
             key={emp.id}
-            className="cursor-pointer hover:shadow-lg transition-shadow"
+            className={`cursor-pointer transition-shadow hover:shadow-lg ${
+              emp.aktiv === false ? "opacity-60" : ""
+            }`}
             onClick={() => setSelectedEmployee(emp)}
           >
             <CardHeader>
@@ -249,7 +373,14 @@ export default function Employees() {
                     {emp.nachname[0]}
                   </AvatarFallback>
                 </Avatar>
-                {emp.vorname} {emp.nachname}
+                <span className="min-w-0 truncate">
+                  {emp.vorname} {emp.nachname}
+                </span>
+                {emp.aktiv === false && (
+                  <span className="ml-auto shrink-0 rounded bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+                    Inaktiv
+                  </span>
+                )}
               </CardTitle>
               <CardDescription>{emp.position || "Mitarbeiter"}</CardDescription>
             </CardHeader>
@@ -460,18 +591,20 @@ export default function Employees() {
                         </Select>
                       </div>
                       <div>
-                        <Label>Stundenlohn (€)</Label>
+                        <Label htmlFor="emp-stundenlohn">Stundenlohn (€)</Label>
+                        {/* type="text" + parseDecimal: „25,50" muss 25,50 bleiben
+                            und darf nicht als 2550 in der Datenbank landen. */}
                         <Input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={formData.stundenlohn ?? ""}
+                          id="emp-stundenlohn"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="z.B. 25,50"
+                          value={stundenlohnText}
                           onChange={(e) => {
-                            // Leeres Feld → NULL statt NaN (NaN killt das Update).
-                            const v = e.target.value.trim();
-                            const n = parseFloat(v.replace(",", "."));
-                            setFormData({ ...formData, stundenlohn: v === "" || !isFinite(n) ? null : n });
+                            setStundenlohnText(e.target.value);
+                            setFormData({ ...formData, stundenlohn: parseDecimal(e.target.value) });
                           }}
+                          onBlur={() => setStundenlohnText(formatForInput(parseDecimal(stundenlohnText)))}
                         />
                       </div>
                       <div>
@@ -528,6 +661,30 @@ export default function Employees() {
                           Nötig, damit Zeiterfassung, Standard-Fahrzeug und Stundenauswertung
                           diesem Mitarbeiter zugeordnet werden.
                         </p>
+                      </div>
+
+                      {/* Aktiv/Inaktiv — der Weg für ausgetretene Mitarbeiter.
+                          Löschen ist meist gar nicht erlaubt (Stundenbuchungen),
+                          inaktiv setzen nimmt ihn aber überall aus den Listen. */}
+                      <div className="sm:col-span-2">
+                        <div className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2.5">
+                          <div className="min-w-0">
+                            <Label htmlFor="emp-aktiv" className="cursor-pointer">
+                              Mitarbeiter aktiv
+                            </Label>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              {formData.aktiv === false
+                                ? "Inaktiv — erscheint nicht in Zeiterfassung, Plantafel und Auswahllisten."
+                                : "Aktiv — erscheint überall zur Auswahl."}
+                            </p>
+                          </div>
+                          <Switch
+                            id="emp-aktiv"
+                            className="shrink-0"
+                            checked={formData.aktiv !== false}
+                            onCheckedChange={(v) => selectedEmployee && toggleAktiv(selectedEmployee, v)}
+                          />
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -619,11 +776,20 @@ export default function Employees() {
                     />
                   </div>
 
-                  <div className="flex justify-end gap-2">
-                    <Button type="button" variant="outline" onClick={() => setSelectedEmployee(null)}>
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="mr-auto h-11 text-destructive hover:bg-destructive/10"
+                      onClick={() => selectedEmployee && setEmployeeToDelete(selectedEmployee)}
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Löschen
+                    </Button>
+                    <Button type="button" variant="outline" className="h-11" onClick={() => setSelectedEmployee(null)}>
                       Abbrechen
                     </Button>
-                    <Button type="submit">Speichern</Button>
+                    <Button type="submit" className="h-11">Speichern</Button>
                   </div>
                 </form>
               </ScrollArea>
@@ -728,7 +894,7 @@ export default function Employees() {
                   </tr>
                 </thead>
                 <tbody>
-                  {employees
+                  {[...visibleEmployees]
                     .sort((a, b) => a.nachname.localeCompare(b.nachname))
                     .map((emp, idx) => (
                       <tr 
@@ -781,6 +947,36 @@ export default function Employees() {
           </ScrollArea>
         </DialogContent>
       </Dialog>
+
+      {/* Löschen-Bestätigung */}
+      <AlertDialog open={!!employeeToDelete} onOpenChange={(o) => !o && setEmployeeToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mitarbeiter löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {employeeToDelete?.vorname} {employeeToDelete?.nachname} wird endgültig entfernt.
+              <br />
+              <br />
+              Gelöscht wird nur, wenn keine Stundenbuchungen und kein Benutzerkonto daran hängen.
+              Für ausgetretene Mitarbeiter ist der Schalter <strong>„Mitarbeiter aktiv"</strong> der
+              richtige Weg — die Daten bleiben dann für Nachkalkulation und Lohnverrechnung erhalten.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="h-11">Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              className="h-11 bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleting}
+              onClick={(e) => {
+                e.preventDefault();
+                handleDeleteEmployee();
+              }}
+            >
+              {deleting ? "Löscht..." : "Ja, löschen"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       </div>
     </div>
   );

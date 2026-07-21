@@ -1,5 +1,15 @@
 import { useState, useEffect, useMemo } from "react";
 import { Search, Trash2 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -27,6 +37,8 @@ export function CreateTeamDialog({
   const [search, setSearch] = useState("");
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  // „Team löschen" feuerte früher sofort — jetzt erst nach Rückfrage.
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const isEdit = !!editTeam;
 
@@ -66,6 +78,7 @@ export function CreateTeamDialog({
 
   async function handleDelete() {
     if (!onDelete) return;
+    setConfirmDelete(false);
     setDeleting(true);
     try {
       await onDelete();
@@ -118,9 +131,15 @@ export function CreateTeamDialog({
           </div>
         </div>
 
-        <DialogFooter className="flex items-center justify-between sm:justify-between">
+        <DialogFooter className="flex items-center justify-between gap-2 sm:justify-between">
           {isEdit && onDelete ? (
-            <Button variant="destructive" size="sm" onClick={handleDelete} disabled={deleting}>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="min-h-[44px]"
+              onClick={() => setConfirmDelete(true)}
+              disabled={deleting}
+            >
               <Trash2 className="h-4 w-4 mr-1" />
               {deleting ? "Löscht..." : "Team löschen"}
             </Button>
@@ -128,12 +147,30 @@ export function CreateTeamDialog({
             <div />
           )}
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>Abbrechen</Button>
-            <Button size="sm" disabled={!name.trim() || saving} onClick={handleSave}>
+            <Button variant="outline" size="sm" className="min-h-[44px]" onClick={() => onOpenChange(false)}>Abbrechen</Button>
+            <Button size="sm" className="min-h-[44px]" disabled={!name.trim() || saving} onClick={handleSave}>
               {saving ? "Speichern..." : isEdit ? "Speichern" : "Erstellen"}
             </Button>
           </div>
         </DialogFooter>
+
+        <AlertDialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Team „{editTeam?.name}" löschen?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Die Mitarbeiter bleiben erhalten und stehen danach wieder einzeln
+                in der Plantafel. Ihre Einsätze werden nicht gelöscht.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="min-h-[44px]">Abbrechen</AlertDialogCancel>
+              <AlertDialogAction className="min-h-[44px]" onClick={handleDelete}>
+                Team löschen
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );

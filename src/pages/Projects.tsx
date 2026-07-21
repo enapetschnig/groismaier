@@ -1,18 +1,15 @@
-import { useEffect, useState, useRef } from "react";
-import { FolderOpen, Plus, FileText, Image, Package, Lock, Search, Upload, Camera, Trash2, ChevronDown } from "lucide-react";
+import { useEffect, useState } from "react";
+import { FolderOpen, Plus, FileText, Image, Package, Lock, Search, Upload, Camera, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate } from "react-router-dom";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { buildProjectFilePath } from "@/lib/projectFiles";
+import { buildProjectFilePath, countProjectFiles } from "@/lib/projectFiles";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { QuickUploadDialog } from "@/components/QuickUploadDialog";
@@ -42,22 +39,21 @@ const Projects = () => {
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
-  const [newProject, setNewProject] = useState({
-    name: "",
-    beschreibung: "",
-    adresse: "",
-    plz: "",
-  });
   const [quickUploadProject, setQuickUploadProject] = useState<{
     projectId: string;
     documentType: 'photos' | 'plans' | 'reports' | 'materials';
   } | null>(null);
   const [projectToDelete, setProjectToDelete] = useState<{id: string, name: string} | null>(null);
+  // Was hängt am Projekt? Wird beim Öffnen des Lösch-Dialogs gezählt, damit der
+  // Chef VOR dem Löschen sieht, welche Belege/Stunden er losreißt.
+  const [deleteImpact, setDeleteImpact] = useState<{
+    loading: boolean;
+    belege: number; bruttoSumme: number; stunden: number;
+    eingangsrechnungen: number; material: number; regie: number; dateien: number;
+  } | null>(null);
   const [showCameraDialog, setShowCameraDialog] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState<string | null>(null);
-  const [selectedProject, setSelectedProject] = useState<Project | null>(null);
-  const [showStatusDialog, setShowStatusDialog] = useState(false);
   const [statusFilter, setStatusFilter] = useState<string>("all");
   // Sortierung der Projektliste — clientseitig (Daten sind eh schon geladen).
   // Default „created_desc" entspricht dem heutigen Server-Order.
@@ -145,60 +141,6 @@ const Projects = () => {
     setLoading(false);
   };
 
-  const handleCreateProject = async () => {
-    if (!newProject.name.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "Projektname ist erforderlich",
-      });
-      return;
-    }
-
-    if (!newProject.plz.trim()) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "PLZ ist erforderlich",
-      });
-      return;
-    }
-
-    if (!/^\d{4,5}$/.test(newProject.plz.trim())) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "PLZ muss 4-5 Ziffern enthalten",
-      });
-      return;
-    }
-
-    const { error } = await supabase
-      .from("projects")
-      .insert({
-        name: newProject.name.trim(),
-        beschreibung: newProject.beschreibung.trim() || null,
-        adresse: newProject.adresse.trim() || null,
-        plz: newProject.plz.trim(),
-      });
-
-    if (error) {
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: "Projekt konnte nicht erstellt werden",
-      });
-    } else {
-      toast({
-        title: "Erfolg",
-        description: "Projekt wurde erstellt",
-      });
-      setNewProject({ name: "", beschreibung: "", adresse: "", plz: "" });
-      setShowNewDialog(false);
-      fetchProjects();
-    }
-  };
-
   const updateProjectStatus = async (projectId: string, newStatus: string, projectName: string) => {
     if (togglingStatus) return;
     setTogglingStatus(projectId);
@@ -225,6 +167,32 @@ const Projects = () => {
     }
   };
 
+  /** Lösch-Dialog öffnen und dabei zählen, was am Projekt hängt. */
+  const askDeleteProject = async (id: string, name: string) => {
+    setProjectToDelete({ id, name });
+    setDeleteImpact({ loading: true, belege: 0, bruttoSumme: 0, stunden: 0, eingangsrechnungen: 0, material: 0, regie: 0, dateien: 0 });
+    const [inv, te, pur, mat, dist] = await Promise.all([
+      supabase.from("invoices").select("brutto_summe").eq("project_id", id),
+      supabase.from("time_entries").select("stunden").eq("project_id", id),
+      supabase.from("purchase_invoices").select("id", { count: "exact", head: true }).eq("project_id", id),
+      supabase.from("material_entries").select("id", { count: "exact", head: true }).eq("project_id", id),
+      (supabase.from("disturbances" as never) as any).select("id", { count: "exact", head: true }).eq("project_id", id),
+    ]);
+    const buckets = ["project-plans", "project-reports", "project-materials", "project-photos", "project-chef"];
+    const dateiZahlen = await Promise.all(buckets.map((b) => countProjectFiles(id, b)));
+    const belegeRows = (inv.data as any[]) || [];
+    setDeleteImpact({
+      loading: false,
+      belege: belegeRows.length,
+      bruttoSumme: belegeRows.reduce((s, r) => s + (Number(r.brutto_summe) || 0), 0),
+      stunden: Math.round((((te.data as any[]) || []).reduce((s, r) => s + (Number(r.stunden) || 0), 0)) * 10) / 10,
+      eingangsrechnungen: pur.count || 0,
+      material: mat.count || 0,
+      regie: (dist as any)?.count || 0,
+      dateien: dateiZahlen.reduce((s, n) => s + n, 0),
+    });
+  };
+
   const handleDeleteProject = async () => {
     if (!projectToDelete || deleting) return;
     setDeleting(true);
@@ -232,19 +200,29 @@ const Projects = () => {
     const { id, name } = projectToDelete;
     
     try {
-      // Delete all files from storage buckets
-      const buckets = ['project-plans', 'project-reports', 'project-materials', 'project-photos'];
-      
+      // Alle Dateien aus den Storage-Buckets entfernen — inkl. project-chef und
+      // inkl. EINER Unterordner-Ebene (dort liegen die generierten Angebots-/
+      // Rechnungs-/Regiebericht-PDFs; die blieben vorher als Leichen zurück).
+      const buckets = ['project-plans', 'project-reports', 'project-materials', 'project-photos', 'project-chef'];
+
       for (const bucket of buckets) {
-        const { data: files } = await supabase.storage
-          .from(bucket)
-          .list(id);
-        
-        if (files && files.length > 0) {
-          const filePaths = files.map(file => `${id}/${file.name}`);
-          await supabase.storage
-            .from(bucket)
-            .remove(filePaths);
+        const { data: top } = await supabase.storage.from(bucket).list(id, { limit: 1000 });
+        if (!top || top.length === 0) continue;
+
+        const filePaths: string[] = [];
+        for (const obj of top) {
+          if (obj.id !== null) {
+            filePaths.push(`${id}/${obj.name}`);
+            continue;
+          }
+          // id === null → Unterordner, eine Ebene tief aufräumen
+          const { data: sub } = await supabase.storage.from(bucket).list(`${id}/${obj.name}`, { limit: 1000 });
+          for (const s of sub || []) {
+            if (s.id !== null) filePaths.push(`${id}/${obj.name}/${s.name}`);
+          }
+        }
+        if (filePaths.length > 0) {
+          await supabase.storage.from(bucket).remove(filePaths);
         }
       }
 
@@ -505,6 +483,11 @@ const Projects = () => {
                         </div>
                         <div className="flex-1 min-w-0">
                           <CardTitle className="text-base sm:text-xl truncate">{project.name}</CardTitle>
+                          {(project as any).projektnummer && (
+                            <CardDescription className="text-xs font-mono">
+                              {(project as any).projektnummer}
+                            </CardDescription>
+                          )}
                           {project.adresse && (
                             <CardDescription className="text-xs sm:text-sm">{project.adresse}</CardDescription>
                           )}
@@ -534,29 +517,27 @@ const Projects = () => {
                       </p>
                     )}
 
+                    {/* Direkt-Sprünge in die Projektordner. Vorher sahen diese
+                        Chips wie Buttons aus, waren aber tote Deko — jetzt
+                        führen sie dorthin, wo sie draufstehen. */}
                     <div className="flex flex-wrap gap-2 sm:gap-3 mb-4">
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/5">
-                        <FileText className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-medium">Pläne</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/5">
-                        <FileText className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-medium">Berichte</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/5">
-                        <Package className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-medium">Material</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/5">
-                        <Image className="w-4 h-4 text-primary" />
-                        <span className="text-xs font-medium">Fotos</span>
-                      </div>
-                      {isAdmin && (
-                        <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/5">
-                          <Lock className="w-4 h-4 text-primary" />
-                          <span className="text-xs font-medium">Chef</span>
-                        </div>
-                      )}
+                      {([
+                        { key: "plans", label: "Pläne", icon: FileText },
+                        { key: "reports", label: "Berichte", icon: FileText },
+                        { key: "materials", label: "Material", icon: Package },
+                        { key: "photos", label: "Fotos", icon: Image },
+                        ...(isAdmin ? [{ key: "chef", label: "Chef", icon: Lock }] : []),
+                      ] as const).map(({ key, label, icon: Icon }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          className="flex min-h-11 items-center gap-1.5 rounded-md bg-primary/5 px-3 py-1 transition-colors hover:bg-primary/15"
+                          onClick={(e) => { e.stopPropagation(); navigate(`/projects/${project.id}/${key}`); }}
+                        >
+                          <Icon className="w-4 h-4 text-primary" />
+                          <span className="text-xs font-medium">{label}</span>
+                        </button>
+                      ))}
                     </div>
 
                     {!isClosed && (
@@ -564,8 +545,7 @@ const Projects = () => {
                         <DropdownMenuTrigger asChild>
                           <Button
                             variant="outline"
-                            size="sm"
-                            className="w-full gap-2 mt-3"
+                            className="w-full gap-2 mt-3 h-11"
                             onClick={(e) => e.stopPropagation()}
                           >
                             <Upload className="w-4 h-4" />
@@ -616,7 +596,7 @@ const Projects = () => {
                             disabled={togglingStatus === project.id}
                           >
                             <SelectTrigger
-                              className="h-8 w-[160px] text-xs"
+                              className="h-11 w-[160px] text-xs"
                               onClick={(e) => e.stopPropagation()}
                             >
                               <SelectValue placeholder="Status wählen" />
@@ -638,9 +618,8 @@ const Projects = () => {
                           {isClosed && (
                             <Button
                               variant="destructive"
-                              size="sm"
-                              className="text-xs"
-                              onClick={() => setProjectToDelete({ id: project.id, name: project.name })}
+                              className="h-11 text-xs"
+                              onClick={() => askDeleteProject(project.id, project.name)}
                               disabled={deleting}
                             >
                               <Trash2 className="w-3 h-3 mr-1" />
@@ -683,16 +662,53 @@ const Projects = () => {
       />
 
       {/* AlertDialog für Projekt löschen */}
-      <AlertDialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
-        <AlertDialogContent>
+      <AlertDialog open={!!projectToDelete} onOpenChange={(open) => { if (!open) { setProjectToDelete(null); setDeleteImpact(null); } }}>
+        <AlertDialogContent className="max-h-[85vh] overflow-y-auto">
           <AlertDialogHeader>
             <AlertDialogTitle>Projekt endgültig löschen?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Bist du sicher, dass du das Projekt <strong>{projectToDelete?.name}</strong> unwiderruflich löschen möchtest?
-              <br /><br />
-              <span className="text-destructive font-semibold">Alle zugehörigen Dateien, Dokumente und Zuweisungen werden ebenfalls gelöscht.</span>
-              <br /><br />
-              Diese Aktion kann nicht rückgängig gemacht werden!
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <p>
+                  Projekt <strong className="text-foreground">{projectToDelete?.name}</strong> unwiderruflich löschen?
+                </p>
+
+                {deleteImpact?.loading && <p className="text-sm">Prüfe, was am Projekt hängt …</p>}
+
+                {deleteImpact && !deleteImpact.loading && (
+                  <>
+                    {/* Belege bleiben bestehen (invoices.project_id ist ON DELETE
+                        SET NULL) — sie verlieren aber die Projektzuordnung und
+                        fallen damit aus jeder Nachkalkulation heraus. Genau das
+                        muss VOR dem Löschen auf dem Tisch liegen. */}
+                    {deleteImpact.belege > 0 && (
+                      <div className="rounded-md border-2 border-destructive/50 bg-destructive/5 p-3 text-sm">
+                        <p className="font-semibold text-destructive">
+                          ⚠️ {deleteImpact.belege} Beleg{deleteImpact.belege === 1 ? "" : "e"} (Angebote/Rechnungen) über{" "}
+                          € {deleteImpact.bruttoSumme.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} brutto
+                        </p>
+                        <p className="mt-1 text-foreground">
+                          Diese Belege bleiben aus buchhalterischen Gründen erhalten, verlieren aber
+                          die Projektzuordnung. Sie erscheinen danach in <strong>keiner Nachkalkulation</strong> mehr.
+                          Besser: Projekt auf „Abgeschlossen" setzen statt löschen.
+                        </p>
+                      </div>
+                    )}
+
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                      <p className="mb-1 font-medium text-foreground">Am Projekt hängt außerdem:</p>
+                      <ul className="space-y-0.5">
+                        <li>{deleteImpact.stunden.toLocaleString("de-AT")} gebuchte Stunden — bleiben erhalten, verlieren aber das Projekt</li>
+                        <li>{deleteImpact.regie} Regiebericht{deleteImpact.regie === 1 ? "" : "e"} — bleiben erhalten, verlieren das Projekt</li>
+                        <li>{deleteImpact.eingangsrechnungen} Eingangsrechnung{deleteImpact.eingangsrechnungen === 1 ? "" : "en"} — bleiben erhalten, verlieren das Projekt</li>
+                        <li className="text-destructive">{deleteImpact.dateien} Datei{deleteImpact.dateien === 1 ? "" : "en"} (Fotos, Pläne, PDFs) — werden GELÖSCHT</li>
+                        <li className="text-destructive">{deleteImpact.material} Materialbewegung{deleteImpact.material === 1 ? "" : "en"} — werden GELÖSCHT</li>
+                      </ul>
+                    </div>
+                  </>
+                )}
+
+                <p className="font-medium text-destructive">Diese Aktion kann nicht rückgängig gemacht werden!</p>
+              </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -700,7 +716,7 @@ const Projects = () => {
             <AlertDialogAction
               onClick={handleDeleteProject}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={deleting}
+              disabled={deleting || !!deleteImpact?.loading}
             >
               {deleting ? 'Wird gelöscht...' : 'Ja, endgültig löschen'}
             </AlertDialogAction>

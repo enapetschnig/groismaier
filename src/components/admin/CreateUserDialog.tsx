@@ -9,6 +9,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { UserPlus, Eye, EyeOff, Copy, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { parseDecimal, formatForInput } from "@/lib/num";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
 
 interface Props {
@@ -118,8 +119,15 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
 
     setSaving(true);
     try {
+      // Stundenlohn als Punkt-Dezimalzahl übergeben — die Edge Function macht
+      // parseFloat(), und parseFloat("25,50") wäre 25.
+      const lohn = parseDecimal(form.stundenlohn);
       const { data, error } = await supabase.functions.invoke("create-user", {
-        body: { ...form, ist_freelancer: istFreelancer },
+        body: {
+          ...form,
+          stundenlohn: lohn === null ? "" : String(lohn),
+          ist_freelancer: istFreelancer,
+        },
       });
       if (error) {
         // FunctionsHttpError.context ist eine Response → Body explizit lesen
@@ -145,9 +153,62 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
       }
       if (data?.error) throw new Error(data.error);
 
+      // WICHTIG: Die Edge Function läuft mit dem Service-Role-Key, dort ist
+      // auth.uid() NULL. Der Schutz-Trigger guard_profile_privileges() lässt
+      // privilegierte Felder nur für Administratoren durch und setzt is_active
+      // deshalb still wieder auf false zurück — der frisch angelegte Benutzer
+      // könnte sich also gar nicht anmelden. Aus der Admin-Session heraus
+      // greift der Trigger korrekt, darum hier nochmal sauber freischalten.
+      const newUserId = (data as any)?.user_id as string | undefined;
+      if (newUserId) {
+        const { data: act, error: actErr } = await supabase.rpc("activate_user", {
+          _user_id: newUserId,
+          _role: (form.rolle || "mitarbeiter") as "administrator" | "vorarbeiter" | "mitarbeiter",
+        });
+        const actFailed = actErr || (act && (act as any).success === false);
+        if (actFailed) {
+          toast({
+            variant: "destructive",
+            title: "Benutzer angelegt, aber nicht freigeschaltet",
+            description:
+              "Bitte den Benutzer unter „Wartende Aktivierungen“ freischalten. " +
+              (actErr?.message || (act as any)?.error || ""),
+          });
+        }
+      }
+
+      // Stammdaten auf den employees-Datensatz spiegeln. Die Edge Function
+      // schreibt Lohn/Eintritt/Adresse nur nach profiles — die Nachkalkulation
+      // und die Mitarbeitermaske lesen aber employees. Ohne diesen Schritt
+      // rechnet die Nachkalkulation mit Stundenlohn 0.
+      const employeeId = (data as any)?.employee_id as string | undefined;
+      if (employeeId) {
+        const empPatch: Record<string, unknown> = {};
+        if (lohn !== null) empPatch.stundenlohn = lohn;
+        if (form.eintrittsdatum) empPatch.eintritt_datum = form.eintrittsdatum;
+        if (form.geburtsdatum) empPatch.geburtsdatum = form.geburtsdatum;
+        if (form.sv_nummer.trim()) empPatch.sv_nummer = form.sv_nummer.trim();
+        if (form.adresse.trim()) empPatch.adresse = form.adresse.trim();
+        if (form.plz.trim()) empPatch.plz = form.plz.trim();
+        if (form.ort.trim()) empPatch.ort = form.ort.trim();
+        if (Object.keys(empPatch).length > 0) {
+          const { error: empErr } = await supabase.from("employees").update(empPatch).eq("id", employeeId);
+          if (empErr) {
+            console.error("Mitarbeiterdaten konnten nicht ergänzt werden:", empErr);
+            toast({
+              variant: "destructive",
+              title: "Stammdaten unvollständig",
+              description:
+                "Zugang angelegt, aber Stundenlohn/Eintritt konnten nicht gespeichert werden. " +
+                "Bitte unter Mitarbeiter nachtragen.",
+            });
+          }
+        }
+      }
+
       toast({
         title: "Benutzer erstellt",
-        description: `${form.vorname} ${form.nachname}`,
+        description: `${form.vorname} ${form.nachname} kann sich sofort anmelden.`,
       });
 
       setOnboardingText(
@@ -197,7 +258,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
             {/* Zugangsdaten */}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Zugangsdaten</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Benutzername *</Label>
                   <Input
@@ -258,7 +319,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
             {/* Persönliche Daten */}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Persönliche Daten</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Vorname *</Label>
                   <Input value={form.vorname} onChange={e => update("vorname", e.target.value)} />
@@ -268,7 +329,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
                   <Input value={form.nachname} onChange={e => update("nachname", e.target.value)} />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Telefon</Label>
                   <Input value={form.telefon} onChange={e => update("telefon", e.target.value)} placeholder="+43..." />
@@ -296,7 +357,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
                   }));
                 }}
               />
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <div>
                   <Label>PLZ</Label>
                   <Input value={form.plz} onChange={e => update("plz", e.target.value)} />
@@ -311,7 +372,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
             {/* Beschäftigung */}
             <div className="space-y-3">
               <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Beschäftigung</h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Geburtsdatum</Label>
                   <Input type="date" value={form.geburtsdatum} onChange={e => update("geburtsdatum", e.target.value)} />
@@ -321,14 +382,23 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
                   <Input value={form.sv_nummer} onChange={e => update("sv_nummer", e.target.value)} placeholder="1234 010190" />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <Label>Eintrittsdatum</Label>
                   <Input type="date" value={form.eintrittsdatum} onChange={e => update("eintrittsdatum", e.target.value)} />
                 </div>
                 <div>
-                  <Label>Stundenlohn (€)</Label>
-                  <Input type="number" step="0.01" min="0" value={form.stundenlohn} onChange={e => update("stundenlohn", e.target.value)} />
+                  <Label htmlFor="cu-stundenlohn">Stundenlohn (€)</Label>
+                  {/* type="text" + parseDecimal: „25,50" darf nicht zu 2550 werden. */}
+                  <Input
+                    id="cu-stundenlohn"
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="z.B. 25,50"
+                    value={form.stundenlohn}
+                    onChange={e => update("stundenlohn", e.target.value)}
+                    onBlur={() => update("stundenlohn", formatForInput(parseDecimal(form.stundenlohn)))}
+                  />
                 </div>
               </div>
             </div>

@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, Plus } from "lucide-react";
 import { isSameDay, parseISO } from "date-fns";
 import { GanttBar } from "./GanttBar";
 import { getProjectDayRanges, isCompanyHoliday } from "./scheduleUtils";
-import type { Assignment, Project, CompanyHoliday } from "./scheduleTypes";
+import type { Assignment, Einsatz, Project, CompanyHoliday } from "./scheduleTypes";
 
 interface Props {
   projects: Project[];
@@ -24,6 +24,12 @@ export function ProjectGanttSection({
 
   // Show all projects (not just those with assignments)
   const activeProjects = projects;
+
+  // Legacy-Brücke: getProjectDayRanges arbeitet mit Einsatz-Zeiträumen,
+  // die alten Assignments haben nur ein Einzeldatum (datum = Start = Ende).
+  const assignmentRanges = assignments.map(
+    (a) => ({ ...a, start_date: a.datum, end_date: a.datum }) as unknown as Einsatz,
+  );
 
   return (
     <div className="border-b">
@@ -46,7 +52,7 @@ export function ProjectGanttSection({
 
       {!collapsed &&
         activeProjects.map((project) => {
-          const ranges = getProjectDayRanges(assignments, project.id, days);
+          const ranges = getProjectDayRanges(assignmentRanges, project.id, days);
 
           return (
             <div

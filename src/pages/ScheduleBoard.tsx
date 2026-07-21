@@ -1,13 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { CalendarOff, CalendarPlus, FolderPlus, Users } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import {
   startOfISOWeek,
   addDays,
-  addWeeks,
   startOfMonth,
   endOfMonth,
   eachDayOfInterval,
@@ -16,6 +25,7 @@ import {
 
 import type { Einsatz, ScheduleMode } from "@/components/schedule/scheduleTypes";
 import { getUnteamedProfiles } from "@/components/schedule/scheduleUtils";
+import { MobileScheduleList } from "@/components/schedule/MobileScheduleList";
 import { useScheduleData } from "@/components/schedule/useScheduleData";
 import { useSchedulePermissions } from "@/components/schedule/useSchedulePermissions";
 import { ScheduleHeader } from "@/components/schedule/ScheduleHeader";
@@ -28,6 +38,9 @@ import { CreateTeamDialog } from "@/components/schedule/CreateTeamDialog";
 import { EinsatzDialog } from "@/components/schedule/EinsatzDialog";
 import { CompanyHolidayManager } from "@/components/schedule/CompanyHolidayManager";
 import { YearPlanningView } from "@/components/schedule/YearPlanningView";
+
+/** Toolbar-Nebenaktion: am Handy nur das Icon, ab sm mit Beschriftung. */
+const ICON_ONLY_ON_MOBILE = "[&>span]:hidden sm:[&>span]:inline";
 
 export default function ScheduleBoard() {
   const navigate = useNavigate();
@@ -118,6 +131,9 @@ export default function ScheduleBoard() {
   const canEdit = isAdmin || isVorarbeiter;
   const unteamedProfiles = getUnteamedProfiles(profiles, teamMembers);
 
+  // Heutiges Datum als yyyy-MM-dd (lokal) — für Vergangenheits-Prüfungen.
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+
   // Available projects (not yet on board)
   const boardProjectIds = new Set(boardProjects.map((bp) => bp.project_id));
   const availableProjects = projects.filter((p) => !boardProjectIds.has(p.id));
@@ -143,6 +159,10 @@ export default function ScheduleBoard() {
     if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
     if (data) setBoardProjects((prev) => [...prev, data as any]);
     setAddProjectOpen(false);
+    // Frisch angelegte Projekte fehlen sonst in `projects` — die Board-Zeile
+    // bliebe leer und im Einsatz-Dialog wäre das Projekt nicht wählbar.
+    await fetchData(weekStart, weekEnd, mode);
+    toast({ title: "Projekt auf der Plantafel" });
   };
 
   const handleRemoveBoardProject = async (boardProjectId: string) => {
@@ -178,26 +198,21 @@ export default function ScheduleBoard() {
   };
 
   const handleDeleteTeam = async (teamId: string) => {
-    // Get all team member user_ids
-    const memberUserIds = teamMembers.filter(tm => tm.team_id === teamId).map(tm => tm.user_id);
-
-    // Einsätze dieser Mitarbeiter löschen — der DB-Trigger sync't automatisch
-    // den Google-Kalender, kein manueller Function-Call mehr nötig.
-    for (const uid of memberUserIds) {
-      const userEinsaetze = einsaetze.filter(e => e.user_id === uid);
-      for (const e of userEinsaetze) {
-        await supabase.from("einsaetze").delete().eq("id", e.id);
-      }
+    // WICHTIG: Ein Team ist nur eine Gruppierung. Früher wurden hier ALLE
+    // Einsätze sämtlicher Team-Mitglieder mitgelöscht — ein Fehlklick auf
+    // „Team löschen" hat damit die komplette Planung dieser Leute
+    // vernichtet. Die Einsätze bleiben jetzt erhalten, die Mitarbeiter
+    // wandern zurück in die Sektion „Mitarbeiter".
+    const { error } = await supabase.from("teams").delete().eq("id", teamId);
+    if (error) {
+      toast({ variant: "destructive", title: "Team konnte nicht gelöscht werden", description: error.message });
+      return;
     }
-
-    // Delete team (cascades to team_members)
-    await supabase.from("teams").delete().eq("id", teamId);
     setTeams(prev => prev.filter(t => t.id !== teamId));
     setTeamMembers(prev => prev.filter(tm => tm.team_id !== teamId));
-    setEinsaetze(prev => prev.filter(e => !memberUserIds.includes(e.user_id)));
     setCreateTeamOpen(false);
     setEditingTeam(null);
-    toast({ title: "Team gelöscht" });
+    toast({ title: "Team gelöscht", description: "Die Einsätze der Mitarbeiter bleiben erhalten." });
   };
 
   const handleUpdateTeam = async (name: string, memberIds: string[]) => {
@@ -233,16 +248,36 @@ export default function ScheduleBoard() {
     toast({ title: "Team aktualisiert" });
   };
 
-  const handleSaveEinsatz = async (data: {
-    name: string; project_id: string; adresse: string;
+  type EinsatzFormData = {
+    name: string; project_id: string; user_id: string; adresse: string;
     start_date: string; end_date: string; ganztaegig: boolean;
     start_time: string; end_time: string; beschreibung: string; id?: string;
-  }) => {
+  };
+
+  /** Doppelbelegung: Einsätze desselben Mitarbeiters, die sich mit dem
+   *  gewünschten Zeitraum überschneiden (der bearbeitete zählt nicht). */
+  const findOverlaps = (uid: string, start: string, end: string, ignoreId?: string) =>
+    einsaetze.filter(
+      (e) =>
+        e.user_id === uid &&
+        e.id !== ignoreId &&
+        e.start_date <= end &&
+        e.end_date >= start,
+    );
+
+  // Bestätigungsdialog bei Doppelbelegung — der Einsatz wird zwischen-
+  // gespeichert, bis der Chef „Trotzdem einplanen" bestätigt.
+  const [overlapWarning, setOverlapWarning] = useState<{
+    data: EinsatzFormData;
+    users: string[];
+    text: string;
+  } | null>(null);
+
+  const persistEinsatz = async (data: EinsatzFormData, usersToCreate: string[]) => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return;
 
     const payload = {
-      user_id: prefillUserId || user.id,
       project_id: data.project_id,
       name: data.name || null,
       adresse: data.adresse || null,
@@ -256,27 +291,66 @@ export default function ScheduleBoard() {
 
     // Google-Calendar-Sync läuft automatisch via DB-Trigger bei INSERT/UPDATE.
     if (data.id) {
-      const { error } = await supabase.from("einsaetze").update(payload).eq("id", data.id);
+      const full = { ...payload, user_id: data.user_id || usersToCreate[0] };
+      const { error } = await supabase.from("einsaetze").update(full).eq("id", data.id);
       if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
-      setEinsaetze((prev) => prev.map((e) => e.id === data.id ? { ...e, ...payload } as Einsatz : e));
+      setEinsaetze((prev) => prev.map((e) => e.id === data.id ? { ...e, ...full } as Einsatz : e));
+      toast({ title: "Einsatz gespeichert" });
     } else {
-      const usersToCreate = prefillUserIds.length > 1 ? prefillUserIds : [payload.user_id];
+      let created = 0;
       for (const uid of usersToCreate) {
-        const { data: created, error } = await supabase
+        const { data: row, error } = await supabase
           .from("einsaetze")
           .insert({ ...payload, user_id: uid, created_by: user.id })
           .select()
           .single();
         if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); continue; }
-        if (created) setEinsaetze((prev) => [...prev, created as Einsatz]);
+        if (row) { setEinsaetze((prev) => [...prev, row as Einsatz]); created++; }
+      }
+      if (created > 0) {
+        toast({ title: created > 1 ? `${created} Einsätze angelegt` : "Einsatz angelegt" });
       }
     }
 
     setEinsatzDialogOpen(false);
     setEditEinsatz(null);
     setPrefillUserId(undefined);
+    setPrefillUserIds([]);
     setPrefillStartDate(undefined);
     setPrefillEndDate(undefined);
+  };
+
+  const handleSaveEinsatz = async (data: EinsatzFormData) => {
+    const usersToCreate = !data.id && prefillUserIds.length > 1
+      ? prefillUserIds
+      : [data.user_id].filter(Boolean);
+
+    if (usersToCreate.length === 0) {
+      toast({ variant: "destructive", title: "Mitarbeiter fehlt" });
+      return;
+    }
+
+    // Doppelbelegung prüfen (kein hartes Verbot — der Chef entscheidet)
+    const conflicts: string[] = [];
+    for (const uid of usersToCreate) {
+      const overlaps = findOverlaps(uid, data.start_date, data.end_date, data.id);
+      if (overlaps.length === 0) continue;
+      const prof = profiles.find((p) => p.id === uid);
+      const who = prof ? `${prof.vorname} ${prof.nachname}` : "Mitarbeiter";
+      for (const o of overlaps) {
+        const pname = projects.find((p) => p.id === o.project_id)?.name ?? "anderes Projekt";
+        conflicts.push(
+          `${who}: ${pname} (${format(new Date(o.start_date + "T12:00:00"), "dd.MM.")}–${format(new Date(o.end_date + "T12:00:00"), "dd.MM.")})`,
+        );
+      }
+    }
+
+    if (conflicts.length > 0) {
+      setOverlapWarning({ data, users: usersToCreate, text: conflicts.slice(0, 5).join("\n") });
+      return;
+    }
+
+    await persistEinsatz(data, usersToCreate);
   };
 
   const handleDeleteEinsatz = async (id: string) => {
@@ -308,8 +382,24 @@ export default function ScheduleBoard() {
   const handleEinsatzClick = (einsatz: Einsatz) => {
     setEditEinsatz(einsatz);
     setPrefillUserId(einsatz.user_id);
+    setPrefillUserIds([einsatz.user_id]);
     setEinsatzDialogOpen(true);
   };
+
+  /** „Neuer Einsatz" aus der Toolbar bzw. aus der Handy-Liste: der
+   *  Mitarbeiter wird im Dialog gewählt. */
+  const openNewEinsatz = (date?: string) => {
+    const d = date ?? todayStr;
+    setPrefillUserId(profiles.length === 1 ? profiles[0].id : undefined);
+    setPrefillUserIds([]);
+    setPrefillStartDate(d);
+    setPrefillEndDate(d);
+    setEditEinsatz(null);
+    setEinsatzDialogOpen(true);
+  };
+
+  // Alle sichtbaren Mitarbeiter für die Handy-Liste (Team + Einzelne)
+  const allVisibleProfiles = useMemo(() => profiles, [profiles]);
 
   // ─── Drag & Drop: bestehenden Einsatz verschieben ─────────
   // Pointer-Events-basierte Lösung — keine externe Library. Drop-
@@ -389,45 +479,97 @@ export default function ScheduleBoard() {
 
   if (loading || permLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <p>Lade...</p>
+      <div className="kb-page flex items-center justify-center min-h-screen">
+        <p className="kb-panel px-6 py-4 text-sm">Plantafel wird geladen…</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Header */}
-      <header className="border-b bg-white sticky top-0 z-50 shadow-sm">
-        <div className="px-4 py-3 flex items-center gap-3">
-          <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <h1 className="text-base sm:text-lg font-bold">Plantafel</h1>
-          <div className="flex-1" />
-          {canManageHolidays && (
-            <CompanyHolidayManager
-              holidays={companyHolidays}
-              onUpdate={() => fetchData(weekStart, weekEnd, mode)}
-              userId={userId}
-            />
-          )}
-        </div>
-      </header>
+    <div className="kb-page min-h-screen">
+      {/* KingBill-Toolbar: [Zurück] Plantafel [+ Einsatz] [+ Projekt] [Team] [Betriebsurlaub]
+          Am Handy tragen die Nebenaktionen nur ihr Icon (Beschriftung per
+          aria-label/title) — sonst wäre die Leiste 225 px hoch. */}
+      <KBToolbar onBack={() => navigate("/")} title="Plantafel">
+        {canEdit && (
+          <KBToolbarButton
+            icon={CalendarPlus}
+            iconClassName="text-kb-green"
+            label="Einsatz"
+            title="Neuen Einsatz anlegen"
+            onClick={() => openNewEinsatz()}
+          />
+        )}
+        {canEdit && (
+          <KBToolbarButton
+            className={ICON_ONLY_ON_MOBILE}
+            icon={FolderPlus}
+            label="Projekt"
+            aria-label="Projekt auf die Plantafel legen"
+            title="Projekt auf die Plantafel legen"
+            onClick={() => setAddProjectOpen(true)}
+          />
+        )}
+        {canEdit && (
+          <KBToolbarButton
+            className={ICON_ONLY_ON_MOBILE}
+            icon={Users}
+            label="Team"
+            aria-label="Team anlegen"
+            title="Team anlegen"
+            onClick={() => { setEditingTeam(null); setCreateTeamOpen(true); }}
+          />
+        )}
+        {canManageHolidays && (
+          <CompanyHolidayManager
+            holidays={companyHolidays}
+            onUpdate={() => fetchData(weekStart, weekEnd, mode)}
+            userId={userId}
+            trigger={
+              <KBToolbarButton
+                className={ICON_ONLY_ON_MOBILE}
+                icon={CalendarOff}
+                label="Betriebsurlaub"
+                aria-label="Betriebsurlaub verwalten"
+                title="Betriebsurlaub verwalten"
+              />
+            }
+          />
+        )}
+      </KBToolbar>
 
-      <main className="px-4 py-4">
-        {/* Navigation Header */}
-        <ScheduleHeader
-          weekStart={weekStart}
-          onWeekChange={setWeekStart}
-          mode={mode}
-          onModeChange={handleModeChange}
-          title="Plantafel"
-        />
+      <main className="mx-auto w-full max-w-[1800px] px-3 py-3 sm:px-4 sm:py-4">
+        {/* Zeitraum-Navigation */}
+        <div className="kb-panel p-2 sm:p-3">
+          <ScheduleHeader
+            weekStart={weekStart}
+            onWeekChange={setWeekStart}
+            mode={mode}
+            onModeChange={handleModeChange}
+          />
+        </div>
+
+        {/* ── Handy: Tages-Karten statt Raster ── */}
+        {mode !== "year" && (
+          <div className="mt-3 md:hidden">
+            <MobileScheduleList
+              days={weekDays}
+              profiles={allVisibleProfiles}
+              einsaetze={einsaetze}
+              projects={projects}
+              boardProjects={boardProjects}
+              leaveRequests={leaveRequests}
+              holidays={companyHolidays}
+              canEdit={canEdit}
+              onAdd={(d) => openNewEinsatz(d)}
+              onEinsatzClick={handleEinsatzClick}
+            />
+          </div>
+        )}
 
         {mode !== "year" ? (
           <div
-            className="border rounded-lg overflow-x-auto bg-white mt-3"
+            className="kb-panel hidden md:block overflow-x-auto mt-3"
             onPointerMove={drag ? handleDragMove : undefined}
             onPointerUp={drag ? handleDragEnd : undefined}
             onPointerCancel={drag ? () => setDrag(null) : undefined}
@@ -478,7 +620,6 @@ export default function ScheduleBoard() {
               leaveRequests={leaveRequests}
               holidays={companyHolidays}
               employeeColors={employeeColors}
-              onManageClick={() => {}}
               onCellClick={canEdit ? handleCellClick : undefined}
               onEinsatzClick={handleEinsatzClick}
               draggableEinsaetze={canEdit}
@@ -524,16 +665,54 @@ export default function ScheduleBoard() {
         open={einsatzDialogOpen}
         onOpenChange={(open) => {
           setEinsatzDialogOpen(open);
-          if (!open) { setEditEinsatz(null); setPrefillUserId(undefined); }
+          if (!open) { setEditEinsatz(null); setPrefillUserId(undefined); setPrefillUserIds([]); }
         }}
         projects={projects}
+        profiles={profiles}
         editEinsatz={editEinsatz}
         prefillUserId={prefillUserId}
+        prefillUserIds={prefillUserIds}
         prefillStartDate={prefillStartDate}
         prefillEndDate={prefillEndDate}
         onSave={handleSaveEinsatz}
         onDelete={handleDeleteEinsatz}
       />
+
+      {/* Doppelbelegung: der Chef bestätigt bewusst */}
+      <AlertDialog
+        open={!!overlapWarning}
+        onOpenChange={(open) => { if (!open) setOverlapWarning(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Doppelbelegung</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm">
+                <p>In diesem Zeitraum ist bereits etwas eingeplant:</p>
+                <ul className="list-disc pl-5">
+                  {(overlapWarning?.text ?? "").split("\n").filter(Boolean).map((l) => (
+                    <li key={l}>{l}</li>
+                  ))}
+                </ul>
+                <p>Trotzdem einplanen?</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="min-h-[44px]">Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              className="min-h-[44px]"
+              onClick={async () => {
+                const w = overlapWarning;
+                setOverlapWarning(null);
+                if (w) await persistEinsatz(w.data, w.users);
+              }}
+            >
+              Trotzdem einplanen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

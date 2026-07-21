@@ -165,7 +165,10 @@ export function YearPlanningView({
           if (d >= lr.start_date && d <= lr.end_date) leaveDays += 1;
         }
       }
-      return Math.max(0, profiles.length * w.workdays.length - leaveDays);
+      return {
+        available: Math.max(0, profiles.length * w.workdays.length - leaveDays),
+        leaveDays,
+      };
     });
   }, [weeks, profiles, leaveRequests]);
 
@@ -177,9 +180,78 @@ export function YearPlanningView({
 
   const gridCols = `minmax(160px, 220px) repeat(${weeks.length}, minmax(26px, 1fr))`;
 
+  // ── Handy: kompakte KW-Liste statt 53-Spalten-Raster ──
+  // Nur ab der aktuellen KW, sonst scrollt man am Handy durch das
+  // halbe abgelaufene Jahr.
+  const mobileWeeks = useMemo(() => {
+    const idx = weeks.findIndex((w) => isSameDay(w.start, todayWeekStart));
+    const from = idx > 0 ? idx : 0;
+    return weeks
+      .map((w, wi) => ({ w, wi }))
+      .slice(from)
+      .map(({ w, wi }) => {
+        const { available, leaveDays } = availablePerWeek[wi];
+        const planned = plannedTotal[wi];
+        const pct = available > 0 ? Math.round((planned / available) * 100) : 0;
+        const projectsInWeek = boardProjects
+          .map((bp) => ({
+            name: projectMap.get(bp.project_id)?.name ?? "Unbekannt",
+            color: getEinsatzColor(projectMap.get(bp.project_id), bp.board_color, bp.project_id),
+            count: plannedByProject.get(bp.project_id)?.[wi] ?? 0,
+          }))
+          .filter((p) => p.count > 0);
+        return { w, wi, available, leaveDays, planned, pct, projectsInWeek };
+      });
+  }, [weeks, availablePerWeek, plannedTotal, boardProjects, projectMap, plannedByProject, todayWeekStart]);
+
   return (
     <div className="mt-3 space-y-2">
-      <div className="border rounded-lg overflow-x-auto bg-white">
+      {/* ── Handy-Ansicht ── */}
+      <div className="space-y-2 md:hidden">
+        {mobileWeeks.map(({ w, wi, available, leaveDays, planned, pct, projectsInWeek }) => (
+          <div key={wi} className="kb-panel overflow-hidden">
+            <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
+              <span className="text-sm font-bold">KW {w.weekNum}</span>
+              <span className="text-xs text-muted-foreground">
+                ab {format(w.start, "dd.MM.", { locale: de })}
+              </span>
+              {isCurrentWeek(w) && (
+                <span className="rounded-full bg-kb-blue px-2 py-0.5 text-[10px] font-bold text-white">
+                  aktuell
+                </span>
+              )}
+              <span
+                className={`ml-auto rounded-md px-2 py-1 text-xs font-bold ${
+                  available === 0 && planned > 0 ? "bg-red-200 text-red-900" : ampelClasses(pct)
+                }`}
+              >
+                {available === 0 && planned > 0 ? "überbucht" : `${pct} %`}
+              </span>
+            </div>
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              {planned} von {available} Manntagen verplant
+              {w.holidayCount > 0 && ` · ${w.holidayCount} Feiertag(e)`}
+              {leaveDays > 0 && ` · ${leaveDays} Urlaubstag(e)`}
+            </div>
+            {projectsInWeek.length > 0 && (
+              <ul className="divide-y border-t">
+                {projectsInWeek.map((p) => (
+                  <li key={p.name} className="flex items-center gap-2 px-3 py-2">
+                    <span
+                      className="h-3 w-3 shrink-0 rounded-sm"
+                      style={{ backgroundColor: p.color }}
+                    />
+                    <span className="min-w-0 flex-1 truncate text-sm">{p.name}</span>
+                    <span className="text-xs font-semibold">{p.count} MT</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div className="kb-panel hidden overflow-x-auto md:block">
         {/* Monats-Header */}
         <div
           className="grid sticky top-0 z-20 bg-white border-b"
@@ -241,11 +313,11 @@ export function YearPlanningView({
             Auslastung
           </div>
           {weeks.map((w, wi) => {
-            const available = availablePerWeek[wi];
+            const { available, leaveDays } = availablePerWeek[wi];
             const planned = plannedTotal[wi];
             const overbookedNoCapacity = available === 0 && planned > 0;
             const pct = available > 0 ? Math.round((planned / available) * 100) : 0;
-            const tooltip = `KW ${w.weekNum}: ${planned} von ${available} Manntagen verplant (${profiles.length} Mitarbeiter × ${w.workdays.length} Arbeitstage${w.holidayCount > 0 ? `, ${w.holidayCount} Feiertag(e)` : ""})`;
+            const tooltip = `KW ${w.weekNum}: ${planned} von ${available} Manntagen verplant (${profiles.length} Mitarbeiter × ${w.workdays.length} Arbeitstage${w.holidayCount > 0 ? `, ${w.holidayCount} Feiertag(e) abgezogen` : ""}${leaveDays > 0 ? `, ${leaveDays} Urlaubstag(e) abgezogen` : ""})`;
             return (
               <div
                 key={wi}
@@ -329,7 +401,7 @@ export function YearPlanningView({
       </div>
 
       {/* Legende */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground px-1">
+      <div className="kb-panel flex flex-wrap items-center gap-x-4 gap-y-1 p-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Auslastung:</span>
         <span className="flex items-center gap-1.5">
           <span className="inline-block w-3 h-3 rounded-sm bg-green-200 border border-green-300" />

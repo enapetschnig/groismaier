@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Plus, Trash2, Package, Edit2, Check, X, ArrowDown, ArrowUp, Minus } from "lucide-react";
+import { Plus, Trash2, Package, ArrowDown, ArrowUp, Minus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useEinheiten } from "@/hooks/useEinheiten";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/PageHeader";
+import { parseDecimal, toNumber } from "@/lib/num";
 
 type MaterialEntry = {
   id: string;
@@ -58,6 +60,7 @@ const MaterialList = () => {
   const [newTyp, setNewTyp] = useState<string>("entnahme");
   const [newNotizen, setNewNotizen] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [toDelete, setToDelete] = useState<MaterialEntry | null>(null);
 
   useEffect(() => {
     if (projectId) {
@@ -121,7 +124,9 @@ const MaterialList = () => {
         });
       }
       const s = map.get(key)!;
-      const menge = parseFloat(e.menge || "0") || 0;
+      // menge steht als Text in der DB — parseDecimal versteht auch Altbestand
+      // mit deutschem Komma ("12,5"), nicht nur das kanonische "12.5".
+      const menge = toNumber(e.menge, 0);
       if (e.typ === "entnahme") s.entnahme += menge;
       else if (e.typ === "rueckgabe") s.rueckgabe += menge;
       else s.verbrauch += menge;
@@ -136,14 +141,31 @@ const MaterialList = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!projectId || !currentUserId || !newMaterial.trim()) return;
+
+    // Menge ist PFLICHT — ohne Menge kann weder die Verbrauchsübersicht noch
+    // die Nachkalkulation etwas rechnen (der Eintrag wäre nur Text).
+    const mengeNum = parseDecimal(newMenge);
+    if (mengeNum === null || mengeNum <= 0) {
+      toast({ variant: "destructive", title: "Menge fehlt", description: 'Bitte eine Menge größer 0 eingeben (z.B. "12,5").' });
+      return;
+    }
+    const preisNum = parseDecimal(newEinzelpreis);
+    if (newEinzelpreis.trim() && preisNum === null) {
+      toast({ variant: "destructive", title: "Einzelpreis ungültig", description: 'Bitte als Zahl eingeben, z.B. "8,40".' });
+      return;
+    }
+
     setSubmitting(true);
     const { error } = await supabase.from("material_entries").insert({
       project_id: projectId,
       user_id: currentUserId,
       material: newMaterial.trim(),
-      menge: newMenge.trim() || null,
+      // KANONISCH mit Punkt speichern ("12.5"), NICHT die Roheingabe "12,5":
+      // die Nachkalkulation liest diese Spalte mit parseFloat — aus "12,5"
+      // würde dort sonst still 12 statt 12,5.
+      menge: String(mengeNum),
       einheit: newEinheit,
-      einzelpreis: parseFloat(newEinzelpreis) || 0,
+      einzelpreis: preisNum ?? 0,
       typ: newTyp,
       notizen: newNotizen.trim() || null,
       datum: new Date().toISOString().split("T")[0],
@@ -162,16 +184,30 @@ const MaterialList = () => {
     setSubmitting(false);
   };
 
-  const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("material_entries").delete().eq("id", id);
-    if (!error) {
+  const handleDelete = async () => {
+    if (!toDelete) return;
+    const { error } = await supabase.from("material_entries").delete().eq("id", toDelete.id);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: "Eintrag konnte nicht gelöscht werden" });
+    } else {
       toast({ title: "Gelöscht" });
       fetchEntries();
     }
+    setToDelete(null);
   };
 
   const canEditOrDelete = (entry: MaterialEntry) => isAdmin || entry.user_id === currentUserId;
   const summary = getSummary();
+  // Gesamtwert = exakt die Formel, die auch die Nachkalkulation verwendet.
+  const gesamtWert = summary.reduce((s, m) => s + m.verbrauch * m.einzelpreis, 0);
+
+  /** Geldbetrag österreichisch: € 1.234,56 */
+  const eur = (n: number) =>
+    `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+  /** Menge ohne unnötige Nachkommastellen: 150 statt 150,0 — 12,5 bleibt 12,5. */
+  const formatMenge = (n: number) =>
+    n.toLocaleString("de-AT", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 
   const typIcon = (typ: string | null) => {
     if (typ === "entnahme") return <ArrowUp className="h-3.5 w-3.5 text-red-500" />;
@@ -204,9 +240,9 @@ const MaterialList = () => {
         {summary.length > 0 && (
           <Card>
             <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-lg">Verbrauchsübersicht</CardTitle>
-                <Button variant="ghost" size="sm" onClick={() => setShowSummary(!showSummary)}>
+                <Button variant="ghost" size="sm" className="h-11" onClick={() => setShowSummary(!showSummary)}>
                   {showSummary ? "Ausblenden" : "Anzeigen"}
                 </Button>
               </div>
@@ -214,24 +250,37 @@ const MaterialList = () => {
             {showSummary && (
               <CardContent>
                 <div className="space-y-2">
-                  {summary.filter(s => s.verbrauch > 0).map((s, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-muted/30 border">
-                      <div>
-                        <p className="font-medium text-sm">{s.material}</p>
+                  {/* Auch Zeilen mit Netto-Rückgabe (negativer Verbrauch) zeigen —
+                      sonst verschwindet zurückgegebenes Material spurlos. */}
+                  {summary.filter(s => s.verbrauch !== 0).map((s, i) => (
+                    <div key={i} className="flex items-center justify-between gap-3 p-3 rounded-lg bg-muted/30 border">
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm break-words">{s.material}</p>
                         <p className="text-xs text-muted-foreground">
-                          {s.einzelpreis > 0 && `€ ${s.einzelpreis.toFixed(2)} / ${s.einheit}`}
+                          {s.einzelpreis > 0 && `${eur(s.einzelpreis)} / ${s.einheit}`}
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="font-bold">{s.verbrauch.toFixed(1)} {s.einheit}</p>
+                      <div className="text-right shrink-0">
+                        <p className="font-bold tabular-nums">{formatMenge(s.verbrauch)} {s.einheit}</p>
                         {s.einzelpreis > 0 && (
-                          <p className="text-xs text-muted-foreground">
-                            € {(s.verbrauch * s.einzelpreis).toFixed(2)}
+                          <p className="text-xs text-muted-foreground tabular-nums">
+                            {eur(s.verbrauch * s.einzelpreis)}
                           </p>
                         )}
                       </div>
                     </div>
                   ))}
+                </div>
+                {/* Materialkosten GESAMT — die Zahl, die auch in der
+                    Nachkalkulation als Materialkosten auftaucht. */}
+                <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border-2 border-primary/30 bg-primary/5 p-3">
+                  <div className="min-w-0">
+                    <p className="font-semibold text-sm">Materialkosten gesamt</p>
+                    <p className="text-xs text-muted-foreground">
+                      Entnahme + Verbrauch − Rückgabe, je × EK — fließt so in die Nachkalkulation
+                    </p>
+                  </div>
+                  <p className="text-lg font-bold tabular-nums shrink-0">{eur(gesamtWert)}</p>
                 </div>
               </CardContent>
             )}
@@ -241,16 +290,18 @@ const MaterialList = () => {
         {/* Einträge */}
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
+            {/* flex-wrap + min-w-0: am Handy (390px) rutscht der Button unter den
+                Titel, statt die Karte über den Bildschirmrand zu schieben. */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
                 <CardTitle className="flex items-center gap-2">
-                  <Package className="h-5 w-5" />
+                  <Package className="h-5 w-5 shrink-0" />
                   Materialbewegungen
                 </CardTitle>
-                <CardDescription>{entries.length} Einträge</CardDescription>
+                <CardDescription>{entries.length} {entries.length === 1 ? "Eintrag" : "Einträge"}</CardDescription>
               </div>
               {!showForm && (
-                <Button onClick={() => setShowForm(true)} size="sm">
+                <Button onClick={() => setShowForm(true)} className="h-11 shrink-0">
                   <Plus className="h-4 w-4 mr-2" />
                   Erfassen
                 </Button>
@@ -264,12 +315,12 @@ const MaterialList = () => {
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
                     <label className="text-sm font-medium">Material *</label>
-                    <Input value={newMaterial} onChange={(e) => setNewMaterial(e.target.value)} placeholder="z.B. Fliese 30x60" required />
+                    <Input value={newMaterial} onChange={(e) => setNewMaterial(e.target.value)} placeholder="z.B. Fliese 30x60" className="h-11" required />
                   </div>
                   <div>
                     <label className="text-sm font-medium">Typ</label>
                     <Select value={newTyp} onValueChange={setNewTyp}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="entnahme">Entnahme</SelectItem>
                         <SelectItem value="rueckgabe">Rückgabe</SelectItem>
@@ -278,13 +329,22 @@ const MaterialList = () => {
                     </Select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Menge</label>
-                    <Input value={newMenge} onChange={(e) => setNewMenge(e.target.value)} placeholder="z.B. 25" type="number" step="0.1" />
+                    <label className="text-sm font-medium">Menge *</label>
+                    {/* type="text" + inputMode="decimal": mit type="number" konnte
+                        man "12,5" gar nicht eintippen (Browser verwirft das Komma). */}
+                    <Input
+                      value={newMenge}
+                      onChange={(e) => setNewMenge(e.target.value)}
+                      placeholder="z.B. 12,5"
+                      type="text"
+                      inputMode="decimal"
+                      className="h-11"
+                    />
                   </div>
                   <div>
                     <label className="text-sm font-medium">Einheit</label>
                     <Select value={newEinheit} onValueChange={setNewEinheit}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="h-11"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {einheiten.map(e => (
                           <SelectItem key={e} value={e}>{e}</SelectItem>
@@ -293,15 +353,32 @@ const MaterialList = () => {
                     </Select>
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Einzelpreis (€)</label>
-                    <Input value={newEinzelpreis} onChange={(e) => setNewEinzelpreis(e.target.value)} placeholder="0.00" type="number" step="0.01" />
+                    <label className="text-sm font-medium">Einkaufspreis je Einheit (€)</label>
+                    <Input
+                      value={newEinzelpreis}
+                      onChange={(e) => setNewEinzelpreis(e.target.value)}
+                      placeholder="z.B. 8,40"
+                      type="text"
+                      inputMode="decimal"
+                      className="h-11"
+                    />
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <Button type="submit" disabled={submitting || !newMaterial.trim()}>
+                {/* Live-Zwischensumme: der Erfasser sieht sofort, was die
+                    Bewegung wert ist — Tippfehler (Faktor 100) fallen auf. */}
+                {parseDecimal(newMenge) !== null && parseDecimal(newEinzelpreis) !== null && (
+                  <p className="text-sm text-muted-foreground">
+                    Wert dieser Bewegung:{" "}
+                    <span className="font-semibold text-foreground tabular-nums">
+                      {eur(toNumber(newMenge) * toNumber(newEinzelpreis))}
+                    </span>
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" className="h-11" disabled={submitting || !newMaterial.trim()}>
                     {submitting ? "Speichert..." : "Speichern"}
                   </Button>
-                  <Button type="button" variant="outline" onClick={() => setShowForm(false)}>Abbrechen</Button>
+                  <Button type="button" variant="outline" className="h-11" onClick={() => setShowForm(false)}>Abbrechen</Button>
                 </div>
               </form>
             )}
@@ -314,39 +391,73 @@ const MaterialList = () => {
               </div>
             ) : (
               <div className="space-y-2">
-                {entries.map((entry) => (
-                  <div key={entry.id} className="p-3 rounded-lg border bg-card flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3 flex-1 min-w-0">
-                      {typIcon(entry.typ)}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium text-sm truncate">{entry.material}</p>
-                          <Badge variant="secondary" className={`text-xs shrink-0 ${typColor(entry.typ)}`}>
-                            {typLabel(entry.typ)}
-                          </Badge>
+                {entries.map((entry) => {
+                  const menge = toNumber(entry.menge, 0);
+                  const ek = Number(entry.einzelpreis) || 0;
+                  return (
+                    <div key={entry.id} className="p-3 rounded-lg border bg-card flex items-start justify-between gap-2">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <span className="mt-1 shrink-0">{typIcon(entry.typ)}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="font-medium text-sm break-words">{entry.material}</p>
+                            <Badge variant="secondary" className={`text-xs shrink-0 ${typColor(entry.typ)}`}>
+                              {typLabel(entry.typ)}
+                            </Badge>
+                          </div>
+                          <p className="text-xs text-muted-foreground break-words">
+                            {entry.menge && `${formatMenge(menge)} ${entry.einheit || ""}`}
+                            {ek > 0 ? ` × ${eur(ek)} = ` : ""}
+                            {ek > 0 ? <span className="font-medium text-foreground tabular-nums">{eur(menge * ek)}</span> : null}
+                            {entry.profiles ? ` · ${entry.profiles.vorname} ${entry.profiles.nachname}` : ""}
+                            {" · "}
+                            {entry.datum ? new Date(entry.datum).toLocaleDateString("de-AT") : new Date(entry.created_at).toLocaleDateString("de-AT")}
+                          </p>
                         </div>
-                        <p className="text-xs text-muted-foreground">
-                          {entry.menge && `${entry.menge} ${entry.einheit || ""}`}
-                          {entry.einzelpreis && entry.einzelpreis > 0 ? ` · € ${entry.einzelpreis.toFixed(2)}` : ""}
-                          {" · "}
-                          {entry.profiles ? `${entry.profiles.vorname} ${entry.profiles.nachname}` : ""}
-                          {" · "}
-                          {entry.datum ? new Date(entry.datum).toLocaleDateString("de-AT") : new Date(entry.created_at).toLocaleDateString("de-AT")}
-                        </p>
                       </div>
+                      {canEditOrDelete(entry) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`${entry.material} löschen`}
+                          className="h-11 w-11 shrink-0"
+                          onClick={() => setToDelete(entry)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
                     </div>
-                    {canEditOrDelete(entry) && (
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(entry.id)}>
-                        <Trash2 className="h-4 w-4 text-destructive" />
-                      </Button>
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CardContent>
         </Card>
       </main>
+
+      {/* Löschen erst nach Rückfrage — ein Fehlgriff auf dem Handy hat sonst
+          still eine Materialbewegung (und damit Nachkalkulations-Kosten) gelöscht. */}
+      <AlertDialog open={!!toDelete} onOpenChange={(o) => !o && setToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Materialbewegung löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              <strong>{toDelete?.material}</strong>
+              {toDelete?.menge ? ` (${formatMenge(toNumber(toDelete.menge, 0))} ${toDelete.einheit || ""})` : ""}
+              {" "}wird entfernt. Die Materialkosten in der Nachkalkulation sinken entsprechend.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Ja, löschen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 };

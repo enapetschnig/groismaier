@@ -16,6 +16,21 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Percent, Euro, AlertTriangle, RefreshCw, TrendingUp } from "lucide-react";
+import { parseDecimal } from "@/lib/num";
+
+/**
+ * Geldbetrag im österreichischen Format: 4.303,50 (statt 4303.50).
+ * Gleiche Schreibweise wie im Beleg-Editor (Punkt als Tausendertrenner) —
+ * toLocaleString("de-AT") würde ein schmales Leerzeichen setzen.
+ */
+const eur = (n: number): string => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "0,00";
+  const teile = Math.abs(v).toFixed(2).split(".");
+  teile[0] = teile[0].replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  return (v < 0 ? "-" : "") + teile.join(",");
+};
+
 
 /**
  * Bulk-Preissteigerung für den Material-Katalog.
@@ -141,7 +156,9 @@ export function BulkPriceDialog({
     });
   }, [rows, filterKategorien, filterLieferanten, filterTyp]);
 
-  const numValue = Number(value) || 0;
+  // "2,5" muss funktionieren — mit <Input type="number"> + Number() verwarf der
+  // Browser das Komma und der Anwender bekam wortlos 0 (Knopf blieb inaktiv).
+  const numValue = parseDecimal(value) ?? 0;
 
   const applyOp = (base: number): number => {
     if (operator === "prozent") return Math.round(base * (1 + numValue / 100) * 100) / 100;
@@ -304,7 +321,7 @@ export function BulkPriceDialog({
 
   const opLabel = operator === "prozent"
     ? `${numValue >= 0 ? "+" : ""}${numValue} %`
-    : `${numValue >= 0 ? "+" : ""}€ ${Math.abs(numValue).toFixed(2)}`;
+    : `${numValue >= 0 ? "+" : "-"}€ ${eur(Math.abs(numValue))}`;
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && !applying && onClose()}>
@@ -389,9 +406,11 @@ export function BulkPriceDialog({
               )}
 
               <div className="space-y-1.5">
-                <p className="text-xs">
+                {/* <div> (Badge) darf nicht in <p> stehen — React meldete
+                    sonst bei jedem Öffnen eine validateDOMNesting-Warnung. */}
+                <div className="text-xs flex items-center gap-1">
                   <Badge variant="secondary">{filtered.length}</Badge> Material(ien) in der Auswahl.
-                </p>
+                </div>
                 {/* Materialien zur gewählten Kategorie/Filter direkt anzeigen —
                     sofort sichtbar, noch bevor ein Wert eingegeben wird. */}
                 {(filterKategorien.size > 0 || filterLieferanten.size > 0 || filterTyp !== "alle") && filtered.length > 0 && (
@@ -403,7 +422,7 @@ export function BulkPriceDialog({
                           {r.ist_set && <Badge variant="outline" className="text-[9px] px-1 py-0 h-3.5">Set</Badge>}
                         </span>
                         <span className="font-mono text-muted-foreground shrink-0">
-                          EK €{r.ek_netto.toFixed(2)} · VK €{r.vk_netto.toFixed(2)}
+                          EK €{eur(r.ek_netto)} · VK €{eur(r.vk_netto)}
                         </span>
                       </div>
                     ))}
@@ -439,9 +458,9 @@ export function BulkPriceDialog({
                 <div>
                   <Label className="text-xs text-muted-foreground">Wert</Label>
                   <Input
-                    type="number"
-                    step={operator === "prozent" ? 0.1 : 0.01}
-                    placeholder={operator === "prozent" ? "z. B. 5 für +5%" : "z. B. 2.50"}
+                    type="text"
+                    inputMode="decimal"
+                    placeholder={operator === "prozent" ? "z. B. 5 für +5%" : "z. B. 2,50"}
                     value={value}
                     onChange={(e) => setValue(e.target.value)}
                   />
@@ -497,12 +516,12 @@ export function BulkPriceDialog({
                         </span>
                         {(target === "ek" || target === "beide") && (
                           <span className="text-muted-foreground">
-                            EK: € {p.ek_netto.toFixed(2)} → <span className="text-foreground">€ {p.newEk.toFixed(2)}</span>
+                            EK: € {eur(p.ek_netto)} → <span className="text-foreground">€ {eur(p.newEk)}</span>
                           </span>
                         )}
                         {(target === "vk" || target === "beide") && (
                           <span className="text-muted-foreground">
-                            VK: € {p.vk_netto.toFixed(2)} → <span className="text-foreground">€ {p.newVk.toFixed(2)}</span>
+                            VK: € {eur(p.vk_netto)} → <span className="text-foreground">€ {eur(p.newVk)}</span>
                           </span>
                         )}
                       </div>

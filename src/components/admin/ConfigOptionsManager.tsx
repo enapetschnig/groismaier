@@ -147,14 +147,12 @@ export function ConfigOptionsManager({ kategorie, title, description, icon, show
         };
 
         if (o.id) {
-          const { error } = await supabase
-            .from("admin_config_options" as never)
+          const { error } = await (supabase.from("admin_config_options" as never) as any)
             .update(row)
             .eq("id", o.id);
           if (error) throw error;
         } else {
-          const { error } = await supabase
-            .from("admin_config_options" as never)
+          const { error } = await (supabase.from("admin_config_options" as never) as any)
             .insert(row);
           if (error) throw error;
         }
@@ -183,86 +181,103 @@ export function ConfigOptionsManager({ kategorie, title, description, icon, show
         <CardDescription>{description}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* Eine Zeile pro Option.
+            Mobil (< sm) gestapelt — sonst quetschen sich Label/Wert/Reihenfolge
+            auf 390 px zusammen, die Feldbeschriftungen überlappen und das
+            wichtigste Feld (Label) ist gar nicht mehr bedienbar.
+            Ab sm wieder die kompakte Zeile wie bisher. */}
         {options.map((option, idx) => (
-          <div key={option.id ?? `new-${idx}`} className="flex items-center gap-3 p-3 border rounded-lg">
-            {/* Label */}
-            <div className="flex-1 min-w-0">
-              <Label className="text-xs">Label</Label>
+          <div
+            key={option.id ?? `new-${idx}`}
+            className="space-y-3 rounded-lg border p-3 sm:flex sm:items-end sm:gap-3 sm:space-y-0"
+          >
+            {/* Label (Anzeigename) */}
+            <div className="min-w-0 sm:flex-1">
+              <Label className="text-xs" htmlFor={`cfg-${kategorie}-label-${idx}`}>Label</Label>
               <Input
+                id={`cfg-${kategorie}-label-${idx}`}
                 value={option.label}
                 onChange={(e) => updateOption(idx, "label", e.target.value)}
                 placeholder="Anzeigename"
               />
             </div>
 
-            {/* Wert / Slug */}
-            <div className="w-32 shrink-0">
-              <Label className="text-xs">Wert</Label>
-              <Input
-                value={option.wert}
-                onChange={(e) => {
-                  if (option._isNew) {
-                    updateOption(idx, "wert", e.target.value);
-                  }
-                }}
-                readOnly={!option._isNew}
-                className={!option._isNew ? "bg-muted" : ""}
-                placeholder="slug"
-              />
-            </div>
-
-            {/* Sort order */}
-            <div className="w-20 shrink-0">
-              <Label className="text-xs">Reihenfolge</Label>
-              <Input
-                type="number"
-                value={option.sort_order}
-                onChange={(e) => updateOption(idx, "sort_order", parseInt(e.target.value) || 0)}
-                min={0}
-              />
-            </div>
-
-            {/* Farbe */}
-            {showFarbe && (
-              <div className="w-16 shrink-0">
-                <Label className="text-xs">Farbe</Label>
+            <div className="grid grid-cols-2 gap-3 sm:flex sm:items-end sm:gap-3">
+              {/* Wert / Slug */}
+              <div className="min-w-0 sm:w-32 sm:shrink-0">
+                <Label className="text-xs" htmlFor={`cfg-${kategorie}-wert-${idx}`}>Wert</Label>
                 <Input
-                  type="color"
-                  value={option.farbe ?? "#3b82f6"}
-                  onChange={(e) => updateOption(idx, "farbe", e.target.value)}
-                  className="h-9 p-0.5 cursor-pointer"
+                  id={`cfg-${kategorie}-wert-${idx}`}
+                  value={option.wert}
+                  onChange={(e) => {
+                    if (option._isNew) {
+                      updateOption(idx, "wert", e.target.value);
+                    }
+                  }}
+                  readOnly={!option._isNew}
+                  className={!option._isNew ? "bg-muted" : ""}
+                  placeholder="slug"
                 />
               </div>
-            )}
 
-            {/* Active toggle */}
-            <div className="flex flex-col items-center gap-1 shrink-0">
-              <Label className="text-xs">Aktiv</Label>
-              <Switch
-                checked={option.is_active}
-                onCheckedChange={(checked) => updateOption(idx, "is_active", checked)}
-              />
+              {/* Reihenfolge */}
+              <div className="min-w-0 sm:w-20 sm:shrink-0">
+                <Label className="text-xs" htmlFor={`cfg-${kategorie}-sort-${idx}`}>Reihenfolge</Label>
+                <Input
+                  id={`cfg-${kategorie}-sort-${idx}`}
+                  type="number"
+                  value={option.sort_order}
+                  onChange={(e) => updateOption(idx, "sort_order", parseInt(e.target.value) || 0)}
+                  min={0}
+                />
+              </div>
+
+              {/* Farbe */}
+              {showFarbe && (
+                <div className="min-w-0 sm:w-16 sm:shrink-0">
+                  <Label className="text-xs" htmlFor={`cfg-${kategorie}-farbe-${idx}`}>Farbe</Label>
+                  <Input
+                    id={`cfg-${kategorie}-farbe-${idx}`}
+                    type="color"
+                    value={option.farbe ?? "#3b82f6"}
+                    onChange={(e) => updateOption(idx, "farbe", e.target.value)}
+                    className="h-10 w-full cursor-pointer p-0.5"
+                  />
+                </div>
+              )}
             </div>
 
-            {/* Delete button */}
-            <Button
-              variant={deleteConfirm === idx ? "destructive" : "ghost"}
-              size="icon"
-              onClick={() => removeOption(idx)}
-              title={deleteConfirm === idx ? "Nochmal klicken zum Löschen" : "Löschen"}
-              className="shrink-0 mt-4"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {/* Aktiv + Löschen */}
+            <div className="flex items-center justify-between gap-3 sm:shrink-0 sm:justify-start">
+              <label className="flex items-center gap-2 sm:flex-col sm:gap-1">
+                <span className="text-xs text-muted-foreground">Aktiv</span>
+                <Switch
+                  checked={option.is_active}
+                  onCheckedChange={(checked) => updateOption(idx, "is_active", checked)}
+                />
+              </label>
+              <Button
+                variant={deleteConfirm === idx ? "destructive" : "ghost"}
+                size="icon"
+                onClick={() => removeOption(idx)}
+                title={deleteConfirm === idx ? "Nochmal klicken zum Löschen" : "Löschen"}
+                className="h-11 w-11 shrink-0"
+              >
+                <Trash2 className="h-4 w-4" />
+                <span className="sr-only">
+                  {deleteConfirm === idx ? "Nochmal klicken zum Löschen" : "Option löschen"}
+                </span>
+              </Button>
+            </div>
           </div>
         ))}
 
-        <Button variant="outline" onClick={addOption} className="w-full">
+        <Button variant="outline" onClick={addOption} className="h-11 w-full">
           <Plus className="h-4 w-4 mr-2" />
           Neue Option
         </Button>
 
-        <Button onClick={handleSave} disabled={saving} className="w-full">
+        <Button onClick={handleSave} disabled={saving} className="h-11 w-full">
           <Save className="h-4 w-4 mr-2" />
           {saving ? "Speichern..." : "Speichern"}
         </Button>

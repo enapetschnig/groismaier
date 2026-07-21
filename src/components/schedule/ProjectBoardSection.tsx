@@ -29,25 +29,31 @@ export function ProjectBoardSection({ boardProjects, projects, days, onAddClick,
 
   return (
     <div className="border-b">
-      {/* Section header */}
+      {/* Section header — Klapp-Knopf und „+" sind Geschwister, kein
+          verschachteltes <button> (ungültiges HTML). */}
       <div className="flex items-center border-b">
-        <button
-          className="flex items-center gap-2 px-3 py-2 hover:bg-muted/30 transition-colors text-left"
-          style={{ width: 280 }}
-          onClick={() => setCollapsed(!collapsed)}
-        >
-          {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-          <span className="font-semibold text-sm">Projekte</span>
+        <div className="flex items-center" style={{ width: 280 }}>
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-muted/30"
+            onClick={() => setCollapsed(!collapsed)}
+            aria-expanded={!collapsed}
+          >
+            {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+            <span className="font-semibold text-sm">Projekte</span>
+          </button>
           {onAddClick && (
             <button
-              className="ml-auto p-1 rounded hover:bg-muted/40"
-              onClick={(e) => { e.stopPropagation(); onAddClick(); }}
+              type="button"
+              className="mr-2 rounded p-1 hover:bg-muted/40"
+              onClick={onAddClick}
               title="Projekt hinzufügen"
+              aria-label="Projekt hinzufügen"
             >
               <Plus className="h-4 w-4 text-muted-foreground" />
             </button>
           )}
-        </button>
+        </div>
       </div>
 
       {!collapsed && boardProjects.map((bp) => {

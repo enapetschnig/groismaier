@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ArrowLeft, Clock, Building2, Hammer, Pencil, Trash2, TrendingUp, Wallet } from "lucide-react";
+import { Clock, Home, Pencil, Trash2, Wallet } from "lucide-react";
 import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
+import { KBToolbar } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -52,24 +53,28 @@ const MyHours = () => {
     fetchEntries();
   }, [selectedMonth]);
 
-  // Stundenkonto einmalig laden (nicht abhängig vom angezeigten Monat —
-  // der Saldo läuft über alle Daten, der Monat ist nur Anzeige-Filter).
+  // Stundenkonto laden (nicht abhängig vom angezeigten Monat — der Saldo läuft
+  // über alle Daten, der Monat ist nur Anzeige-Filter).
+  //
+  // MUSS nach jedem Bearbeiten/Löschen erneut laufen: vorher lief das genau
+  // einmal beim Öffnen, danach zeigte der Kopf noch den alten Saldo, während die
+  // Monatszeile unten schon den neuen zeigte — zwei widersprüchliche Zahlen auf
+  // demselben Bildschirm.
+  const fetchAccount = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    const [{ data: acc }, { data: allEntries }] = await Promise.all([
+      (supabase.from("time_accounts" as never) as any)
+        .select("balance_hours").eq("user_id", user.id).maybeSingle(),
+      supabase.from("time_entries")
+        .select("datum, stunden, taetigkeit").eq("user_id", user.id),
+    ]);
+    setManualSaldo(Number((acc as any)?.balance_hours) || 0);
+    setAutoSaldoAll(totalAutoSaldo((allEntries as any[]) || []));
+  };
+
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const [{ data: acc }, { data: allEntries }] = await Promise.all([
-        (supabase.from("time_accounts" as never) as any)
-          .select("balance_hours").eq("user_id", user.id).maybeSingle(),
-        supabase.from("time_entries")
-          .select("datum, stunden, taetigkeit").eq("user_id", user.id),
-      ]);
-      if (cancelled) return;
-      setManualSaldo(Number((acc as any)?.balance_hours) || 0);
-      setAutoSaldoAll(totalAutoSaldo((allEntries as any[]) || []));
-    })();
-    return () => { cancelled = true; };
+    fetchAccount();
   }, []);
 
   // Tages-Aggregation des aktuell angezeigten Monats (für Tagessaldo-Spalte).
@@ -148,6 +153,7 @@ const MyHours = () => {
       setShowEditDialog(false);
       setEditingEntry(null);
       fetchEntries();
+      fetchAccount();
     }
     setSavingEdit(false);
   };
@@ -174,27 +180,41 @@ const MyHours = () => {
       setShowEditDialog(false);
       setEditingEntry(null);
       fetchEntries();
+      fetchAccount();
     }
   };
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center"><p>Lädt...</p></div>;
+    return (
+      <div className="kb-page min-h-screen flex items-center justify-center">
+        <p className="text-muted-foreground">Lädt...</p>
+      </div>
+    );
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b bg-card sticky top-0 z-50 shadow-sm">
-        <div className="container mx-auto px-3 sm:px-4 py-3 sm:py-4">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={() => navigate("/")}>
-              <ArrowLeft className="h-4 w-4 mr-2" />Zurück
-            </Button>
-          </div>
-        </div>
-      </header>
+    <div className="kb-page min-h-screen">
+      {/* KingBill-Toolbar statt weißer shadcn-Leiste — sonst fiel die Maske
+          optisch aus der App heraus. Zurück + Home = kein Sackgassen-Risiko. */}
+      <KBToolbar
+        title="Meine Stunden"
+        onBack={() => navigate("/")}
+        backLabel="Zurück zur Startmaske"
+        rightActions={
+          <button
+            type="button"
+            onClick={() => navigate("/")}
+            aria-label="Zur Startmaske"
+            title="Zur Startmaske"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
+          >
+            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
+          </button>
+        }
+      />
 
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-7xl space-y-4">
-        <Card>
+        <Card className="kb-panel">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <Wallet className="h-5 w-5" />
@@ -228,11 +248,13 @@ const MyHours = () => {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="kb-panel">
           <CardHeader>
+            {/* „Meine Stunden" steht schon in der blauen Leiste — hier der
+                konkretere Titel, sonst stünde derselbe Text zweimal. */}
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-5 w-5" />
-              Meine Stunden
+              Buchungen im Monat
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -244,7 +266,7 @@ const MyHours = () => {
                   type="month"
                   value={selectedMonth}
                   onChange={(e) => setSelectedMonth(e.target.value)}
-                  className="w-44"
+                  className="h-11 w-44"
                 />
               </div>
               <div className="text-sm sm:text-base space-y-0.5">
@@ -281,7 +303,84 @@ const MyHours = () => {
                 Keine Einträge für {new Date(selectedMonth + '-01').toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
               </p>
             ) : (
-              <div className="rounded-md border overflow-x-auto">
+              <>
+              {/*
+                ── Mobil (< md): Karten statt 9-spaltiger Tabelle ──
+                Am Handy war die Tabelle nur seitwärts scrollbar; Projekt, Von/Bis
+                und Stunden lagen außerhalb des Bildschirms. Jetzt steht pro Tag
+                eine Karte mit allen Werten untereinander, Bearbeiten als 44px-Ziel.
+              */}
+              <ul className="flex flex-col gap-2 md:hidden">
+                {Array.from(
+                  entries.reduce((map, e) => {
+                    const list = map.get(e.datum) || [];
+                    list.push(e);
+                    map.set(e.datum, list);
+                    return map;
+                  }, new Map<string, TimeEntry[]>())
+                ).map(([datum, dayEntries]) => {
+                  const dayBal = dayBalanceMap.get(datum);
+                  const dayTotal = dayEntries.reduce((s, e) => s + (e.stunden || 0), 0);
+                  return (
+                    <li key={datum} className="rounded-md border border-border p-3">
+                      <div className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 border-b border-border pb-2">
+                        <span className="font-bold">
+                          {new Date(datum + "T12:00:00").toLocaleDateString("de-DE", {
+                            weekday: "short", day: "2-digit", month: "2-digit", year: "2-digit",
+                          })}
+                        </span>
+                        <span className="text-sm">
+                          <span className="font-bold text-primary">{dayTotal.toFixed(2)} h</span>
+                          {dayBal && Math.abs(dayBal.saldo) >= 0.005 && (
+                            <span className={`ml-2 font-medium ${dayBal.saldo > 0 ? "text-green-600" : "text-red-600"}`}>
+                              {formatSaldo(dayBal.saldo)} h
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                      {dayEntries.map((entry) => (
+                        <div key={entry.id} className="flex items-start gap-2 pt-2">
+                          <div className="min-w-0 flex-1 text-sm">
+                            <p className="flex flex-wrap items-center gap-1.5">
+                              <span>{entry.location_type === "werkstatt" ? "🏢 Firma" : "🏗️ Baustelle"}</span>
+                              {entry.nachgetragen_von && (
+                                <span className="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1 py-0 text-[9px] text-amber-700">
+                                  nachgetragen
+                                </span>
+                              )}
+                              <span className="ml-auto font-semibold">{entry.stunden.toFixed(2)} h</span>
+                            </p>
+                            <p className="break-words text-muted-foreground">
+                              {entry.projects?.name || "Kein Projekt"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {entry.start_time?.substring(0, 5) || "–"}–{entry.end_time?.substring(0, 5) || "–"}
+                              {entry.pause_minutes ? ` · Pause ${entry.pause_minutes} Min` : ""}
+                            </p>
+                            {entry.taetigkeit && (
+                              <p className="break-words text-xs text-muted-foreground">{entry.taetigkeit}</p>
+                            )}
+                          </div>
+                          <button
+                            type="button"
+                            aria-label="Eintrag bearbeiten"
+                            className="kb-btn h-11 w-11 shrink-0 justify-center"
+                            onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }}
+                            disabled={!isCurrentMonth(entry.datum)}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </li>
+                  );
+                })}
+                <li className="rounded-md border border-border bg-muted/40 px-3 py-2 text-right text-sm font-bold">
+                  Gesamt: {totalHours.toFixed(2)} h
+                </li>
+              </ul>
+
+              <div className="hidden md:block rounded-md border overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -366,7 +465,7 @@ const MyHours = () => {
                                   </span>
                                 )}
                               </TableCell>
-                              <TableCell colSpan={2}></TableCell>
+                              <TableCell colSpan={3}></TableCell>
                             </TableRow>
                           );
                         }
@@ -376,13 +475,16 @@ const MyHours = () => {
                   </TableBody>
                   <TableFooter>
                     <TableRow>
+                      {/* 9 Spalten im Header → 6 + 1 + 2 = 9 (vorher 8: die
+                          Fußzeile war um eine Spalte zu kurz). */}
                       <TableCell colSpan={6} className="text-right font-semibold">Gesamt:</TableCell>
                       <TableCell className="text-right font-bold">{totalHours.toFixed(2)} h</TableCell>
-                      <TableCell></TableCell>
+                      <TableCell colSpan={2}></TableCell>
                     </TableRow>
                   </TableFooter>
                 </Table>
               </div>
+              </>
             )}
           </CardContent>
         </Card>
