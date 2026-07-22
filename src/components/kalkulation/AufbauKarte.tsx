@@ -1,8 +1,13 @@
 // ============================================================================
 // AufbauKarte — eine einklappbare Aufbau-Karte des Tabs "Aufbau Kalkulation":
 // Spalte A (Aufbau/Material inkl. MaterialTabelle), Spalte B (Arbeitszeit,
-// Fahrten, Dienstleistungen), Spalte C (Zusammenfassung + Nachkalkulation).
+// Fahrten, Dienstleistungen), Spalte C (Zusammenfassung).
 // Drag&Drop-Umsortierung, Klonen, optional-Flag wie im Original.
+//
+// KEINE Nachkalkulation mehr in der Karte (Kundenentscheid 2026-07-22: „die
+// Nachkalkulation mache ich ja erst ganz danach"). Die Ist-Werte im Datenmodell
+// (nachkalk.actualDays, materialRows[].actualVK) bleiben unangetastet, damit
+// Altdaten nicht kaputtgehen — ausgewertet wird auf der Seite /nachkalkulation.
 // ============================================================================
 import { AlertTriangle, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
 import {
@@ -60,7 +65,6 @@ export function AufbauKarte({
   const laborAdj = erg.laborTotal * faktor;
   const gesamtAdj = materialAdj + laborAdj;
   const area = num(m.area);
-  const nk = erg.nachkalk;
   // Unplausible Wandhöhen (0,1 m, kleiner als 2× Brettdicke) wurden früher
   // wortlos durchgerechnet — jetzt steht der Hinweis direkt am Feld.
   const hoehenWarnung = wandhoeheWarnung(m.wallHeight, bd);
@@ -98,7 +102,9 @@ export function AufbauKarte({
         <>
           {/* min-w-0 an jeder Spalte: sonst zwingt die Materialtabelle
               (min-w-540) das Grid am Handy breiter als der Bildschirm. */}
-          <div className="grid gap-4 p-3 xl:grid-cols-[1.35fr_1fr_1fr]">
+          {/* Spalte A bekommt mehr Platz, seit die Nachkalkulation aus Spalte C
+              raus ist — die Materialtabelle ist die eigentliche Arbeitsfläche. */}
+          <div className="grid gap-4 p-3 xl:grid-cols-[1.6fr_1fr_0.85fr]">
             {/* Spalte A: Aufbau / Material */}
             <div className="min-w-0 space-y-2">
               <h4 className="text-xs font-bold uppercase tracking-wide text-kb-blue-dark">Aufbau / Material</h4>
@@ -206,7 +212,7 @@ export function AufbauKarte({
               </div>
             </div>
 
-            {/* Spalte C: Zusammenfassung + Nachkalkulation */}
+            {/* Spalte C: Zusammenfassung */}
             <div className="min-w-0 space-y-3">
               <h4 className="text-xs font-bold uppercase tracking-wide text-kb-blue-dark">Zusammenfassung</h4>
               <div className="rounded border bg-[#F0F7EC] p-3 text-sm">
@@ -219,39 +225,6 @@ export function AufbauKarte({
                   </div>
                 )}
                 {faktor !== 1 && <div className="mt-1 text-[10px] text-muted-foreground">inkl. Aufschlag/Skonto (Faktor {fmt(faktor)})</div>}
-              </div>
-
-              <div className="rounded border border-dashed border-[#ED7D31] p-3">
-                <div className="mb-2 text-xs font-bold text-[#C55A11]">📊 Nachkalkulation (Ist-Kosten)</div>
-                <Feld label="Tatsächliche Dauer in Tagen">
-                  <NumInput min={0} value={m.nachkalk?.actualDays ?? null} nullable
-                    onCommit={(n) => onPatch({ nachkalk: { actualDays: n } })} className={`${FELD_H} border-[#ED7D31]/50`} />
-                </Feld>
-                {nk.istLohn !== null && (
-                  <div className="mt-2 space-y-0.5 text-xs">
-                    <div className="flex justify-between"><span>Lohnkosten (ist)</span><b className="tabular-nums">{fmtEuro(nk.istLohn)}</b></div>
-                    <div className="flex justify-between">
-                      <span>Differenz Tage</span>
-                      <b className={`tabular-nums ${num(nk.diffTage) <= 0 ? "text-green-700" : "text-red-600"}`}>{num(nk.diffTage) > 0 ? "+" : ""}{fmt(num(nk.diffTage))}</b>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Differenz €</span>
-                      <b className={`tabular-nums ${num(nk.diffLohn) <= 0 ? "text-green-700" : "text-red-600"}`}>{num(nk.diffLohn) > 0 ? "+" : ""}{fmtEuro(num(nk.diffLohn))}</b>
-                    </div>
-                  </div>
-                )}
-                {nk.istMaterial !== null && (
-                  <div className="mt-2 space-y-0.5 border-t pt-2 text-xs">
-                    <div className="flex justify-between"><span>Material (ist)</span><b className="tabular-nums">{fmtEuro(nk.istMaterial)}</b></div>
-                    <div className="flex justify-between">
-                      <span>Differenz €</span>
-                      <b className={`tabular-nums ${num(nk.diffMaterial) <= 0 ? "text-green-700" : "text-red-600"}`}>{num(nk.diffMaterial) > 0 ? "+" : ""}{fmtEuro(num(nk.diffMaterial))}</b>
-                    </div>
-                  </div>
-                )}
-                {nk.istLohn === null && nk.istMaterial === null && (
-                  <p className="mt-1 text-[11px] text-muted-foreground">Ist-Werte (Dauer bzw. Ist-VK je Materialzeile) eintragen, sobald abgerechnet.</p>
-                )}
               </div>
             </div>
           </div>

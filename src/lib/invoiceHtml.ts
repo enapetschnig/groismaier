@@ -95,6 +95,101 @@ export interface InvoiceHtmlItem {
   einheit: string;
   einzelpreis: number;
   gesamtpreis: number;
+  // ── Gruppen + Sichtbarkeit (invoice_items.gruppe/auf_pdf/ist_gruppensumme) ─
+  /** Kapitel/Aufbau-Name. Leer/NULL = ungruppierte Position (wie bisher). */
+  gruppe?: string | null;
+  /** false = Zeile erscheint NICHT im Kundendokument. Default (undefined) = sichtbar. */
+  auf_pdf?: boolean;
+  /** Preistragende Sammelzeile der Gruppe — sie zeigt den Betrag des Kapitels. */
+  ist_gruppensumme?: boolean;
+}
+
+/** Kapitelname einer Position (getrimmt); "" = ungruppiert. */
+const grpOf = (it: any): string => String(it?.gruppe || "").trim();
+/** Trägt die Zeile einen Betrag? (Cent-Toleranz) */
+const hatBetrag = (it: any): boolean => Math.abs(Number(it?.gesamtpreis) || 0) > 0.004;
+/**
+ * Zeile im Kundendokument sichtbar? (undefined = ja, Bestandsschutz)
+ *
+ * HARTE REGEL: Eine Zeile mit Betrag wird IMMER gedruckt. Die Belegsumme
+ * zählt jede Position mit gesamtpreis ≠ 0 — würde eine davon fehlen, ginge
+ * der Beleg für den Kunden nicht auf. Ausblendbar sind damit genau die
+ * betragslosen Detail-/Textzeilen.
+ */
+const istSichtbar = (it: any): boolean => it?.auf_pdf !== false || hatBetrag(it);
+/** Detailzeile = Teil einer Gruppe, aber nicht deren Sammelzeile. */
+const istDetail = (it: any): boolean => !!grpOf(it) && !it?.ist_gruppensumme;
+
+/**
+ * Detailzeile OHNE eigenen Betrag — die Normalform aus der Kalkulation:
+ * Menge und Einzelpreis stehen zur Information in der Zeile, der Betrag steckt
+ * aber bereits in der Sammelzeile des Aufbaus (gesamtpreis = 0).
+ *
+ * Solche Zeilen dürfen in KEINER Summenrechnung über "Menge × Einzelpreis"
+ * mitgezählt werden — sonst wäre der Aufbau doppelt verrechnet. Der PDF-
+ * Renderer leitet seine Zeilenwerte genau so ab und braucht diese Prüfung.
+ */
+export const istDetailOhneBetrag = (it: any): boolean => istDetail(it) && !hatBetrag(it);
+
+/**
+ * Druckplan für die Positionstabelle: Kapitelüberschriften + sichtbare Zeilen.
+ *
+ * Bestandsschutz: Belege ohne Gruppen und ohne ausgeblendete Zeilen behalten
+ * exakt die bisherige Ausgabe — inklusive der gespeicherten Positionsnummern.
+ * Erst wenn gruppiert oder etwas ausgeblendet ist, werden die sichtbaren
+ * Hauptpositionen fortlaufend neu nummeriert (sonst stünde im Kundenangebot
+ * "01, 04, 07") und Detailzeilen bekommen gar keine Nummer.
+ */
+export type DruckEintrag =
+  | { art: "kapitel"; titel: string }
+  | { art: "position"; index: number; nummer: string; detail: boolean; summenzeile: boolean };
+
+export function buildDruckplan(items: readonly any[]): DruckEintrag[] {
+  const liste = items || [];
+  const hatGruppen = liste.some((it) => grpOf(it));
+  const etwasVersteckt = liste.some((it) => !istSichtbar(it));
+  if (!hatGruppen && !etwasVersteckt) {
+    return liste.map((it, index) => ({
+      art: "position" as const,
+      index,
+      nummer: String(it.position).padStart(2, "0"),
+      detail: false,
+      summenzeile: false,
+    }));
+  }
+  const plan: DruckEintrag[] = [];
+  let laufNr = 0;
+  let aktuelleGruppe = "";
+  liste.forEach((it, index) => {
+    if (!istSichtbar(it)) return;
+    const g = grpOf(it);
+    if (g && g !== aktuelleGruppe) {
+      // Kapitelüberschrift nur, wenn die Sammelzeile den Namen nicht ohnehin
+      // trägt — sonst stünde der Aufbauname doppelt im Angebot. Zusätze wie
+      // "Dach (120,00 m²)" oder "Dach (2)" zählen als derselbe Titel.
+      const summe = liste.find((x) => grpOf(x) === g && x?.ist_gruppensumme && istSichtbar(x));
+      const summenTitel = summe
+        ? String((summe as any).kurztext || summe.beschreibung || "").split("\n")[0].trim()
+        : "";
+      const traegtDenNamen =
+        !!summenTitel && (summenTitel.startsWith(g) || g.startsWith(summenTitel));
+      if (!traegtDenNamen) plan.push({ art: "kapitel", titel: g });
+    }
+    aktuelleGruppe = g;
+    // "detail" steuert Einrückung + leere Betragsspalten. Trägt eine
+    // Detailzeile ausnahmsweise doch einen Betrag (manuell im Beleg
+    // eingetragen), wird sie als normale Position mit Betrag gedruckt —
+    // sonst würde der Beleg nicht aufgehen.
+    const detail = istDetailOhneBetrag(it);
+    plan.push({
+      art: "position",
+      index,
+      nummer: detail ? "" : String(++laufNr).padStart(2, "0"),
+      detail,
+      summenzeile: !!it?.ist_gruppensumme,
+    });
+  });
+  return plan;
 }
 
 // Minimal HTML-Escape für freien Text aus document_texts (verhindert XSS
@@ -547,14 +642,27 @@ ${(() => {
     </tr>
   </thead>
   <tbody>
-    ${(items || []).map((item) => {
+    ${buildDruckplan(items || []).map((e) => {
+      if (e.art === "kapitel") {
+        // Kapitelüberschrift (Aufbau) — ohne Betrag, den trägt die Sammelzeile.
+        return `<tr>
+      <td colspan="${hidePrices ? 4 : 7}" style="font-weight:700;background:#f2f2f2;padding-top:9px;">${escapeHtml(e.titel)}</td>
+    </tr>`;
+      }
+      const item = (items || [])[e.index];
       const itemRabattProz = Number((item as any).rabatt_prozent) || 0;
+      // Detailzeilen zeigen KEINEN Betrag (ihr gesamtpreis ist 0 — eine
+      // 0,00-€-Spalte würde wie ein Fehler wirken). Sie sind eingerückt.
+      const einrueckung = e.detail ? "padding-left:26px;color:#555;" : "";
+      const fett = e.summenzeile ? "font-weight:700;" : "";
       return `<tr>
-      <td style="text-align:center;color:#888;">${String(item.position).padStart(2, "0")}</td>
-      <td style="text-align:right;">${fmt(Number(item.menge))}</td>
+      <td style="text-align:center;color:#888;">${e.nummer}</td>
+      <td style="text-align:right;${e.detail ? "color:#555;" : ""}">${fmt(Number(item.menge))}</td>
       <td style="text-align:center;color:#888;">${item.einheit || "Stk."}</td>
-      <td>${item.beschreibung}</td>
-      ${hidePrices ? "" : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
+      <td style="${einrueckung}${fett}">${item.beschreibung}</td>
+      ${hidePrices ? "" : e.detail
+        ? `<td></td><td></td><td></td>`
+        : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
       <td style="text-align:right;font-weight:600;">${fmtCurrency(Number(item.gesamtpreis))}</td>`}
     </tr>`;

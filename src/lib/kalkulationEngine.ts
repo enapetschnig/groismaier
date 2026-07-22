@@ -458,6 +458,27 @@ export function calcMaterialRow(
   return { ...leer, ekProM2: num(row.ekPrice), vkProM2: vk, vkAbgeleitet: abgeleitet };
 }
 
+/**
+ * Eine Materialzeile mit ihrem €-Beitrag zum Aufbau. Wird gebraucht, damit das
+ * Angebot die ZUSAMMENSETZUNG eines Aufbaus zeigen kann (Paket B) — die reinen
+ * Summen reichen dafür nicht.
+ */
+export interface MaterialZeileErgebnis {
+  row: MaterialRow;
+  ergebnis: MaterialRowErgebnis;
+  /** Bezeichnung der Zeile (Artikel, ersatzweise Kategorie); "" = namenlos. */
+  bezeichnung: string;
+  /** VK-Betrag der Zeile im Aufbau (unadjustiert): vkProM2 × Fläche + vkAbsolut. */
+  vkBetrag: number;
+  /** EK-Betrag analog (0, wenn kein EK hinterlegt ist). */
+  ekBetrag: number;
+  /**
+   * true bei absoluten Beträgen (Modus "manuell"/"berechnet") — solche Zeilen
+   * haben keine m²-Menge und gehören ins Angebot als Pauschale.
+   */
+  pauschal: boolean;
+}
+
 export interface MaterialSummen {
   ekProM2: number;   // Σ €/m²-EK der DB-Zeilen
   vkProM2: number;   // Σ €/m²-VK der DB-Zeilen ("Material pro qm")
@@ -477,11 +498,21 @@ export interface MaterialSummen {
   ekUnsicher: boolean;
   /** Anzahl Zeilen, deren VK aus dem EK abgeleitet wurde (EK gesetzt, VK leer). */
   vkAbgeleitetAnzahl: number;
+  /** Alle Materialzeilen einzeln (Reihenfolge wie eingegeben) — für Detailpositionen. */
+  zeilen: MaterialZeileErgebnis[];
+}
+
+/** Anzeigename einer Materialzeile: Artikel, ersatzweise Kategorie, sonst "". */
+export function materialBezeichnung(row: MaterialRow): string {
+  const produkt = String(row?.product ?? "").trim();
+  if (produkt) return produkt;
+  return String(row?.category ?? "").trim();
 }
 
 export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSummen {
   let ekProM2 = 0, vkProM2 = 0, ekAbsolut = 0, vkAbsolut = 0;
   let ekSelbstkosten = 0, ekUnsicher = false, vkAbgeleitetAnzahl = 0;
+  const zeilen: MaterialZeileErgebnis[] = [];
   const area = num(m.area);
   for (const row of m.materialRows || []) {
     const r = calcMaterialRow(row, m, bd);
@@ -491,6 +522,12 @@ export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSu
 
     const ekZeile = r.ekProM2 * area + r.ekAbsolut;
     const vkZeile = r.vkProM2 * area + r.vkAbsolut;
+    zeilen.push({
+      row, ergebnis: r,
+      bezeichnung: materialBezeichnung(row),
+      vkBetrag: vkZeile, ekBetrag: ekZeile,
+      pauschal: !!row.manual || !!row.calc,
+    });
     if (ekZeile > 0) {
       ekSelbstkosten += ekZeile;
     } else if (vkZeile > 0) {
@@ -502,7 +539,7 @@ export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSu
     ekProM2, vkProM2, ekAbsolut, vkAbsolut,
     ekTotal: ekProM2 * area + ekAbsolut,
     vkTotal: vkProM2 * area + vkAbsolut,
-    ekSelbstkosten, ekUnsicher, vkAbgeleitetAnzahl,
+    ekSelbstkosten, ekUnsicher, vkAbgeleitetAnzahl, zeilen,
   };
 }
 
@@ -896,9 +933,15 @@ export function calcPaintProjekt(
 }
 
 // ----------------------------------------------------------------------------
-// Angebots-Übergabe — Payload-Vertrag EXAKT wie bisher (InvoiceDetail.tsx
+// Angebots-Übergabe — Payload-Vertrag formal wie bisher (InvoiceDetail.tsx
 // konsumiert sessionStorage["kalkulation_to_angebot"] = {betreff, customer_id,
-// items:[{beschreibung, menge, einheit, einzelpreis, gesamtpreis}]}).
+// items:[{beschreibung, menge, einheit, einzelpreis, gesamtpreis, …}]}).
+//
+// NEU (Gruppen/Sichtbarkeit, Migration 20260722100000): jedes Item trägt
+// zusätzlich gruppe / auf_pdf / ist_gruppensumme (und Detailzeilen ek_preis),
+// die 1:1 auf die gleichnamigen Spalten von invoice_items abgebildet werden.
+// Wer die Felder ignoriert, bekommt exakt das alte Ergebnis — die Belegsumme
+// steckt weiterhin ausschließlich in den Sammelzeilen.
 // ----------------------------------------------------------------------------
 
 export interface AngebotItem {
@@ -907,43 +950,161 @@ export interface AngebotItem {
   einheit: string;
   einzelpreis: number;
   gesamtpreis: number;
+  /**
+   * Kapitel/Aufbau-Name (invoice_items.gruppe). Alle Zeilen eines Aufbaus
+   * tragen denselben Wert; undefined = ungruppierte Position.
+   */
+  gruppe?: string;
+  /**
+   * Erscheint die Zeile im Kundendokument (invoice_items.auf_pdf)?
+   * Detailzeilen kommen auf false in den Beleg — der Chef sieht sie im Editor
+   * und blendet sie bei Bedarf ein.
+   */
+  auf_pdf?: boolean;
+  /** Preistragende Sammelzeile der Gruppe (invoice_items.ist_gruppensumme). */
+  ist_gruppensumme?: boolean;
+  /**
+   * Interner €-Betrag einer Detailzeile (invoice_items.ek_preis). Detailzeilen
+   * tragen gesamtpreis 0, damit die Belegsumme nicht doppelt zählt; ihr Wert
+   * steht hier.
+   */
+  ek_preis?: number;
 }
 
 /**
- * Erzeugt Angebots-Positionen aus der Projektübersicht (adjustierte Werte),
- * identisch zur bisherigen Scraping-Logik: je Aufbau mit Gesamt > 0 eine
- * Position (m² über pro-qm-Preis, sonst Pauschale); Differenz zur
- * Projektsumme > 0,50 € wird als Nebenkosten-Pauschale angehängt.
+ * Zerlegt einen Betrag in Menge × Einzelpreis — aber nur, wenn es CENTGENAU
+ * aufgeht. Sonst null (dann wird die Zeile als Pauschale ausgewiesen).
+ *
+ * (Edge-Case-Review 2026-07-21: früher wurden Menge und Einzelpreis unabhängig
+ * gerundet — im Angebot stand dann z.B. 12,34 m² × 88,88 € und daneben eine
+ * Summe, die dazu nicht passte.)
+ */
+function preisAufteilung(betrag: number, mengeRoh: number): { menge: number; einzelpreis: number } | null {
+  const menge = round2(num(mengeRoh));
+  if (menge <= 0) return null;
+  const einzelpreis = round2(betrag / menge);
+  if (Math.abs(round2(menge * einzelpreis) - betrag) >= 0.005) return null;
+  return { menge, einzelpreis };
+}
+
+/** Kurzformat für Mengen im Positionstext: 2 → "2", 1,5 → "1,5", 0,25 → "0,25". */
+const kurzZahl = (n: number): string => fmt(n).replace(/,00$/, "").replace(/(,\d)0$/, "$1");
+
+/**
+ * Erzeugt Angebots-Positionen aus der Projektübersicht (adjustierte Werte).
+ *
+ * Je Aufbau mit Gesamt > 0 entsteht
+ *   a) die preistragende SAMMELZEILE (ist_gruppensumme, auf_pdf=true) mit dem
+ *      Betrag, den der Kunde zahlt — m² über den pro-qm-Preis, sonst Pauschale;
+ *   b) darunter die DETAILZEILEN (Material, Arbeitszeit, Fahrten, eingekaufte
+ *      Dienstleistungen) mit gesamtpreis 0 und auf_pdf=false. Sie zeigen die
+ *      Zusammensetzung, ohne die Belegsumme zu verändern (der interne Betrag
+ *      steht in ek_preis).
+ *
+ * Alle Zeilen eines Aufbaus tragen dieselbe `gruppe`. Die Detailbeträge sind
+ * wie die Sammelzeile mit dem globalen Faktor (Aufschlag/Skonto) adjustiert,
+ * damit sie sich zur Sammelzeile aufaddieren.
+ *
+ * Eine Differenz zur Projektsumme > 0,50 € wird — wie bisher — als
+ * ungruppierte Nebenkosten-Pauschale angehängt.
  */
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
   const items: AngebotItem[] = [];
+  const faktor = projekt.faktor;
+  const vergebeneGruppen = new Set<string>();
+
   projekt.zeilen.forEach((z, i) => {
     const gesamt = round2(z.gesamtAdj);
     if (gesamt <= 0) return;
+    const m = z.module;
+    const erg = z.ergebnis;
     // Optionale Aufbauten sind im Angebot als solche zu erkennen (sie stecken
     // — wie in der Projektsumme — mit vollem Betrag drin).
-    const name = (z.module.name || `Aufbau ${i + 1}`) + (z.module.isOptional ? " (optional)" : "");
-    const mitNotiz = (titel: string) => (z.module.note ? `${titel}\n${z.module.note}` : titel);
-    // Die Angebotszeile MUSS aufgehen: Menge × Einzelpreis = Gesamt.
-    // (Edge-Case-Review 2026-07-21: früher wurden Menge und Einzelpreis
-    // unabhängig gerundet — im Angebot stand dann z.B. 12,34 m² × 88,88 € und
-    // daneben eine Summe, die dazu nicht passte. Geht die m²-Zeile nicht
-    // centgenau auf, wird sie als Pauschale ausgewiesen.)
-    const menge = round2(num(z.module.area));
-    if (menge > 0) {
-      const einzelpreis = round2(gesamt / menge);
-      if (Math.abs(round2(menge * einzelpreis) - gesamt) < 0.005) {
-        items.push({ beschreibung: mitNotiz(name), menge, einheit: "m²", einzelpreis, gesamtpreis: gesamt });
-        return;
+    const name = (m.name || `Aufbau ${i + 1}`) + (m.isOptional ? " (optional)" : "");
+    // Zwei gleichnamige Aufbauten dürfen nicht in EINER Gruppe landen (dort
+    // gäbe es sonst zwei Sammelzeilen). Der Gruppenname wird eindeutig gemacht.
+    let gruppe = name;
+    for (let n = 2; vergebeneGruppen.has(gruppe); n += 1) gruppe = `${name} (${n})`;
+    vergebeneGruppen.add(gruppe);
+    const mitNotiz = (titel: string) => (m.note ? `${titel}\n${m.note}` : titel);
+
+    // --- a) Sammelzeile (Betrag unverändert wie bisher) ---------------------
+    const aufteilung = preisAufteilung(gesamt, num(m.area));
+    if (aufteilung) {
+      items.push({
+        beschreibung: mitNotiz(name), menge: aufteilung.menge, einheit: "m²",
+        einzelpreis: aufteilung.einzelpreis, gesamtpreis: gesamt,
+        gruppe, auf_pdf: true, ist_gruppensumme: true,
+      });
+    } else {
+      // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
+      // stehen, damit im Angebot nichts an Information verlorengeht.
+      const flaeche = round2(num(m.area));
+      items.push({
+        beschreibung: mitNotiz(flaeche > 0 ? `${name} (${fmt(flaeche)} m²)` : name),
+        menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
+        gruppe, auf_pdf: true, ist_gruppensumme: true,
+      });
+    }
+
+    // --- b) Detailzeilen ----------------------------------------------------
+    // gesamtpreis IMMER 0: der Kunde zahlt die Sammelzeile, die Details sind
+    // nur die Herleitung. Sonst würde jeder Aufbau doppelt in der Summe stehen.
+    const detail = (bezeichnung: string, betragRoh: number, menge?: number, einheit?: string) => {
+      const betrag = round2(betragRoh);
+      if (betrag <= 0 || !bezeichnung) return;
+      const auf = menge === undefined ? null : preisAufteilung(betrag, menge);
+      items.push({
+        beschreibung: bezeichnung,
+        menge: auf ? auf.menge : 1,
+        einheit: auf ? (einheit || "Stk.") : "Pauschale",
+        einzelpreis: auf ? auf.einzelpreis : betrag,
+        gesamtpreis: 0,
+        gruppe, auf_pdf: false, ist_gruppensumme: false,
+        ek_preis: betrag,
+      });
+    };
+
+    // Material — leere Zeilen fallen weg (jeder Aufbau startet mit 10 leeren
+    // Zeilen, die nie ins Angebot dürfen). Eine Zeile OHNE Bezeichnung, die
+    // aber einen Betrag trägt, wird bewusst NICHT verschluckt: sonst fehlt im
+    // Angebot Geld, das der Aufbau tatsächlich enthält (die Detailzeilen
+    // müssen sich zur Sammelzeile aufaddieren). Sie bekommt einen neutralen
+    // Namen und ist im Editor sofort erkennbar.
+    for (const mz of erg.material.zeilen) {
+      const bezeichnung = mz.bezeichnung || "Sonstiges Material";
+      if (mz.pauschal) {
+        detail(bezeichnung, mz.vkBetrag * faktor);
+      } else {
+        detail(bezeichnung, mz.vkBetrag * faktor, num(m.area), "m²");
       }
     }
-    // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
-    // stehen, damit im Angebot nichts an Information verlorengeht.
-    items.push({
-      beschreibung: mitNotiz(menge > 0 ? `${name} (${fmt(menge)} m²)` : name),
-      menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
-    });
+
+    // Arbeitszeit
+    const tage = num(m.days);
+    const arbeiter = num(m.workers);
+    detail(
+      `Arbeitszeit: ${kurzZahl(tage)} ${tage === 1 ? "Tag" : "Tage"} × ${kurzZahl(arbeiter)} Arbeiter`,
+      erg.laborCosts * faktor, erg.laborHours, "h",
+    );
+
+    // Fahrten (hin & retour steckt bereits in der Staffel). Anzahl und km
+    // stehen im Text, damit die Angabe auch dann erhalten bleibt, wenn die
+    // Zeile nicht centgenau aufgeht und als Pauschale ausgewiesen wird.
+    const km = num(m.distanceKM);
+    const busTrips = num(m.busTrips);
+    const lkwTrips = num(m.lkwTrips);
+    detail(`Anfahrt Bus (${kurzZahl(busTrips)} × ${kurzZahl(km)} km)`, erg.transport.bus * faktor, busTrips, "Fahrt");
+    detail(`Anfahrt LKW (${kurzZahl(lkwTrips)} × ${kurzZahl(km)} km)`, erg.transport.lkw * faktor, lkwTrips, "Fahrt");
+
+    // Eingekaufte Dienstleistungen
+    const kranStunden = num(m.craneHours);
+    detail(`Kranarbeiten (${kurzZahl(kranStunden)} h)`, erg.craneCosts * faktor, kranStunden, "h");
+    detail("Spedition", num(m.shippingCosts) * faktor);
+    detail("Lohnabdunst", num(m.paintCosts) * faktor);
+    detail("Sonstige Kosten", num(m.miscCosts) * faktor);
   });
+
   const projektGesamt = round2(projekt.totalGesamt);
   const summe = items.reduce((s, i) => s + i.gesamtpreis, 0);
   const nebenkosten = round2(projektGesamt - summe);
@@ -951,6 +1112,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     items.push({
       beschreibung: "Transport, Kran & sonstige Nebenkosten (lt. Kalkulation)",
       menge: 1, einheit: "Pauschale", einzelpreis: nebenkosten, gesamtpreis: nebenkosten,
+      auf_pdf: true, ist_gruppensumme: false,
     });
   }
   return { items, projektGesamt };

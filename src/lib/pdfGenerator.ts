@@ -1,6 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { InvoiceHtmlData, InvoiceHtmlItem, BankData } from "./invoiceHtml";
+import { buildDruckplan, istDetailOhneBetrag } from "./invoiceHtml";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, hexToRgb } from "./invoiceLayoutTypes";
 import { drawLetterhead, drawFooter, LETTERHEAD_MARGIN } from "./pdfLetterhead";
 import { DEFAULT_MAHNUNG_SETTINGS, renderMahnungText, type MahnungSettings } from "./mahnungSettings";
@@ -530,8 +531,16 @@ export async function generateInvoicePdf(
    */
   const printLines = items.map((item) => {
     const menge = r3(Number(item.menge) || 0);
-    const einzelpreis = r2(Number(item.einzelpreis) || 0);
     const rabattProz = Number((item as any).rabatt_prozent) || 0;
+    // Detailzeile eines Aufbaus (gesamtpreis 0): Menge/Einzelpreis stehen nur
+    // zur Information in der Zeile — der Betrag steckt in der Sammelzeile.
+    // Sie darf deshalb NICHT über Menge × Einzelpreis in die Belegsumme
+    // einfließen, sonst wäre der Aufbau doppelt verrechnet (und die Summe im
+    // PDF wiche von der im Beleg-Editor / in der DB ab).
+    if (istDetailOhneBetrag(item)) {
+      return { menge, einzelpreis: 0, rabattProz: 0, listenwert: 0, gesamt: 0, exempt: false };
+    }
+    const einzelpreis = r2(Number(item.einzelpreis) || 0);
     const listenwert = r2(menge * einzelpreis);
     const gesamt = r2(menge * einzelpreis * (1 - rabattProz / 100));
     return {
@@ -544,28 +553,58 @@ export async function generateInvoicePdf(
     };
   });
 
+  // ── Gruppen (Aufbauten) + Sichtbarkeit je Zeile ───────────────────────────
+  // Der Druckplan liefert Kapitelüberschriften + NUR die Zeilen mit
+  // auf_pdf !== false. Belege ohne Gruppen/ohne ausgeblendete Zeilen kommen
+  // 1:1 wie bisher heraus (siehe buildDruckplan).
+  // WICHTIG: Die Summen weiter unten leiten sich unverändert aus ALLEN
+  // Positionen (printLines) ab — ausgeblendet werden nur betragslose
+  // Detailzeilen, die Belegsumme bleibt also identisch.
+  const druckplan = buildDruckplan(items);
+  const INDENT_MM = 6; // Einrückung der Detailzeilen in der Beschreibungsspalte
+
   const langtextInfo: Record<number, { kurztext: string; langtext: string }> = {};
-  const tableBody: string[][] = [];
-  items.forEach((item, idx) => {
+  const kapitelRows = new Set<number>();
+  const detailRows = new Set<number>();
+  const summenRows = new Set<number>();
+  const tableBody: any[][] = [];
+  druckplan.forEach((e) => {
+    const rowIdx = tableBody.length;
+    if (e.art === "kapitel") {
+      kapitelRows.add(rowIdx);
+      // Eine Zelle über die volle Breite — die Kapitelüberschrift beginnt
+      // am linken Rand, nicht erst in der Beschreibungsspalte.
+      tableBody.push([{ content: e.titel, colSpan: hidePrices ? 4 : 7 }]);
+      return;
+    }
+    const item = items[e.index];
+    const p = printLines[e.index];
     const kurztext = (item as any).kurztext || item.beschreibung;
     const langtext = (item as any).langtext || "";
     if (langtext && langtext !== kurztext) {
-      langtextInfo[idx] = { kurztext, langtext };
+      langtextInfo[rowIdx] = { kurztext, langtext };
     }
-    const p = printLines[idx];
+    if (e.detail) detailRows.add(rowIdx);
+    if (e.summenzeile) summenRows.add(rowIdx);
     // Nur Kurztext in die Zelle. Langtext wird in didDrawCell manuell
     // darunter gezeichnet; die zusätzliche Höhe reserviert didParseCell
     // via minCellHeight.
     const row = [
-      String(item.position).padStart(2, "0"),
+      e.nummer,
       fmtMenge(p.menge),
       item.einheit || "Stk.",
       kurztext,
     ];
     if (!hidePrices) {
-      row.push(fmtCurrency(p.einzelpreis));
-      row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
-      row.push(fmtCurrency(p.gesamt));
+      // Detailzeilen tragen keinen eigenen Betrag (gesamtpreis 0). Eine
+      // 0,00-€-Spalte würde wie ein Fehler wirken → Spalten bleiben leer.
+      if (e.detail) {
+        row.push("", "", "");
+      } else {
+        row.push(fmtCurrency(p.einzelpreis));
+        row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
+        row.push(fmtCurrency(p.gesamt));
+      }
     }
     tableBody.push(row);
   });
@@ -713,6 +752,24 @@ export async function generateInvoicePdf(
       6: { halign: "right", cellWidth: 24, fontStyle: "bold" },
     },
     didParseCell: (data: any) => {
+      // ── Kapitel / Detail / Sammelzeile optisch absetzen ──────────────────
+      if (data.section === "body") {
+        const ri = data.row.index;
+        if (kapitelRows.has(ri)) {
+          // Kapitelüberschrift (Aufbau): fett auf hellem Grund, über alle Spalten.
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [240, 240, 240];
+          data.cell.styles.textColor = [0, 0, 0];
+        } else if (summenRows.has(ri)) {
+          // Sammelzeile der Gruppe = die preistragende Kapitelzeile.
+          data.cell.styles.fontStyle = "bold";
+        } else if (detailRows.has(ri)) {
+          data.cell.styles.textColor = [90, 90, 90];
+          if (data.column.index === 3) {
+            data.cell.styles.cellPadding = { top: CELL_PAD_TOP, bottom: CELL_PAD_BOTTOM, left: 2 + INDENT_MM, right: 2 };
+          }
+        }
+      }
       // minCellHeight für die komplette Row setzen, wenn Langtext
       // vorhanden ist. autoTable nimmt das Maximum aller Zellen-Höhen
       // der Row, deshalb reicht es, den Wert in der Beschreibungsspalte
@@ -721,10 +778,11 @@ export async function generateInvoicePdf(
         const info = langtextInfo[data.row.index];
         if (info) {
           try {
+            const w = descWidth - (detailRows.has(data.row.index) ? INDENT_MM : 0);
             pdf.setFontSize(KURZ_FONT_SIZE);
-            const kurzLines = pdf.splitTextToSize(info.kurztext, descWidth);
+            const kurzLines = pdf.splitTextToSize(info.kurztext, w);
             pdf.setFontSize(LANG_FONT_SIZE);
-            const langLines = pdf.splitTextToSize(info.langtext, descWidth);
+            const langLines = pdf.splitTextToSize(info.langtext, w);
             pdf.setFontSize(KURZ_FONT_SIZE);
             const h = CELL_PAD_TOP
               + linesHeightMm(kurzLines.length, KURZ_FONT_SIZE)
@@ -747,8 +805,10 @@ export async function generateInvoicePdf(
         const info = langtextInfo[data.row.index];
         if (info) {
           try {
-            const cellW = data.cell.width - 4;
-            const cellX = data.cell.x + 2;
+            // Detailzeilen sind eingerückt — Langtext muss mitwandern.
+            const einzug = detailRows.has(data.row.index) ? INDENT_MM : 0;
+            const cellW = data.cell.width - 4 - einzug;
+            const cellX = data.cell.x + 2 + einzug;
             pdf.setFontSize(KURZ_FONT_SIZE);
             const kurzLines = pdf.splitTextToSize(info.kurztext, cellW);
             const kurzH = linesHeightMm(kurzLines.length, KURZ_FONT_SIZE);

@@ -14,10 +14,18 @@
 // "Als Angebot übernehmen": Payload-Vertrag EXAKT wie bisher —
 // sessionStorage["kalkulation_to_angebot"] = { betreff, customer_id, items }
 // → /invoices/new?typ=angebot&from_kalkulation=1 (InvoiceDetail unverändert).
+//
+// KATALOG-ÜBERNAHME (Kundenwunsch 2026-07-22): In der Materialtabelle dürfen
+// Kategorie und Artikel frei eingetippt werden. Beim Speichern — und jederzeit
+// über den Knopf „In Katalog übernehmen" — wird gefragt, ob diese
+// handgeschriebenen Positionen in die Stammdaten (kalkulation_kategorien /
+// kalkulation_artikel) wandern sollen. Schreiben darf laut RLS nur ein
+// Administrator; sonst erscheint eine verständliche Meldung und die Positionen
+// bleiben unverändert in der Kalkulation.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, FileText, Home, LayoutTemplate, Loader2, Plus, Save } from "lucide-react";
+import { AlertTriangle, FileText, Home, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +43,11 @@ import {
   AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
   fmt, fmtEuro, round2, num,
 } from "@/lib/kalkulationEngine";
-import { useKalkKatalog } from "@/components/kalkulation/useKalkKatalog";
+import { usePermissions } from "@/hooks/usePermissions";
+import {
+  FreiePosition, artTable, findeArtikel, findeKategorie, katTable, normName,
+  sammleFreiePositionen, useKalkKatalog,
+} from "@/components/kalkulation/useKalkKatalog";
 import { NumInput } from "@/components/kalkulation/NumInput";
 import { ProjektUebersicht } from "@/components/kalkulation/ProjektUebersicht";
 import { AufbauKarte } from "@/components/kalkulation/AufbauKarte";
@@ -46,11 +58,26 @@ const kalkTable = () => (supabase.from("kalkulationen" as never) as any);
 
 type TabId = "aufbau" | "lack" | "einstellungen";
 
+/** Ziel-Kategorie im Übernahme-Dialog: „die eingetippte neu anlegen". */
+const NEUE_KATEGORIE = "__neu__";
+
+/** Eine Zeile des Übernahme-Dialogs (Vorschlag aus der Kalkulation, editierbar). */
+interface UebernahmeZeile extends FreiePosition {
+  checked: boolean;
+  /** Name einer bestehenden Kategorie, NEUE_KATEGORIE oder "" (noch offen). */
+  ziel: string;
+}
+
 export default function KalkulationEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { toast } = useToast();
   const katalog = useKalkKatalog();
+  // Schreibrechte auf den Katalog hat laut RLS nur der Administrator. Solange
+  // die Rolle noch lädt, wird NICHT gesperrt (sonst wäre der Knopf beim
+  // schnellen Öffnen grundlos tot) — im Zweifel antwortet die Datenbank.
+  const { isAdmin, loading: rolleLaedt } = usePermissions();
+  const darfKatalogSchreiben = isAdmin || rolleLaedt;
 
   const [state, setState] = useState<KalkulationState>(() => normalizeKalkulationState(null));
   const [name, setName] = useState("");
@@ -74,6 +101,13 @@ export default function KalkulationEditor() {
   const [vorlageOpen, setVorlageOpen] = useState(false);
   const [vorlageName, setVorlageName] = useState("");
   const [savingVorlage, setSavingVorlage] = useState(false);
+
+  // Katalog-Übernahme
+  const [katalogOpen, setKatalogOpen] = useState(false);
+  const [uebernahme, setUebernahme] = useState<UebernahmeZeile[]>([]);
+  const [uebernahmeSaving, setUebernahmeSaving] = useState(false);
+  /** Zuletzt weggeklickte Positionsmenge — danach beim Speichern nicht erneut fragen. */
+  const abgelehntRef = useRef("");
 
   const dragIndexRef = useRef<number | null>(null);
 
@@ -304,6 +338,128 @@ export default function KalkulationEditor() {
       else s.settings.businessData["Mittellohn"] = n;
     });
 
+  // ------------------------------------------------------- Katalog-Übernahme
+  /** Alle handgeschriebenen Positionen, die noch nicht im Katalog stehen. */
+  const freiePositionen = useMemo(
+    () => sammleFreiePositionen(state.modules, katalog.materialKategorien),
+    [state.modules, katalog.materialKategorien],
+  );
+  const freiSignatur = freiePositionen.map((p) => p.key).sort().join(";");
+
+  /** Zielkategorie einer Dialogzeile (aufgelöster Name). */
+  const zielName = (z: UebernahmeZeile) => (z.ziel === NEUE_KATEGORIE ? z.kategorie.trim() : z.ziel);
+
+  const oeffneUebernahme = () => {
+    if (freiePositionen.length === 0) {
+      toast({ title: "Nichts zu übernehmen", description: "Alle Positionen dieser Kalkulation stehen bereits im Katalog." });
+      return;
+    }
+    setUebernahme(freiePositionen.map((p) => ({
+      ...p,
+      checked: true,
+      ziel: p.kategorieFrei
+        ? NEUE_KATEGORIE
+        : findeKategorie(katalog.materialKategorien, p.kategorie)?.name ?? "",
+    })));
+    setKatalogOpen(true);
+  };
+
+  /** Dialog ohne Übernahme schließen: bis zur nächsten Änderung nicht mehr fragen. */
+  const schliesseUebernahme = () => {
+    abgelehntRef.current = freiSignatur;
+    setKatalogOpen(false);
+  };
+
+  const patchUebernahme = (i: number, patch: Partial<UebernahmeZeile>) =>
+    setUebernahme((prev) => prev.map((z, k) => (k === i ? { ...z, ...patch } : z)));
+
+  const katalogFehler = (message: string) =>
+    toast({
+      variant: "destructive",
+      title: "Übernahme nicht möglich",
+      description: /row-level security|permission denied|42501/i.test(message)
+        ? "Nur Administratoren dürfen Katalog-Stammdaten anlegen. Die Positionen bleiben in der Kalkulation erhalten — bitte einen Administrator um die Aufnahme in die Stammdaten bitten."
+        : message,
+    });
+
+  const handleUebernahme = async () => {
+    const gewaehlt = uebernahme.filter((z) => z.checked);
+    if (gewaehlt.length === 0) {
+      toast({ variant: "destructive", title: "Nichts ausgewählt", description: "Bitte mindestens eine Position ankreuzen." });
+      return;
+    }
+    const ohneZiel = gewaehlt.find((z) => !zielName(z));
+    if (ohneZiel) {
+      toast({ variant: "destructive", title: "Kategorie fehlt", description: `Bitte für „${ohneZiel.name}“ eine Ziel-Kategorie wählen.` });
+      return;
+    }
+    setUebernahmeSaving(true);
+
+    // 1. Fehlende Kategorien anlegen (jede nur einmal).
+    const katIds = new Map<string, string>();
+    for (const k of katalog.materialKategorien) katIds.set(normName(k.name), k.id);
+    let katSort = Math.max(0, ...katalog.kategorien.map((k) => Number(k.sort) || 0));
+    const neueKategorien: string[] = [];
+    for (const z of gewaehlt) {
+      const name = zielName(z);
+      if (katIds.has(normName(name))) continue;
+      katSort += 10;
+      const { data, error } = await katTable()
+        .insert({ name, typ: "material", einheit: z.einheit || "", sort: katSort })
+        .select("id").single();
+      if (error) { katalogFehler(error.message); setUebernahmeSaving(false); return; }
+      katIds.set(normName(name), (data as any).id);
+      neueKategorien.push(name);
+    }
+
+    // 2. Artikel anlegen — bereits vorhandene Namen werden übersprungen, sonst
+    //    entstehen Dubletten, sobald jemand den Dialog zweimal bestätigt.
+    const artSort = new Map<string, number>();
+    for (const k of katalog.materialKategorien) {
+      artSort.set(normName(k.name), Math.max(0, ...k.artikel.map((a) => Number(a.sort) || 0)));
+    }
+    const rows: Record<string, unknown>[] = [];
+    const uebersprungen: string[] = [];
+    for (const z of gewaehlt) {
+      const name = zielName(z);
+      const doppelt = findeArtikel(katalog.materialKategorien, name, z.name)
+        || rows.some((r) => r.kategorie_id === katIds.get(normName(name)) && normName(String(r.name)) === normName(z.name));
+      if (doppelt) { uebersprungen.push(z.name); continue; }
+      const sort = (artSort.get(normName(name)) ?? 0) + 10;
+      artSort.set(normName(name), sort);
+      rows.push({
+        kategorie_id: katIds.get(normName(name)),
+        name: z.name.trim(),
+        ek: z.ek,
+        vk: z.vk,
+        einheit: z.einheit || "",
+        sort,
+      });
+    }
+    if (rows.length > 0) {
+      const { error } = await artTable().insert(rows);
+      if (error) { katalogFehler(error.message); setUebernahmeSaving(false); return; }
+    }
+
+    setUebernahmeSaving(false);
+    setKatalogOpen(false);
+    abgelehntRef.current = "";
+    await katalog.reload();
+    toast({
+      title: "In den Katalog übernommen",
+      description:
+        `${rows.length} Artikel gespeichert`
+        + (neueKategorien.length ? `, neue Kategorie(n): ${neueKategorien.join(", ")}` : "")
+        + (uebersprungen.length ? ` — bereits vorhanden: ${uebersprungen.join(", ")}` : "") + ".",
+    });
+  };
+
+  /** Speichern-Knopf: speichert und fragt danach nach neuen Katalog-Positionen. */
+  const handleSpeichern = async () => {
+    await persist();
+    if (freiePositionen.length > 0 && freiSignatur !== abgelehntRef.current) oeffneUebernahme();
+  };
+
   // --------------------------------------------------------------- Aktionen
   const handleAngebot = async () => {
     const { items } = buildAngebotItems(projekt);
@@ -369,7 +525,7 @@ export default function KalkulationEditor() {
             <span className="hidden text-xs text-white/85 md:block">
               {saving ? "Speichert …" : dirty ? "Ungespeicherte Änderungen" : "Gespeichert"}
             </span>
-            <KBToolbarButton icon={Save} label="Speichern" variant="green" onClick={() => persist()} disabled={saving} />
+            <KBToolbarButton icon={Save} label="Speichern" variant="green" onClick={handleSpeichern} disabled={saving} />
           </div>
         }
       >
@@ -382,6 +538,9 @@ export default function KalkulationEditor() {
             title="Speichert und wechselt zur Startmaske" />
           <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
             onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
+          <KBButton icon={PackagePlus} label="In Katalog übernehmen" badge={freiePositionen.length}
+            onClick={oeffneUebernahme}
+            title="Frei eingetippte Positionen in die Stammdaten (Katalog) übernehmen" />
           <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}
             title="Aufbauten als Positionen in ein neues Angebot übernehmen" />
         </div>
@@ -390,9 +549,11 @@ export default function KalkulationEditor() {
       <div className="mx-auto max-w-[1500px] space-y-4 px-3 py-4 sm:px-4">
         {/* Handy-Aktionsleiste: große Flächen zum Antippen */}
         <div className="flex gap-2 sm:hidden">
-          <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={FileText} label="Als Angebot übernehmen"
+          <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={FileText} label="Angebot"
             variant="blue" onClick={handleAngebot} />
-          <KBButton className="h-11 shrink-0 justify-center" icon={LayoutTemplate} label="Vorlage"
+          <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={PackagePlus} label="Katalog"
+            badge={freiePositionen.length} onClick={oeffneUebernahme} />
+          <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={LayoutTemplate} label="Vorlage"
             onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
         </div>
         {/* Global-Settings-Bar */}
@@ -575,6 +736,77 @@ export default function KalkulationEditor() {
 
         {tab === "einstellungen" && <EinstellungenTab katalog={katalog} />}
       </div>
+
+      {/* Handgeschriebene Positionen in den Katalog übernehmen */}
+      <Dialog open={katalogOpen} onOpenChange={(o) => { if (o) setKatalogOpen(true); else schliesseUebernahme(); }}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              {uebernahme.length} neue Position{uebernahme.length === 1 ? "" : "en"} in den Katalog übernehmen?
+            </DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Diese Artikel wurden von Hand eingetippt und stehen noch nicht in den Stammdaten.
+            Nicht übernommene Positionen bleiben unverändert in der Kalkulation.
+          </p>
+          {!darfKatalogSchreiben && (
+            <div className="rounded border-2 border-amber-400 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Katalog-Stammdaten dürfen nur Administratoren anlegen. Die Positionen bleiben in dieser
+              Kalkulation erhalten — bitte einen Administrator um die Aufnahme in die Stammdaten bitten.
+            </div>
+          )}
+          <div className="space-y-2">
+            {uebernahme.map((z, i) => (
+              <div key={z.key} className="rounded border bg-muted/20 p-2">
+                <label className="flex items-start gap-2">
+                  <input type="checkbox" className="mt-0.5 h-5 w-5 shrink-0" checked={z.checked}
+                    aria-label={`„${z.name}“ übernehmen`}
+                    onChange={(e) => patchUebernahme(i, { checked: e.target.checked })} />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm font-semibold">{z.name}</span>
+                    <span className="block text-[11px] text-muted-foreground">
+                      aus {z.aufbauten.join(", ")}
+                      {z.kategorie ? ` · eingetippte Kategorie „${z.kategorie}“` : " · ohne Kategorie erfasst"}
+                    </span>
+                  </span>
+                </label>
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <label className="col-span-2 block text-xs">
+                    <span className="mb-0.5 block text-muted-foreground">Ziel-Kategorie</span>
+                    <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-9"
+                      value={z.ziel} aria-label={`Ziel-Kategorie für ${z.name}`}
+                      onChange={(e) => patchUebernahme(i, { ziel: e.target.value })}>
+                      <option value="">— bitte wählen —</option>
+                      {z.kategorieFrei && <option value={NEUE_KATEGORIE}>Neu anlegen: „{z.kategorie}“</option>}
+                      {katalog.materialKategorien.map((k) => <option key={k.id} value={k.name}>{k.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="block text-xs">
+                    <span className="mb-0.5 block text-muted-foreground">EK (€)</span>
+                    <NumInput value={z.ek} nullable onCommit={(n) => patchUebernahme(i, { ek: n })} className="h-11 sm:h-9" />
+                  </label>
+                  <label className="block text-xs">
+                    <span className="mb-0.5 block text-muted-foreground">VK (€)</span>
+                    <NumInput value={z.vk} nullable onCommit={(n) => patchUebernahme(i, { vk: n })} className="h-11 sm:h-9" />
+                  </label>
+                  <label className="col-span-2 block text-xs">
+                    <span className="mb-0.5 block text-muted-foreground">Einheit</span>
+                    <input className="kb-input h-11 min-h-0 px-2 py-1 text-sm sm:h-9" value={z.einheit}
+                      placeholder="z.B. € / m³" aria-label={`Einheit für ${z.name}`}
+                      onChange={(e) => patchUebernahme(i, { einheit: e.target.value })} />
+                  </label>
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={schliesseUebernahme}>Nicht übernehmen</Button>
+            <Button onClick={handleUebernahme} disabled={uebernahmeSaving || !darfKatalogSchreiben}>
+              {uebernahmeSaving ? "Wird übernommen …" : "In Katalog übernehmen"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Als Vorlage speichern */}
       <Dialog open={vorlageOpen} onOpenChange={setVorlageOpen}>

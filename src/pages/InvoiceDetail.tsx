@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, Import, FileText, Printer, Star, ChevronUp, ChevronDown, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
@@ -143,7 +143,48 @@ interface InvoiceItem {
   sonstiges_preis?: number;
   arbeitszeit_minuten?: number;
   stundensatz?: number;
+  // ── Gruppen (Aufbauten) + Sichtbarkeit im Kundendokument ──────────────────
+  // gruppe            = Kapitelname, z.B. "Aufbau 1 — Dach". Leer = ungruppiert.
+  // ist_gruppensumme  = preistragende Sammelzeile der Gruppe (Kunde sieht sie immer).
+  // auf_pdf           = erscheint die Zeile im Kundendokument? Default true.
+  // Detailzeilen einer Gruppe tragen gesamtpreis 0 (ihr interner Wert steht in
+  // ek_preis), damit die Belegsumme nicht doppelt zählt.
+  gruppe?: string | null;
+  auf_pdf?: boolean;
+  ist_gruppensumme?: boolean;
 }
+
+/** Kapitelname einer Position (getrimmt); "" = ungruppierte Position. */
+const gruppeVon = (it: Pick<InvoiceItem, "gruppe">): string => String(it?.gruppe || "").trim();
+/** Trägt die Zeile einen Betrag in der Belegsumme? (Cent-Toleranz) */
+const traegtBetrag = (it: Pick<InvoiceItem, "gesamtpreis">): boolean =>
+  Math.abs(Number(it?.gesamtpreis) || 0) > 0.004;
+/**
+ * Sieht der Kunde die Zeile? (auf_pdf undefined = ja — Bestandsschutz.)
+ *
+ * HARTE REGEL — identisch zu buildDruckplan in invoiceHtml.ts: Zeilen mit
+ * Betrag sind IMMER sichtbar. Die Belegsumme zählt jede Position mit
+ * gesamtpreis ≠ 0; fehlte eine davon im Kundendokument, ginge der Beleg
+ * nicht auf. Ausblendbar sind genau die betragslosen Detail-/Textzeilen.
+ */
+const istSichtbar = (it: Pick<InvoiceItem, "auf_pdf" | "gesamtpreis">): boolean =>
+  it?.auf_pdf !== false || traegtBetrag(it);
+/** Detailzeile = Teil einer Gruppe, aber nicht deren Sammelzeile. */
+const istDetailzeile = (it: Pick<InvoiceItem, "gruppe" | "ist_gruppensumme">): boolean =>
+  !!gruppeVon(it) && !it?.ist_gruppensumme;
+
+const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme"] as const;
+/** Insert scheiterte NUR an den (noch) fehlenden Gruppen-Spalten? */
+const isGruppenSpaltenFehlen = (err: any): boolean =>
+  typeof err?.message === "string" &&
+  GRUPPEN_SPALTEN.some((c) => err.message.includes(c)) &&
+  /(schema cache|column .* does not exist)/i.test(err.message);
+/** Payload ohne die Gruppen-Spalten (Fallback bei fehlender Migration). */
+const ohneGruppenSpalten = (row: any): any => {
+  const next = { ...row };
+  for (const c of GRUPPEN_SPALTEN) delete next[c];
+  return next;
+};
 
 interface InvoiceData {
   typ: string;
@@ -442,6 +483,14 @@ export default function InvoiceDetail() {
   const [templateSearch, setTemplateSearch] = useState("");
   const [templateFilter, setTemplateFilter] = useState("alle");
   const [autocompleteIdx, setAutocompleteIdx] = useState<number | null>(null);
+  /**
+   * Aufgeklappte Aufbau-Gruppen (Key = Gruppenname). Detailzeilen sind
+   * standardmäßig EINGEKLAPPT — sonst ertrinkt der Chef bei fünf Aufbauten
+   * mit je 15 Materialzeilen in der Liste.
+   */
+  const [gruppenOffen, setGruppenOffen] = useState<Record<string, boolean>>({});
+  const toggleGruppe = (g: string) =>
+    setGruppenOffen(prev => ({ ...prev, [g]: !prev[g] }));
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [templateMengen, setTemplateMengen] = useState<Record<string, number>>({});
   const [addedFromDialog, setAddedFromDialog] = useState<{ name: string; menge: number; einheit: string }[]>([]);
@@ -723,6 +772,11 @@ export default function InvoiceDetail() {
         sonstiges_preis: Number((it as any).sonstiges_preis) || 0,
         arbeitszeit_minuten: Number((it as any).arbeitszeit_minuten) || 0,
         stundensatz: Number((it as any).stundensatz) || 52,
+        // Aufbau-Kapitel + Sichtbarkeit wandern mit: die Rechnung soll
+        // genauso aussehen wie das Angebot, das der Kunde angenommen hat.
+        gruppe: (it as any).gruppe || null,
+        auf_pdf: (it as any).auf_pdf !== false,
+        ist_gruppensumme: !!(it as any).ist_gruppensumme,
       }));
 
       // Anzahlungsrechnung: nur eine Zeile mit dem Anzahlungsbetrag.
@@ -862,6 +916,15 @@ export default function InvoiceDetail() {
               einheit: String(it.einheit || "Stk."),
               einzelpreis: Number(it.einzelpreis) || 0,
               gesamtpreis: Number(it.gesamtpreis) || 0,
+              // Gruppen/Sichtbarkeit aus der Kalkulation unverändert übernehmen.
+              // Detailzeilen kommen mit auf_pdf=false herein — der Chef sieht
+              // sie im Editor, der Kunde erst nach dem Einschalten.
+              gruppe: it.gruppe ? String(it.gruppe) : null,
+              auf_pdf: it.auf_pdf !== false,
+              ist_gruppensumme: !!it.ist_gruppensumme,
+              // Interner Wert der Detailzeilen (Material-EK, Lohn, Fahrt …) —
+              // steht in ek_preis, damit die Belegsumme unberührt bleibt.
+              ek_preis: Number(it.ek_preis) || 0,
             })));
           }
           if (data.betreff) {
@@ -1148,6 +1211,12 @@ export default function InvoiceDetail() {
         sonstiges_preis: Number((it as any).sonstiges_preis) || 0,
         arbeitszeit_minuten: Number((it as any).arbeitszeit_minuten) || 0,
         stundensatz: Number((it as any).stundensatz) || 52,
+        // Gruppen + Sichtbarkeit (Migration 20260722100000). Fehlen die
+        // Spalten (alte DB), bleibt es beim Bestandsverhalten: ungruppiert
+        // und für den Kunden sichtbar.
+        gruppe: (it as any).gruppe || null,
+        auf_pdf: (it as any).auf_pdf !== false,
+        ist_gruppensumme: !!(it as any).ist_gruppensumme,
       })));
     }
 
@@ -1402,6 +1471,19 @@ export default function InvoiceDetail() {
     });
   };
 
+  // ── Gruppen: Sichtbarkeit im Kundendokument ───────────────────────────────
+  /** Auge-Schalter einer Zeile: "Kunde sieht diese Zeile" an/aus. */
+  const toggleZeileSichtbar = (index: number) => {
+    setItemsDirty(prev => prev.map((it, i) =>
+      i === index ? { ...it, auf_pdf: !istSichtbar(it) } : it));
+  };
+
+  /** Gruppenkopf-Schalter: alle Detailzeilen des Aufbaus ein-/ausblenden. */
+  const setGruppenDetailsSichtbar = (gruppe: string, sichtbar: boolean) => {
+    setItemsDirty(prev => prev.map(it =>
+      gruppeVon(it) === gruppe && istDetailzeile(it) ? { ...it, auf_pdf: sichtbar } : it));
+  };
+
   // ── Kalkulation ───────────────────────────────────────────────────────────
   // Effektiver Material-Aufschlag einer Position: greift der Dokument-Override,
   // gilt dieser, sonst der positionseigene Aufschlag.
@@ -1419,12 +1501,14 @@ export default function InvoiceDetail() {
   // ── Preise anpassen (Rabatt/Aufschlag + KI) ───────────────────────────────
   // Positionen, auf die eine Preisanpassung überhaupt wirken kann. Ausgenommen
   // sind mwst_exempt-Zeilen (Anzahlungs-Abzüge sind Brutto-Verrechnungszeilen
-  // und dürfen nicht angefasst werden).
+  // und dürfen nicht angefasst werden) sowie die Detailzeilen einer Gruppe:
+  // sie tragen keinen Betrag (gesamtpreis 0) und dürfen keinen bekommen —
+  // sonst würde der Aufbau doppelt verrechnet.
   const priceAdjustLines = useMemo<AdjustLine[]>(
     () =>
       items
         .map((it, idx) => ({ it, idx }))
-        .filter(({ it }) => !it.mwst_exempt)
+        .filter(({ it }) => !it.mwst_exempt && !istDetailzeile(it))
         .map(({ it, idx }) => ({
           index: idx,
           beschreibung: it.beschreibung || it.kurztext || "",
@@ -1445,6 +1529,8 @@ export default function InvoiceDetail() {
       prev.map((it, idx) => {
         const neu = neuePreise[idx];
         if (neu === undefined || !isFinite(neu)) return it;
+        // Sicherheitsnetz: Detailzeilen einer Gruppe bleiben betragslos.
+        if (istDetailzeile(it)) return it;
         const next = { ...it, einzelpreis: Math.max(0, Math.round(neu * 100) / 100) };
         next.gesamtpreis = computeItemTotal(next);
         return next;
@@ -2053,9 +2139,21 @@ export default function InvoiceDetail() {
         sonstiges_preis: item.sonstiges_preis || 0,
         arbeitszeit_minuten: item.arbeitszeit_minuten || 0,
         stundensatz: item.stundensatz || 52,
+        // Gruppen + Sichtbarkeit
+        gruppe: gruppeVon(item) || null,
+        auf_pdf: istSichtbar(item),
+        ist_gruppensumme: !!item.ist_gruppensumme,
       }));
 
-      const { error: itemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
+      // Tolerant gegen eine (noch) fehlende Gruppen-Migration: schlägt der
+      // Insert nur wegen der drei neuen Spalten fehl, speichern wir den Beleg
+      // ohne sie — besser als ein verlorener Beleg.
+      let { error: itemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
+      if (itemsError && isGruppenSpaltenFehlen(itemsError)) {
+        ({ error: itemsError } = await supabase
+          .from("invoice_items")
+          .insert(itemsToInsert.map(ohneGruppenSpalten)));
+      }
       if (itemsError) throw itemsError;
 
       // Update form status to reflect saved state
@@ -2600,9 +2698,18 @@ export default function InvoiceDetail() {
         sonstiges_preis: (item as any).sonstiges_preis || 0,
         arbeitszeit_minuten: (item as any).arbeitszeit_minuten || 0,
         stundensatz: (item as any).stundensatz || 52,
+        // Gruppen + Sichtbarkeit müssen mitkopiert werden, sonst verliert das
+        // Duplikat die Aufbau-Kapitel und zeigt dem Kunden plötzlich alle
+        // internen Detailzeilen.
+        gruppe: gruppeVon(item) || null,
+        auf_pdf: istSichtbar(item),
+        ist_gruppensumme: !!(item as any).ist_gruppensumme,
       }));
 
-      await supabase.from("invoice_items").insert(itemsToInsert);
+      const { error: dupItemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
+      if (dupItemsError && isGruppenSpaltenFehlen(dupItemsError)) {
+        await supabase.from("invoice_items").insert(itemsToInsert.map(ohneGruppenSpalten));
+      }
 
       toast({ title: "Dupliziert", description: `${form.typ === "rechnung" ? "Rechnung" : "Angebot"} wurde dupliziert` });
       navigate(`/invoices/${newInvoice.id}`);
@@ -3054,6 +3161,10 @@ export default function InvoiceDetail() {
     einzelpreis: item.einzelpreis,
     gesamtpreis: item.gesamtpreis,
     mwst_exempt: !!(item as any).mwst_exempt,
+    // Vorschau/PDF entscheiden anhand dieser Felder, was der Kunde sieht.
+    gruppe: gruppeVon(item) || null,
+    auf_pdf: istSichtbar(item),
+    ist_gruppensumme: !!item.ist_gruppensumme,
   }));
 
   // Stornierte Rechnung: Nur Stornobeleg anzeigen
@@ -4979,68 +5090,220 @@ export default function InvoiceDetail() {
                       </Button>
                     ) : null;
 
-                    return { item, idx, isExempt, beschreibungFeld, mengeFeld, einheitFeld, preisFeld, rabattFeld, kalkButton, moveButtons, deleteButton };
+                    /* Auge = "Kunde sieht diese Zeile" (auf_pdf).
+                       Gesperrt bei der Gruppen-Sammelzeile (die Kategorie sieht
+                       der Kunde immer) und bei allen preistragenden Zeilen —
+                       ein Beleg, auf dem ein verrechneter Betrag fehlt, geht
+                       nicht auf. Frei schaltbar sind damit genau die
+                       betragslosen Detail-/Textzeilen. */
+                    const inGruppe = !!gruppeVon(item);
+                    const istSumme = !!item.ist_gruppensumme;
+                    const istDetail = istDetailzeile(item);
+                    const sichtbar = istSichtbar(item);
+                    const augeGesperrt = istSumme || traegtBetrag(item);
+                    const augeTitel = istSumme
+                      ? "Die Kategorie sieht der Kunde immer"
+                      : traegtBetrag(item)
+                        ? "Diese Position trägt einen Betrag — Beträge müssen im Kundendokument stehen"
+                        : sichtbar
+                          ? "Kunde sieht diese Zeile — klicken zum Ausblenden"
+                          : "Kunde sieht diese Zeile NICHT — klicken zum Einblenden";
+                    const eyeButton = (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        data-testid="pos-auge"
+                        data-sichtbar={sichtbar ? "1" : "0"}
+                        className={`h-11 w-11 md:h-8 md:w-8 ${sichtbar ? "text-primary" : "text-muted-foreground/50"}`}
+                        disabled={isLocked || augeGesperrt}
+                        title={augeTitel}
+                        aria-label={augeTitel}
+                        onClick={() => toggleZeileSichtbar(idx)}
+                      >
+                        {sichtbar ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                      </Button>
+                    );
+
+                    return { item, idx, isExempt, inGruppe, istSumme, istDetail, sichtbar, beschreibungFeld, mengeFeld, einheitFeld, preisFeld, rabattFeld, kalkButton, moveButtons, deleteButton, eyeButton };
                   });
+
+                  /* ══ GRUPPEN-BLÖCKE ═══════════════════════════════════════
+                     Aufeinanderfolgende Positionen mit derselben `gruppe`
+                     bilden ein Kapitel (Aufbau). Ungruppierte Positionen
+                     bleiben Einzelzeilen — Belege ohne Gruppen sehen deshalb
+                     exakt aus wie bisher. */
+                  type PosRow = typeof rows[number];
+                  type PosBlock =
+                    | { art: "einzel"; row: PosRow }
+                    | { art: "gruppe"; gruppe: string; rows: PosRow[] };
+                  const blocks: PosBlock[] = [];
+                  for (const r of rows) {
+                    const g = gruppeVon(r.item);
+                    const last = blocks[blocks.length - 1];
+                    if (!g) { blocks.push({ art: "einzel", row: r }); continue; }
+                    if (last && last.art === "gruppe" && last.gruppe === g) last.rows.push(r);
+                    else blocks.push({ art: "gruppe", gruppe: g, rows: [r] });
+                  }
+
+                  /**
+                   * Auf-/Zuklappen einer Gruppe. BEWUSST kein <Button>: die
+                   * Positionsliste steckt in <fieldset disabled> — bei einem
+                   * gesperrten Beleg (angenommen/verrechnet) wären echte
+                   * Form-Controls tot, und der Chef könnte die Aufbauten nicht
+                   * mehr aufklappen. Das Aufklappen ist reine Ansicht.
+                   */
+                  const gruppenToggle = (gruppe: string, offen: boolean) => (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      data-testid="gruppe-toggle"
+                      aria-expanded={offen}
+                      title={offen ? "Details einklappen" : "Details anzeigen"}
+                      onClick={() => toggleGruppe(gruppe)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleGruppe(gruppe); }
+                      }}
+                      className="inline-flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground md:h-8 md:w-8"
+                    >
+                      {offen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+                    </span>
+                  );
+
+                  /** Kennzahlen eines Aufbau-Blocks für den Gruppenkopf. */
+                  const gruppenInfo = (b: Extract<PosBlock, { art: "gruppe" }>) => {
+                    const details = b.rows.filter(r => r.istDetail);
+                    return {
+                      offen: !!gruppenOffen[b.gruppe],
+                      zwischensumme: b.rows.reduce((s, r) => s + (Number(r.item.gesamtpreis) || 0), 0),
+                      details,
+                      sichtbareDetails: details.filter(r => r.sichtbar).length,
+                    };
+                  };
 
                   /* ══ SCHMAL: Karten (Handy / schmaler Editor) ══════════════ */
                   if (posNarrow) {
-                    return (
-                      <div className="flex flex-col gap-3" data-testid="pos-cards">
-                        {rows.map(r => (
-                          <div
-                            key={r.idx}
-                            data-testid="pos-row"
-                            className={`rounded-lg border p-3 ${r.isExempt ? "border-rose-300 bg-rose-50/60" : "border-border bg-muted/20"}`}
-                          >
-                            <div className="flex items-center gap-2 mb-2">
-                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
-                                {r.idx + 1}
-                              </span>
-                              {r.isExempt && (
-                                <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
-                                  MwSt-frei
-                                </Badge>
-                              )}
-                              <div className="ml-auto flex items-center">
-                                {r.kalkButton}
-                                {r.moveButtons}
-                                {r.deleteButton}
-                              </div>
-                            </div>
+                    const karte = (r: PosRow) => (
+                      <div
+                        key={r.idx}
+                        data-testid="pos-row"
+                        className={`rounded-lg border p-3 ${
+                          r.isExempt ? "border-rose-300 bg-rose-50/60"
+                            : r.istDetail ? "border-dashed border-l-4 border-l-primary/30 bg-background ml-1.5 sm:ml-3"
+                            : "border-border bg-muted/20"
+                        } ${r.istDetail && !r.sichtbar ? "opacity-70" : ""}`}
+                      >
+                        {/* flex-wrap: mit dem zusätzlichen Auge-Schalter sind es
+                            5 Icon-Buttons — auf 390 px müssen sie umbrechen
+                            dürfen, sonst schiebt die Karte die Seite auf. */}
+                        <div className="flex flex-wrap items-center gap-2 mb-2">
+                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                            {r.idx + 1}
+                          </span>
+                          {r.isExempt && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
+                              MwSt-frei
+                            </Badge>
+                          )}
+                          {r.istSumme && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-primary/40 text-primary bg-white">
+                              Sammelzeile
+                            </Badge>
+                          )}
+                          {r.istDetail && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-muted-foreground bg-white">
+                              {r.sichtbar ? "Kunde sieht das" : "nur intern"}
+                            </Badge>
+                          )}
+                          <div className="ml-auto flex flex-wrap items-center justify-end">
+                            {r.eyeButton}
+                            {r.kalkButton}
+                            {r.moveButtons}
+                            {r.deleteButton}
+                          </div>
+                        </div>
 
-                            {r.beschreibungFeld}
+                        {r.beschreibungFeld}
 
-                            <div className="mt-2 grid grid-cols-2 gap-2">
+                        <div className="mt-2 grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-[11px] text-muted-foreground">Menge</Label>
+                            {r.mengeFeld}
+                          </div>
+                          <div>
+                            <Label className="text-[11px] text-muted-foreground">Einheit</Label>
+                            {r.einheitFeld}
+                          </div>
+                          {!hidePrices && (
+                            <>
                               <div>
-                                <Label className="text-[11px] text-muted-foreground">Menge</Label>
-                                {r.mengeFeld}
+                                <Label className="text-[11px] text-muted-foreground">Preis netto €</Label>
+                                {r.preisFeld}
                               </div>
                               <div>
-                                <Label className="text-[11px] text-muted-foreground">Einheit</Label>
-                                {r.einheitFeld}
+                                <Label className="text-[11px] text-muted-foreground">Rabatt %</Label>
+                                {r.rabattFeld}
                               </div>
-                              {!hidePrices && (
-                                <>
-                                  <div>
-                                    <Label className="text-[11px] text-muted-foreground">Preis netto €</Label>
-                                    {r.preisFeld}
-                                  </div>
-                                  <div>
-                                    <Label className="text-[11px] text-muted-foreground">Rabatt %</Label>
-                                    {r.rabattFeld}
-                                  </div>
-                                </>
-                              )}
-                            </div>
+                            </>
+                          )}
+                        </div>
 
-                            {!hidePrices && (
-                              <div className="mt-2 flex items-center justify-between border-t pt-2">
-                                <span className="text-xs text-muted-foreground">Gesamt (netto)</span>
-                                <span className="text-base font-bold tabular-nums">€ {eur(r.item.gesamtpreis)}</span>
-                              </div>
+                        {!hidePrices && (
+                          <div className="mt-2 flex items-center justify-between border-t pt-2">
+                            <span className="text-xs text-muted-foreground">Gesamt (netto)</span>
+                            {/* Detailzeilen tragen keinen Betrag — der steckt in der
+                                Sammelzeile des Aufbaus. Kein "€ 0,00" anzeigen. */}
+                            {r.istDetail ? (
+                              <span className="text-sm text-muted-foreground">im Aufbau enthalten</span>
+                            ) : (
+                              <span className="text-base font-bold tabular-nums">€ {eur(r.item.gesamtpreis)}</span>
                             )}
                           </div>
-                        ))}
+                        )}
+                      </div>
+                    );
+
+                    return (
+                      <div className="flex flex-col gap-3" data-testid="pos-cards">
+                        {blocks.map((b, bi) => {
+                          if (b.art === "einzel") return karte(b.row);
+                          const g = gruppenInfo(b);
+                          return (
+                            <div key={`grp-${bi}-${b.gruppe}`} data-testid="pos-gruppe" className="min-w-0 rounded-lg border border-primary/30 bg-primary/5 p-1.5 sm:p-2">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                {gruppenToggle(b.gruppe, g.offen)}
+                                <Layers className="w-4 h-4 text-primary shrink-0" />
+                                <span className="font-semibold text-sm min-w-0 break-words">{b.gruppe}</span>
+                                {!hidePrices && (
+                                  <span className="ml-auto text-sm font-bold tabular-nums shrink-0">€ {eur(g.zwischensumme)}</span>
+                                )}
+                              </div>
+                              {g.details.length > 0 && (
+                                <div className="mt-1.5 flex items-center gap-2 flex-wrap pl-1">
+                                  <span className="text-[11px] text-muted-foreground">
+                                    {g.details.length} Detailposition(en) · {g.sichtbareDetails} für den Kunden sichtbar
+                                  </span>
+                                  {!isLocked && (
+                                    /* min-h-[44px] + klickbares Label: der Schalter
+                                       selbst ist 24 px hoch (KingBill-Look), die
+                                       Trefferfläche mit Beschriftung aber 44 px. */
+                                    <div className="ml-auto flex min-h-[44px] items-center gap-1.5">
+                                      <Label htmlFor={`grp-sw-${bi}`} className="cursor-pointer py-3 text-[11px] text-muted-foreground">
+                                        Alle Details zeigen
+                                      </Label>
+                                      <Switch id={`grp-sw-${bi}`} data-testid="gruppe-alle-details"
+                                        checked={g.sichtbareDetails === g.details.length}
+                                        onCheckedChange={(v) => setGruppenDetailsSichtbar(b.gruppe, v)} />
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                              <div className="mt-2 flex flex-col gap-2">
+                                {b.rows.filter(r => !r.istDetail || g.offen).map(karte)}
+                              </div>
+                            </div>
+                          );
+                        })}
 
                         {!isLocked && (
                           <Button onClick={addItem} variant="outline" className="w-full h-11 gap-1.5">
@@ -5087,6 +5350,62 @@ export default function InvoiceDetail() {
                   }
 
                   /* ══ BREIT: KingBill-Tabelle ══════════════════════════════ */
+                  const tabellenZeile = (r: PosRow) => (
+                    <TableRow
+                      key={r.idx}
+                      data-testid="pos-row"
+                      className={
+                        r.isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300"
+                          : r.istSumme ? "bg-primary/[0.04] font-medium"
+                          : r.istDetail ? `bg-muted/40 border-l-4 border-l-primary/20 ${r.sichtbar ? "" : "text-muted-foreground"}`
+                          : ""
+                      }
+                    >
+                      <TableCell className="text-muted-foreground text-xs align-top">
+                        <div className="flex items-center gap-1">
+                          <span>{r.idx + 1}</span>
+                          {r.isExempt && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
+                              MwSt-frei
+                            </Badge>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className={r.istDetail ? "pl-6" : undefined}>
+                        {r.istSumme && (
+                          <span className="mb-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-primary">
+                            Sammelzeile — Betrag des Aufbaus
+                          </span>
+                        )}
+                        {r.istDetail && (
+                          <span className={`mb-1 inline-block text-[10px] uppercase tracking-wide ${r.sichtbar ? "text-primary" : "text-muted-foreground"}`}>
+                            {r.sichtbar ? "Detail — Kunde sieht das" : "Detail — nur intern"}
+                          </span>
+                        )}
+                        {r.beschreibungFeld}
+                      </TableCell>
+                      <TableCell>{r.mengeFeld}</TableCell>
+                      <TableCell>{r.einheitFeld}</TableCell>
+                      {!hidePrices && (
+                        <>
+                          <TableCell>{r.preisFeld}</TableCell>
+                          <TableCell>{r.rabattFeld}</TableCell>
+                          <TableCell className="text-right font-medium">
+                            {r.istDetail ? <span className="text-muted-foreground">–</span> : <>€ {eur(r.item.gesamtpreis)}</>}
+                          </TableCell>
+                        </>
+                      )}
+                      <TableCell>
+                        <div className="flex items-center gap-0.5">
+                          {r.eyeButton}
+                          {r.kalkButton}
+                          {r.moveButtons}
+                          {r.deleteButton}
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+
                   return (
                 /* Engere Zellen als shadcn-Standard (p-4): die acht Spalten
                    sparen so ~190 px Innenabstand — dadurch bleiben Mengen-,
@@ -5102,46 +5421,56 @@ export default function InvoiceDetail() {
                         <>
                           <TableHead className="w-32">Preis (netto) €</TableHead>
                           <TableHead className="w-20">Rabatt %</TableHead>
-                          <TableHead className="w-28 text-right">Gesamt (netto) €</TableHead>
+                          {/* nowrap: sonst bricht die Kopfzeile um, sobald die
+                              Aktionsspalte (mit Auge-Schalter) breiter wird. */}
+                          <TableHead className="w-28 text-right whitespace-nowrap">Gesamt (netto) €</TableHead>
                         </>
                       )}
-                      <TableHead className="w-24"></TableHead>
+                      {/* 5 Icon-Buttons: Auge, Kalkulation, hoch, runter, löschen */}
+                      <TableHead className="w-[168px]"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {rows.map(r => (
-                      <TableRow key={r.idx} data-testid="pos-row" className={r.isExempt ? "bg-rose-50/60 border-l-4 border-l-rose-300" : ""}>
-                        <TableCell className="text-muted-foreground text-xs align-top">
-                          <div className="flex items-center gap-1">
-                            <span>{r.idx + 1}</span>
-                            {r.isExempt && (
-                              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-rose-300 text-rose-700 bg-white">
-                                MwSt-frei
-                              </Badge>
-                            )}
-                          </div>
-                        </TableCell>
-                        <TableCell>{r.beschreibungFeld}</TableCell>
-                        <TableCell>{r.mengeFeld}</TableCell>
-                        <TableCell>{r.einheitFeld}</TableCell>
-                        {!hidePrices && (
-                          <>
-                            <TableCell>{r.preisFeld}</TableCell>
-                            <TableCell>{r.rabattFeld}</TableCell>
-                            <TableCell className="text-right font-medium">
-                              € {eur(r.item.gesamtpreis)}
+                    {blocks.map((b, bi) => {
+                      if (b.art === "einzel") return tabellenZeile(b.row);
+                      const g = gruppenInfo(b);
+                      return (
+                        <Fragment key={`grp-${bi}-${b.gruppe}`}>
+                          {/* Gruppen-Kopfzeile: Aufbauname + Zwischensumme +
+                              Auf-/Zuklappen + "alle Details einblenden". */}
+                          <TableRow data-testid="pos-gruppe" className="bg-primary/5 hover:bg-primary/5 border-t-2 border-t-primary/30">
+                            <TableCell colSpan={hidePrices ? 5 : 8} className="py-2">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {gruppenToggle(b.gruppe, g.offen)}
+                                <Layers className="w-4 h-4 text-primary shrink-0" />
+                                <span className="font-semibold min-w-0 break-words">{b.gruppe}</span>
+                                {g.details.length > 0 && (
+                                  <Badge variant="outline" className="text-[10px] bg-white shrink-0">
+                                    {g.details.length} Detail{g.details.length === 1 ? "" : "s"} · {g.sichtbareDetails} sichtbar
+                                  </Badge>
+                                )}
+                                <div className="ml-auto flex items-center gap-3 shrink-0">
+                                  {g.details.length > 0 && !isLocked && (
+                                    <div className="flex items-center gap-1.5">
+                                      <Label htmlFor={`grp-sw-w-${bi}`} className="text-[11px] text-muted-foreground cursor-pointer">
+                                        Alle Details im Kundendokument
+                                      </Label>
+                                      <Switch id={`grp-sw-w-${bi}`} data-testid="gruppe-alle-details"
+                                        checked={g.sichtbareDetails === g.details.length}
+                                        onCheckedChange={(v) => setGruppenDetailsSichtbar(b.gruppe, v)} />
+                                    </div>
+                                  )}
+                                  {!hidePrices && (
+                                    <span className="font-bold tabular-nums">€ {eur(g.zwischensumme)}</span>
+                                  )}
+                                </div>
+                              </div>
                             </TableCell>
-                          </>
-                        )}
-                        <TableCell>
-                          <div className="flex items-center gap-0.5">
-                            {r.kalkButton}
-                            {r.moveButtons}
-                            {r.deleteButton}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                          </TableRow>
+                          {b.rows.filter(r => !r.istDetail || g.offen).map(tabellenZeile)}
+                        </Fragment>
+                      );
+                    })}
                     {!isLocked && (
                       <TableRow>
                         <TableCell colSpan={hidePrices ? 5 : 8} className="py-1">
