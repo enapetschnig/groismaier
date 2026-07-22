@@ -256,6 +256,15 @@ export function CreateProjectDialog({
     });
     setCustomerPopoverOpen(false);
     if (!projectName) setProjectName(c.name);
+
+    // Projektadresse automatisch aus dem Kunden vorbefüllen. Die Baustelle
+    // liegt im Regelfall beim Kunden; abweichende Adressen bleiben editierbar.
+    // Bereits eingetippte Werte werden NICHT überschrieben.
+    // (Ohne das blieb die Projekt-PLZ leer -> NOT-NULL-Fehler beim Speichern.)
+    if (!projektAdresse.trim() && c.adresse) setProjektAdresse(c.adresse);
+    if (!projektPlz.trim() && c.plz) setProjektPlz(c.plz);
+    if (!projektOrt.trim() && c.ort) setProjektOrt(c.ort);
+    if (!projektLand.trim() && c.land) setProjektLand(c.land);
   };
 
   const handleSave = async () => {
@@ -274,6 +283,24 @@ export function CreateProjectDialog({
     // E-Mail-Validierung wenn gesetzt
     if (customerForm.email && customerForm.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(customerForm.email.trim())) {
       toast({ variant: "destructive", title: "Ungültige E-Mail", description: "Bitte gültige E-Mail-Adresse eingeben" });
+      return;
+    }
+
+    // PLZ ist in der Datenbank Pflicht (projects.plz NOT NULL). Ohne diese
+    // Prüfung bekam der Anwender die rohe Postgres-Meldung
+    // „null value in column plz violates not-null constraint".
+    // Rückfallebene: PLZ des Kunden übernehmen, sonst verständlich melden.
+    let plzFuerProjekt = projektPlz.trim();
+    if (!plzFuerProjekt && customerForm.plz.trim()) {
+      plzFuerProjekt = customerForm.plz.trim();
+      setProjektPlz(plzFuerProjekt);
+    }
+    if (!plzFuerProjekt) {
+      toast({
+        variant: "destructive",
+        title: "PLZ fehlt",
+        description: "Bitte die PLZ des Projekts angeben (Abschnitt „Projektadresse“) — sie ist ein Pflichtfeld.",
+      });
       return;
     }
 
@@ -373,7 +400,8 @@ export function CreateProjectDialog({
           customer_id: customerId,
           // Projektadresse / Leistungsort
           adresse: projektAdresse.trim() || null,
-          plz: projektPlz.trim() || null,
+          // plzFuerProjekt ist oben geprüft/aus dem Kunden abgeleitet — nie null.
+          plz: plzFuerProjekt,
           ort: projektOrt.trim() || null,
           land: projektLand.trim() || null,
           projekt_kontakt_name: projektKontaktName.trim() || null,
@@ -836,8 +864,14 @@ export function CreateProjectDialog({
               />
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <Label>PLZ</Label>
-                  <Input value={projektPlz} onChange={(e) => setProjektPlz(e.target.value)} placeholder="8831" />
+                  <Label>PLZ <span className="text-destructive">*</span></Label>
+                  <Input
+                    value={projektPlz}
+                    onChange={(e) => setProjektPlz(e.target.value)}
+                    placeholder="8831"
+                    inputMode="numeric"
+                    required
+                  />
                 </div>
                 <div className="col-span-2">
                   <Label>Ort</Label>
