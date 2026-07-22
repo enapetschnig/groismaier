@@ -488,9 +488,13 @@ export default function InvoiceDetail() {
    * standardmäßig EINGEKLAPPT — sonst ertrinkt der Chef bei fünf Aufbauten
    * mit je 15 Materialzeilen in der Liste.
    */
+  // Gruppen sind standardmäßig AUFGEKLAPPT: der Anwender soll sofort sehen,
+  // woraus ein Aufbau besteht (Material, Arbeitszeit, Fahrten …). Nur explizit
+  // zugeklappte Gruppen stehen hier auf false.
   const [gruppenOffen, setGruppenOffen] = useState<Record<string, boolean>>({});
+  const istGruppeOffen = (g: string) => gruppenOffen[g] !== false;
   const toggleGruppe = (g: string) =>
-    setGruppenOffen(prev => ({ ...prev, [g]: !prev[g] }));
+    setGruppenOffen(prev => ({ ...prev, [g]: prev[g] === false }));
   const [selectedTemplateIds, setSelectedTemplateIds] = useState<string[]>([]);
   const [templateMengen, setTemplateMengen] = useState<Record<string, number>>({});
   const [addedFromDialog, setAddedFromDialog] = useState<{ name: string; menge: number; einheit: string }[]>([]);
@@ -5174,7 +5178,7 @@ export default function InvoiceDetail() {
                   const gruppenInfo = (b: Extract<PosBlock, { art: "gruppe" }>) => {
                     const details = b.rows.filter(r => r.istDetail);
                     return {
-                      offen: !!gruppenOffen[b.gruppe],
+                      offen: istGruppeOffen(b.gruppe),
                       zwischensumme: b.rows.reduce((s, r) => s + (Number(r.item.gesamtpreis) || 0), 0),
                       details,
                       sichtbareDetails: details.filter(r => r.sichtbar).length,
@@ -5270,7 +5274,17 @@ export default function InvoiceDetail() {
                           const g = gruppenInfo(b);
                           return (
                             <div key={`grp-${bi}-${b.gruppe}`} data-testid="pos-gruppe" className="min-w-0 rounded-lg border border-primary/30 bg-primary/5 p-1.5 sm:p-2">
-                              <div className="flex items-center gap-1.5 flex-wrap">
+                              {/* Der GANZE Kopf klappt auf/zu — vorher reagierte nur
+                                  der kleine Pfeil, ein Klick auf den Namen tat nichts. */}
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                aria-expanded={g.offen}
+                                onClick={() => toggleGruppe(b.gruppe)}
+                                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleGruppe(b.gruppe); } }}
+                                title={g.offen ? "Unterpositionen einklappen" : "Unterpositionen anzeigen"}
+                                className="flex cursor-pointer items-center gap-1.5 flex-wrap rounded-md hover:bg-primary/10"
+                              >
                                 {gruppenToggle(b.gruppe, g.offen)}
                                 <Layers className="w-4 h-4 text-primary shrink-0" />
                                 <span className="font-semibold text-sm min-w-0 break-words">{b.gruppe}</span>
@@ -5281,7 +5295,7 @@ export default function InvoiceDetail() {
                               {g.details.length > 0 && (
                                 <div className="mt-1.5 flex items-center gap-2 flex-wrap pl-1">
                                   <span className="text-[11px] text-muted-foreground">
-                                    {g.details.length} Detailposition(en) · {g.sichtbareDetails} für den Kunden sichtbar
+                                    {g.details.length} Unterposition(en) · {g.sichtbareDetails} davon im Angebot sichtbar
                                   </span>
                                   {!isLocked && (
                                     /* min-h-[44px] + klickbares Label: der Schalter
@@ -5289,7 +5303,7 @@ export default function InvoiceDetail() {
                                        Trefferfläche mit Beschriftung aber 44 px. */
                                     <div className="ml-auto flex min-h-[44px] items-center gap-1.5">
                                       <Label htmlFor={`grp-sw-${bi}`} className="cursor-pointer py-3 text-[11px] text-muted-foreground">
-                                        Alle Details zeigen
+                                        Alle im Angebot zeigen
                                       </Label>
                                       <Switch id={`grp-sw-${bi}`} data-testid="gruppe-alle-details"
                                         checked={g.sichtbareDetails === g.details.length}
@@ -5441,14 +5455,26 @@ export default function InvoiceDetail() {
                           <TableRow data-testid="pos-gruppe" className="bg-primary/5 hover:bg-primary/5 border-t-2 border-t-primary/30">
                             <TableCell colSpan={hidePrices ? 5 : 8} className="py-2">
                               <div className="flex items-center gap-2 flex-wrap">
-                                {gruppenToggle(b.gruppe, g.offen)}
-                                <Layers className="w-4 h-4 text-primary shrink-0" />
-                                <span className="font-semibold min-w-0 break-words">{b.gruppe}</span>
-                                {g.details.length > 0 && (
-                                  <Badge variant="outline" className="text-[10px] bg-white shrink-0">
-                                    {g.details.length} Detail{g.details.length === 1 ? "" : "s"} · {g.sichtbareDetails} sichtbar
-                                  </Badge>
-                                )}
+                                {/* Name + Pfeil + Badge sind gemeinsam klickbar —
+                                    vorher reagierte nur der kleine Pfeil. */}
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  aria-expanded={g.offen}
+                                  onClick={() => toggleGruppe(b.gruppe)}
+                                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleGruppe(b.gruppe); } }}
+                                  title={g.offen ? "Unterpositionen einklappen" : "Unterpositionen anzeigen"}
+                                  className="flex cursor-pointer items-center gap-2 rounded-md hover:bg-primary/10"
+                                >
+                                  {gruppenToggle(b.gruppe, g.offen)}
+                                  <Layers className="w-4 h-4 text-primary shrink-0" />
+                                  <span className="font-semibold min-w-0 break-words">{b.gruppe}</span>
+                                  {g.details.length > 0 && (
+                                    <Badge variant="outline" className="text-[10px] bg-white shrink-0">
+                                      {g.details.length} Unterposition{g.details.length === 1 ? "" : "en"} · {g.sichtbareDetails} im Angebot
+                                    </Badge>
+                                  )}
+                                </span>
                                 <div className="ml-auto flex items-center gap-3 shrink-0">
                                   {g.details.length > 0 && !isLocked && (
                                     <div className="flex items-center gap-1.5">
