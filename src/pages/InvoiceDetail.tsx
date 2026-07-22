@@ -18,6 +18,12 @@ import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
+import {
+  buildAngebotItems, calcMargeProzent, calcProjekt, margeAmpel,
+  normalizeKalkulationState, resolveBetriebsdaten,
+  type AngebotItem, type ProjektErgebnis,
+} from "@/lib/kalkulationEngine";
+import { usePermissions } from "@/hooks/usePermissions";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
 import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
@@ -169,9 +175,70 @@ const traegtBetrag = (it: Pick<InvoiceItem, "gesamtpreis">): boolean =>
  */
 const istSichtbar = (it: Pick<InvoiceItem, "auf_pdf" | "gesamtpreis">): boolean =>
   it?.auf_pdf !== false || traegtBetrag(it);
+/** Eindeutiger Schlüssel „Gruppe + Beschreibung" (kollisionsfrei via JSON). */
+const gruppeSchluessel = (gruppe: string, beschreibung: string): string =>
+  JSON.stringify([gruppe, beschreibung]);
+
 /** Detailzeile = Teil einer Gruppe, aber nicht deren Sammelzeile. */
 const istDetailzeile = (it: Pick<InvoiceItem, "gruppe" | "ist_gruppensumme">): boolean =>
   !!gruppeVon(it) && !it?.ist_gruppensumme;
+
+/**
+ * Interne SELBSTKOSTEN einer Position in € (0 = keine Kostendaten bekannt).
+ *
+ * Drei Fälle — die Belegzeilen tragen ihre internen Werte historisch in
+ * derselben Spalte (ek_preis), aber mit unterschiedlicher Bedeutung:
+ *
+ *  1. GRUPPEN-SAMMELZEILE aus der Auftragskalkulation: ek_preis = Selbstkosten
+ *     des ganzen Aufbaus (Material-EK + Lohn-Selbstkosten + Fahrten +
+ *     Fremdleistungen), gesetzt beim „Als Angebot übernehmen".
+ *  2. DETAILZEILE einer Gruppe: ek_preis ist die VERKAUFS-Aufschlüsselung
+ *     (Material-VK, Arbeitszeit, Fahrten …). Diese Beträge summieren sich
+ *     exakt zur Sammelzeile — als Kosten gewertet ergäbe das immer einen
+ *     Deckungsbeitrag von 0. Deshalb: keine Kosten.
+ *  3. KLASSISCHE kalkulierte Position (Excel-Modell, KalkulationFields):
+ *     ek_preis = Material-EK je Einheit. Selbstkosten = derselbe Einzelpreis
+ *     OHNE Material-Aufschlag (also EK + Verschnitt + Befestigung +
+ *     Sonstiges + Lohn) × Menge. Der Aufschlag ist genau der Verdienst.
+ */
+const selbstkostenVon = (it: InvoiceItem): number => {
+  const ek = Number(it.ek_preis) || 0;
+  if (ek <= 0) return 0;
+  if (it.ist_gruppensumme) return round2(ek);
+  if (istDetailzeile(it)) return 0;
+  if (it.ist_kalkuliert) {
+    const kosten = calcEinzelpreis({
+      ek_preis: ek,
+      verschnitt_prozent: Number(it.verschnitt_prozent) || 0,
+      aufschlag_prozent: 0,
+      befestigung_preis: Number(it.befestigung_preis) || 0,
+      sonstiges_preis: Number(it.sonstiges_preis) || 0,
+      arbeitszeit_minuten: Number(it.arbeitszeit_minuten) || 0,
+      stundensatz: Number(it.stundensatz) || 52,
+    });
+    return round2(kosten * (Number(it.menge) || 0));
+  }
+  return 0;
+};
+
+/**
+ * Ergänzt frisch gebaute Angebots-Positionen um die Selbstkosten je Aufbau
+ * (siehe selbstkostenVon, Fall 1). Zuordnung über die Reihenfolge:
+ * buildAngebotItems erzeugt je Aufbau mit Betrag > 0 genau eine Sammelzeile.
+ *
+ * (Identische Funktion in KalkulationEditor.tsx — bewusst dupliziert, damit
+ * kalkulationEngine.ts unangetastet bleibt.)
+ */
+const mitSelbstkosten = (angebotItems: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] => {
+  const zeilenMitBetrag = projekt.zeilen.filter(z => round2(z.gesamtAdj) > 0);
+  let k = 0;
+  return angebotItems.map(it => {
+    if (!it.ist_gruppensumme) return it;
+    const zeile = zeilenMitBetrag[k];
+    k += 1;
+    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
+  });
+};
 
 const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme"] as const;
 /** Insert scheiterte NUR an den (noch) fehlenden Gruppen-Spalten? */
@@ -545,6 +612,19 @@ export default function InvoiceDetail() {
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [newProjectName, setNewProjectName] = useState("");
 
+  // ── Herkunft Auftragskalkulation (Migration 20260722110000) ───────────────
+  // invoices.kalkulation_id. Fehlt die Spalte noch, bleibt der Wert null und
+  // sämtliche Kalkulations-Funktionen sind still deaktiviert.
+  const [kalkulationId, setKalkulationId] = useState<string | null>(null);
+  const [kalkulationName, setKalkulationName] = useState<string>("");
+  /** Warnschwelle Marge aus app_settings.kalk_warn_marge_prozent (Default 35 %). */
+  const [warnMargeProzent, setWarnMargeProzent] = useState<number>(35);
+  const [kalkErsetzenOpen, setKalkErsetzenOpen] = useState(false);
+  const [kalkErsetzenLaeuft, setKalkErsetzenLaeuft] = useState(false);
+  const [kalkVerlassenOpen, setKalkVerlassenOpen] = useState(false);
+  /** Nur Administratoren sehen den internen Verdienst-Block. */
+  const { isAdmin } = usePermissions();
+
   // Payment tracking
   interface Payment { id: string; betrag: number; datum: string; notizen: string | null; }
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -684,6 +764,130 @@ export default function InvoiceDetail() {
     })();
     return () => { cancelled = true; };
   }, [form.parent_invoice_id]);
+
+  // Name der verknüpften Auftragskalkulation (für den Herkunfts-Hinweis).
+  // Ist die Kalkulation gelöscht, bleibt der Name leer — der Hinweis zeigt
+  // dann nur „Aus Kalkulation erstellt".
+  useEffect(() => {
+    if (!kalkulationId) { setKalkulationName(""); return; }
+    let cancelled = false;
+    (async () => {
+      const { data } = await (supabase.from("kalkulationen" as never) as any)
+        .select("id, name").eq("id", kalkulationId).maybeSingle();
+      if (cancelled) return;
+      setKalkulationName(((data as any)?.name as string) || "");
+    })();
+    return () => { cancelled = true; };
+  }, [kalkulationId]);
+
+  /**
+   * „Positionen neu übernehmen": lädt die verknüpfte Kalkulation frisch,
+   * rechnet sie durch und ERSETZT die daraus entstandenen Positionen.
+   *
+   * Erhalten bleiben:
+   *   - von Hand ergänzte Positionen (ohne Gruppe),
+   *   - die Sichtbarkeits-Schalter (auf_pdf) der bisherigen Gruppenzeilen,
+   *     zugeordnet über Gruppe + Beschreibung (Fallback: Beschreibung allein)
+   *     — der Chef soll seine Auswahl nicht neu treffen müssen.
+   */
+  const positionenNeuUebernehmen = async () => {
+    if (!kalkulationId) return;
+    setKalkErsetzenLaeuft(true);
+    try {
+      const [kalkRes, settingsRes] = await Promise.all([
+        (supabase.from("kalkulationen" as never) as any)
+          .select("id, name, data").eq("id", kalkulationId).maybeSingle(),
+        supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
+      ]);
+      const kalk = (kalkRes as any)?.data;
+      if (!kalk) {
+        toast({ variant: "destructive", title: "Kalkulation nicht gefunden", description: "Die verknüpfte Kalkulation existiert nicht mehr." });
+        return;
+      }
+      const settings: Record<string, string> = {};
+      for (const row of (((settingsRes as any)?.data as any[]) || [])) settings[row.key] = row.value;
+
+      const state = normalizeKalkulationState((kalk as any).data);
+      const bd = resolveBetriebsdaten(state.settings.businessData, settings);
+      const projekt = calcProjekt(state, bd);
+      const { items: rohItems } = buildAngebotItems(projekt);
+      if (rohItems.length === 0) {
+        toast({ variant: "destructive", title: "Nichts zu übernehmen", description: "Die Kalkulation enthält keine Aufbauten mit Betrag." });
+        return;
+      }
+      const neu = mitSelbstkosten(rohItems, projekt);
+
+      // Bisherige Sichtbarkeits-Einstellungen merken.
+      const sichtbarKeyExakt = new Map<string, boolean>();
+      const sichtbarKeyText = new Map<string, boolean>();
+      for (const it of items) {
+        if (!gruppeVon(it)) continue;
+        const text = (it.beschreibung || "").trim();
+        sichtbarKeyExakt.set(gruppeSchluessel(gruppeVon(it), text), istSichtbar(it));
+        if (!sichtbarKeyText.has(text)) sichtbarKeyText.set(text, istSichtbar(it));
+      }
+
+      // Ungruppierte Zeilen, die die Kalkulation selbst erzeugt (z.B. die
+      // Nebenkosten-Pauschale), gehören ebenfalls zur Kalkulation — sonst
+      // stünde sie nach jedem Neu-Übernehmen ein weiteres Mal im Beleg.
+      const neueUngruppierteTexte = new Set(
+        neu.filter(n => !n.gruppe).map(n => (n.beschreibung || "").trim())
+      );
+      const istKalkZeile = (it: InvoiceItem): boolean =>
+        !!gruppeVon(it) || neueUngruppierteTexte.has((it.beschreibung || "").trim());
+
+      const neuItems: InvoiceItem[] = neu.map((n, i) => {
+        const text = (n.beschreibung || "").trim();
+        const alt = n.gruppe
+          ? sichtbarKeyExakt.get(gruppeSchluessel(String(n.gruppe), text)) ?? sichtbarKeyText.get(text)
+          : undefined;
+        return {
+          position: i + 1,
+          beschreibung: n.beschreibung,
+          kurztext: n.beschreibung,
+          langtext: "",
+          menge: Number(n.menge) || 0,
+          einheit: n.einheit || "Stk.",
+          einzelpreis: Number(n.einzelpreis) || 0,
+          rabatt_prozent: 0,
+          gesamtpreis: Number(n.gesamtpreis) || 0,
+          gruppe: n.gruppe ? String(n.gruppe) : null,
+          // Sammelzeilen sind immer sichtbar; für Detailzeilen gewinnt die
+          // bisherige Auswahl des Chefs vor dem Vorschlag der Kalkulation.
+          auf_pdf: n.ist_gruppensumme ? true : (alt ?? n.auf_pdf !== false),
+          ist_gruppensumme: !!n.ist_gruppensumme,
+          ek_preis: Number(n.ek_preis) || 0,
+        };
+      });
+
+      let eingefuegt = false;
+      const zusammen: InvoiceItem[] = [];
+      for (const it of items) {
+        if (istKalkZeile(it)) {
+          if (!eingefuegt) { zusammen.push(...neuItems); eingefuegt = true; }
+          continue;
+        }
+        // Die leere Startzeile eines frischen Belegs nicht mitschleppen.
+        if (!(it.beschreibung || "").trim() && !traegtBetrag(it)) continue;
+        zusammen.push(it);
+      }
+      if (!eingefuegt) zusammen.push(...neuItems);
+
+      setItemsDirty(zusammen.map((it, i) => ({ ...it, position: i + 1 })));
+      setKalkErsetzenOpen(false);
+      const manuell = zusammen.length - neuItems.length;
+      toast({
+        title: "Positionen neu übernommen",
+        description: `${neuItems.length} Position(en) aus der Kalkulation ersetzt`
+          + (manuell > 0 ? `, ${manuell} von Hand ergänzte Position(en) blieben erhalten` : "")
+          + ". Nicht vergessen zu speichern.",
+      });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "Übernahme fehlgeschlagen", description: String(err?.message || err) });
+    } finally {
+      setKalkErsetzenLaeuft(false);
+    }
+  };
 
   // Quelldokument (Rechnung/Angebot/AB) in den Form-State laden —
   // wird sowohl vom URL-`from_doc`-Pfad (useEffect bei Mount) als auch
@@ -877,10 +1081,14 @@ export default function InvoiceDetail() {
     fetchTemplates();
     fetchEmployees();
     // Load invoice layout settings + default betreff
-    supabase.from("app_settings").select("key, value").in("key", ["invoice_layout", "default_betreff_rechnung", "default_betreff_angebot"]).then(({ data }) => {
+    supabase.from("app_settings").select("key, value").in("key", ["invoice_layout", "default_betreff_rechnung", "default_betreff_angebot", "kalk_warn_marge_prozent"]).then(({ data }) => {
       if (data) {
         for (const row of data) {
           if (row.key === "invoice_layout") setInvoiceLayout(parseLayoutSettings(row.value));
+          if (row.key === "kalk_warn_marge_prozent") {
+            const n = parseDecimal(String(row.value ?? ""));
+            if (n !== null && n > 0) setWarnMargeProzent(n);
+          }
           if (isNew && row.key === "default_betreff_rechnung" && defaultTyp === "rechnung" && row.value) {
             setForm(prev => prev.betreff ? prev : { ...prev, betreff: row.value });
           }
@@ -934,6 +1142,9 @@ export default function InvoiceDetail() {
           if (data.betreff) {
             setForm(prev => ({ ...prev, betreff: prev.betreff || String(data.betreff) }));
           }
+          // Herkunft merken: aus welcher Kalkulation stammt dieser Beleg?
+          // (wird beim Speichern in invoices.kalkulation_id geschrieben)
+          if (data.kalkulation_id) setKalkulationId(String(data.kalkulation_id));
           // Wenn die Kalkulation einem Kunden zugeordnet war, diesen ins
           // Angebot übernehmen.
           if (data.customer_id) {
@@ -1113,6 +1324,9 @@ export default function InvoiceDetail() {
 
     // Ausgangsstand für das Optimistic Locking merken (siehe handleSave).
     setGeladenerStand(((data as any).updated_at as string) || null);
+    // Herkunft Auftragskalkulation. Fehlt die Spalte (Migration noch nicht
+    // eingespielt), ist der Wert schlicht undefined → Feature bleibt aus.
+    setKalkulationId(((data as any).kalkulation_id as string) || null);
 
     setForm({
       typ: data.typ,
@@ -1733,6 +1947,39 @@ export default function InvoiceDetail() {
   const bruttoSumme = r2(nettoSumme + mwstBetrag + exemptBrutto);
   const restBetrag = r2(bruttoSumme - form.bezahlt_betrag);
 
+  // ── Verdienst (intern) ────────────────────────────────────────────────────
+  // „Was verdiene ich an diesem Angebot?" — dieselbe Rechnung wie in der
+  // Auftragskalkulation, aber mit dem TATSÄCHLICHEN Belegerlös: rabattiert der
+  // Chef im Angebot nach, sinkt die Marge hier sofort mit.
+  // NUR im Editor, NUR für Administratoren — niemals im Kundendokument
+  // (PDF/Live-Vorschau bekommen diese Zahlen nirgends durchgereicht).
+  const selbstkosten = round2(items.reduce((s, it) => s + selbstkostenVon(it), 0));
+  /**
+   * Angezeigt wird der Block nur bei echter KALKULATIONSHERKUNFT (mindestens
+   * eine Sammelzeile mit Selbstkosten). Bei einem Beleg aus lauter
+   * katalog-kalkulierten Einzelpositionen steckt der Verdienst allein im
+   * Material-Aufschlag — dort ergäbe die 35-%-Warnschwelle der
+   * Auftragskalkulation nur Dauerrot ohne Aussage.
+   */
+  const hatKostenDaten = items.some(it => it.ist_gruppensumme && (Number(it.ek_preis) || 0) > 0);
+  /** Positionen mit Betrag, zu denen keine Kosten bekannt sind (z.B. von Hand ergänzt). */
+  const positionenOhneKosten = items.filter(
+    it => !it.mwst_exempt && traegtBetrag(it) && selbstkostenVon(it) <= 0
+  ).length;
+  const deckungsbeitrag = round2(nettoSumme - selbstkosten);
+  const margeProzent = calcMargeProzent(deckungsbeitrag, nettoSumme);
+  const margeUnterWarnschwelle = nettoSumme <= 0 || deckungsbeitrag < 0 || margeProzent < warnMargeProzent;
+  const margeFarbe = deckungsbeitrag < 0 || nettoSumme <= 0
+    ? "rot"
+    : margeAmpel(margeProzent, warnMargeProzent);
+  // Der Block gehört zum Verkaufsvorgang (Angebot / Auftragsbestätigung) —
+  // auf Rechnungen ist der Preis längst vereinbart.
+  const zeigeVerdienst =
+    isAdmin
+    && hatKostenDaten
+    && !getDocConfig(form.typ).hidePrices
+    && (form.typ === "angebot" || form.typ === "auftragsbestaetigung");
+
   const canDelete = form.typ === "angebot";
   // Stornieren ist für alle rechnungs-artigen Dokumente möglich
   // (Rechnung, Anzahlungsrechnung, Schlussrechnung, Gutschrift) —
@@ -2001,6 +2248,12 @@ export default function InvoiceDetail() {
       // korrekt persistiert wird.
       (invoicePayload as any).allgemeine_angaben_aktiv = !!form.allgemeine_angaben_aktiv;
 
+      // Herkunft Auftragskalkulation (Migration 20260722110000) — nur
+      // mitschicken, wenn gesetzt. Fehlt die Spalte, greift der Retry unten.
+      if (kalkulationId) {
+        (invoicePayload as any).kalkulation_id = kalkulationId;
+      }
+
       // Gutschrift-Verrechnung (Migration 20260511000000) — nur
       // mitschicken, wenn überhaupt gesetzt.
       if (form.verrechnet_mit_invoice_id) {
@@ -2018,16 +2271,25 @@ export default function InvoiceDetail() {
       // Verrechnungs-Felder.
       const allTolerantCols = [
         "leistungsdatum_bis", "allgemeine_angaben_aktiv",
-        "verrechnet_mit_invoice_id", "verrechnet_am",
+        "verrechnet_mit_invoice_id", "verrechnet_am", "kalkulation_id",
         ...aaFields,
       ];
       const isSchemaCacheMiss = (err: any) =>
         typeof err?.message === "string" &&
         allTolerantCols.some((col) => err.message.includes(col)) &&
         /(schema cache|column .* does not exist)/i.test(err.message);
-      const stripTolerantCols = (payload: any) => {
+      /**
+       * Entfernt die Spalten, die die Datenbank in ihrer Fehlermeldung
+       * benennt — und nur diese. (Vorher flogen IMMER alle toleranten Spalten
+       * raus: eine einzige fehlende Spalte hätte damit auch die Allgemeinen
+       * Angaben und leistungsdatum_bis mit weggeworfen.) Benennt der Fehler
+       * keine bekannte Spalte, bleibt es beim bisherigen Rundumschlag.
+       */
+      const stripTolerantCols = (payload: any, err?: any) => {
+        const msg = typeof err?.message === "string" ? err.message : "";
+        const betroffen = allTolerantCols.filter((col) => msg.includes(col));
         const next: any = { ...payload };
-        for (const col of allTolerantCols) delete next[col];
+        for (const col of (betroffen.length > 0 ? betroffen : allTolerantCols)) delete next[col];
         return next;
       };
 
@@ -2078,7 +2340,7 @@ export default function InvoiceDetail() {
 
         let { data: insertData, error: insertError } = await insertOnce(invoicePayload);
         if (insertError && isSchemaCacheMiss(insertError)) {
-          ({ data: insertData, error: insertError } = await insertOnce(stripTolerantCols(invoicePayload)));
+          ({ data: insertData, error: insertError } = await insertOnce(stripTolerantCols(invoicePayload, insertError)));
         }
 
         if (insertError) throw insertError;
@@ -2098,7 +2360,7 @@ export default function InvoiceDetail() {
 
         let { data: updRows, error: updateError } = await updateOnce(invoicePayload);
         if (updateError && isSchemaCacheMiss(updateError)) {
-          ({ data: updRows, error: updateError } = await updateOnce(stripTolerantCols(invoicePayload)));
+          ({ data: updRows, error: updateError } = await updateOnce(stripTolerantCols(invoicePayload, updateError)));
         }
 
         if (updateError) throw updateError;
@@ -3351,6 +3613,53 @@ export default function InvoiceDetail() {
                       <span>{c.nummer || "—"}</span>
                     </button>
                   ))}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Herkunft Auftragskalkulation: Kalkulation öffnen / Positionen neu
+              übernehmen. Erscheint nur, wenn der Beleg wirklich aus einer
+              Kalkulation stammt (invoices.kalkulation_id). */}
+          {kalkulationId && !isLocked && (
+            <Card className="kb-panel border-blue-200 bg-blue-50/40" data-testid="kalk-herkunft">
+              <CardContent className="flex flex-col gap-3 pt-4 pb-3 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-start gap-2">
+                  <Calculator className="mt-0.5 h-4 w-4 shrink-0 text-blue-700" />
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-blue-900">Aus Kalkulation erstellt</div>
+                    <div className="truncate text-xs text-blue-800/80">
+                      {kalkulationName
+                        ? `Auftragskalkulation „${kalkulationName}“`
+                        : "Verknüpfte Auftragskalkulation"}
+                      {" — Änderungen dort wirken erst nach „Positionen neu übernehmen“."}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    data-testid="kalk-oeffnen"
+                    onClick={() => {
+                      if (isDirty) { setKalkVerlassenOpen(true); return; }
+                      navigate(`/auftragskalkulation/${kalkulationId}`);
+                    }}
+                  >
+                    <Calculator className="h-4 w-4" />
+                    Kalkulation öffnen
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    data-testid="kalk-neu-uebernehmen"
+                    onClick={() => setKalkErsetzenOpen(true)}
+                  >
+                    <RefreshCw className="h-4 w-4" />
+                    Positionen neu übernehmen
+                  </Button>
                 </div>
               </CardContent>
             </Card>
@@ -5563,6 +5872,91 @@ export default function InvoiceDetail() {
             </CardContent>
           </Card>
 
+          {/* ── Verdienst (intern) ──────────────────────────────────────────
+              Was bleibt an diesem Angebot hängen? Nur für Administratoren und
+              ausschließlich hier im Editor — die Zahlen werden weder an die
+              Live-Vorschau noch an den PDF-Generator übergeben. */}
+          {zeigeVerdienst && (
+            <Card className="kb-panel border-dashed" data-testid="verdienst-intern">
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <TrendingUp className="h-4 w-4 text-muted-foreground" />
+                  <CardTitle className="text-base">Verdienst (intern)</CardTitle>
+                  <Badge variant="outline" className="gap-1 text-[10px] uppercase tracking-wide">
+                    <EyeOff className="h-3 w-3" />
+                    Nicht im Kundendokument
+                  </Badge>
+                </div>
+                <CardDescription>
+                  Selbstkosten laut Kalkulation gegen den tatsächlichen Belegerlös —
+                  Rabatte und Preisanpassungen in diesem Beleg sind bereits berücksichtigt.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                  <div>
+                    <div className="text-xs text-muted-foreground">Erlös netto</div>
+                    <div className="text-base font-semibold tabular-nums">€ {eur(nettoSumme)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Selbstkosten</div>
+                    <div className="text-base font-semibold tabular-nums">€ {eur(selbstkosten)}</div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Deckungsbeitrag</div>
+                    <div
+                      data-testid="verdienst-db"
+                      className={`text-base font-bold tabular-nums ${deckungsbeitrag < 0 ? "text-destructive" : "text-green-700"}`}
+                    >
+                      € {eur(deckungsbeitrag)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-muted-foreground">Marge</div>
+                    <div
+                      data-testid="verdienst-marge"
+                      className={`text-base font-bold tabular-nums ${
+                        margeFarbe === "gruen" ? "text-green-700"
+                          : margeFarbe === "gelb" ? "text-amber-600"
+                            : "text-destructive"
+                      }`}
+                    >
+                      {nettoSumme > 0 ? `${eur(margeProzent)} %` : "—"}
+                    </div>
+                  </div>
+                </div>
+                {positionenOhneKosten > 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    Hinweis: {positionenOhneKosten} Position(en) mit Betrag haben keine
+                    hinterlegten Kosten (z.B. von Hand ergänzt) — sie zählen nur auf der
+                    Erlösseite, der Deckungsbeitrag ist insoweit optimistisch.
+                  </p>
+                )}
+                {margeUnterWarnschwelle && (
+                  <div
+                    role="alert"
+                    data-testid="verdienst-warnung"
+                    className="flex items-start gap-2 rounded border-2 border-destructive bg-destructive/10 px-3 py-2 text-sm text-destructive"
+                  >
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <div>
+                      <div className="font-bold">
+                        {nettoSumme <= 0
+                          ? `⚠ Verlust: € ${eur(selbstkosten)} Kosten, aber kein Erlös`
+                          : deckungsbeitrag < 0
+                            ? `⚠ Verlust: Deckungsbeitrag € ${eur(deckungsbeitrag)} — die Kosten übersteigen den Erlös`
+                            : `⚠ Marge ${eur(margeProzent)} % liegt unter der Warnschwelle von ${eur(warnMargeProzent)} %`}
+                      </div>
+                      <div className="mt-0.5 text-xs">
+                        Preise anpassen oder die Kalkulation überarbeiten, bevor das Angebot rausgeht.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Notizen */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <CardHeader>
@@ -5914,6 +6308,65 @@ export default function InvoiceDetail() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Kalkulation öffnen, obwohl der Beleg ungespeicherte Änderungen hat */}
+        <Dialog open={kalkVerlassenOpen} onOpenChange={setKalkVerlassenOpen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Zur Kalkulation wechseln?</DialogTitle>
+              <DialogDescription>
+                Dieser Beleg enthält ungespeicherte Änderungen. Sollen sie vor dem Wechsel
+                in die Auftragskalkulation gespeichert werden?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <KBButton label="Zurück" onClick={() => setKalkVerlassenOpen(false)} />
+              <KBButton
+                label="Ohne Speichern"
+                onClick={() => { setKalkVerlassenOpen(false); navigate(`/auftragskalkulation/${kalkulationId}`); }}
+              />
+              <KBButton
+                icon={CheckCircle2}
+                variant="green"
+                label={saving ? "Speichert..." : "Speichern & wechseln"}
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await handleSave();
+                  if (ok) {
+                    setKalkVerlassenOpen(false);
+                    navigate(`/auftragskalkulation/${kalkulationId}`);
+                  }
+                }}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Positionen aus der Kalkulation neu übernehmen — ersetzt Positionen,
+            deshalb vorher deutlich warnen. */}
+        <AlertDialog open={kalkErsetzenOpen} onOpenChange={setKalkErsetzenOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Positionen aus der Kalkulation neu übernehmen?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Alle Positionen aus der Kalkulation werden ersetzt. Von Hand ergänzte
+                Positionen bleiben erhalten. Die Einstellung, welche Unterpositionen der
+                Kunde sieht, wird — soweit die Positionen gleich heißen — mitgenommen.
+                Anschließend speichern nicht vergessen.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={kalkErsetzenLaeuft}>Abbrechen</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="kalk-ersetzen-bestaetigen"
+                disabled={kalkErsetzenLaeuft}
+                onClick={(e) => { e.preventDefault(); void positionenNeuUebernehmen(); }}
+              >
+                {kalkErsetzenLaeuft ? "Wird übernommen …" : "Positionen ersetzen"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* PDF Preview Dialog — works both before and after saving */}
         <InvoicePdfPreview

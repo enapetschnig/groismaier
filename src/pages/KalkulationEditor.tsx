@@ -11,9 +11,19 @@
 // Alte data-Blobs (localStorage-Shape des iframe-Tools) werden per
 // normalizeKalkulationState() konvertiert.
 //
-// "Als Angebot übernehmen": Payload-Vertrag EXAKT wie bisher —
+// "Als Angebot übernehmen": Payload-Vertrag wie bisher —
 // sessionStorage["kalkulation_to_angebot"] = { betreff, customer_id, items }
-// → /invoices/new?typ=angebot&from_kalkulation=1 (InvoiceDetail unverändert).
+// → /invoices/new?typ=angebot&from_kalkulation=1.
+// NEU: der Payload trägt zusätzlich `kalkulation_id`. Damit merkt sich das
+// Angebot seine Herkunft (invoices.kalkulation_id, Migration
+// 20260722110000) und kann die Positionen später neu übernehmen; umgekehrt
+// zeigt die Kalkulation, dass zu ihr bereits ein Angebot existiert.
+//
+// Außerdem trägt jede Gruppen-SAMMELZEILE ihre SELBSTKOSTEN in ek_preis
+// (Material-EK + Lohn-Selbstkosten + Fahrten + Fremdleistungen des Aufbaus).
+// Nur damit kann der Beleg-Editor den Deckungsbeitrag zeigen — die
+// Detailzeilen tragen dort die VK-Aufschlüsselung, aus der sich keine Kosten
+// ableiten lassen (sie summieren sich exakt zur Sammelzeile).
 //
 // KATALOG-ÜBERNAHME (Kundenwunsch 2026-07-22): In der Materialtabelle dürfen
 // Kategorie und Artikel frei eingetippt werden. Beim Speichern — und jederzeit
@@ -25,7 +35,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { AlertTriangle, FileText, Home, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
+import { AlertTriangle, FileCheck2, FileText, Home, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -39,11 +49,12 @@ import {
   normalizeKalkulationState, newModule, newPaintModule, newMaterialRow, nextId,
   resolveBetriebsdaten, resolveLackSaetze, calcProjekt, calcPaintProjekt,
   buildAngebotItems, globalFaktor, margeUnterSchwelle, margeStatus,
-  LackPreisResolver, AufpreisResolver,
+  LackPreisResolver, AufpreisResolver, AngebotItem, ProjektErgebnis,
   AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
   fmt, fmtEuro, round2, num,
 } from "@/lib/kalkulationEngine";
 import { usePermissions } from "@/hooks/usePermissions";
+import { getDocConfig } from "@/lib/documentTypes";
 import {
   FreiePosition, artTable, findeArtikel, findeKategorie, katTable, normName,
   sammleFreiePositionen, useKalkKatalog,
@@ -60,6 +71,34 @@ type TabId = "aufbau" | "lack" | "einstellungen";
 
 /** Ziel-Kategorie im Übernahme-Dialog: „die eingetippte neu anlegen". */
 const NEUE_KATEGORIE = "__neu__";
+
+/**
+ * Ergänzt die Angebots-Positionen um die SELBSTKOSTEN je Aufbau.
+ *
+ * buildAngebotItems liefert reine Verkaufszahlen: die Sammelzeile trägt den
+ * Betrag, den der Kunde zahlt, die Detailzeilen dessen Aufschlüsselung (ihre
+ * ek_preis-Beträge summieren sich exakt zur Sammelzeile — daraus lässt sich
+ * KEIN Deckungsbeitrag rechnen). Für den internen Verdienst-Block im
+ * Beleg-Editor bekommt deshalb jede Sammelzeile die echten Selbstkosten ihres
+ * Aufbaus in ek_preis (das Feld ist auf Sammelzeilen sonst ungenutzt).
+ *
+ * Zuordnung über die Reihenfolge: buildAngebotItems erzeugt je Aufbau mit
+ * Betrag > 0 genau eine Sammelzeile, in der Reihenfolge von projekt.zeilen.
+ *
+ * (Dieselbe Funktion steht in InvoiceDetail.tsx für „Positionen neu
+ * übernehmen" — bewusst dupliziert, damit kalkulationEngine.ts unangetastet
+ * bleibt.)
+ */
+function mitSelbstkosten(items: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] {
+  const zeilenMitBetrag = projekt.zeilen.filter((z) => round2(z.gesamtAdj) > 0);
+  let k = 0;
+  return items.map((it) => {
+    if (!it.ist_gruppensumme) return it;
+    const zeile = zeilenMitBetrag[k];
+    k += 1;
+    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
+  });
+}
 
 /** Eine Zeile des Übernahme-Dialogs (Vorschlag aus der Kalkulation, editierbar). */
 interface UebernahmeZeile extends FreiePosition {
@@ -102,6 +141,14 @@ export default function KalkulationEditor() {
   const [vorlageName, setVorlageName] = useState("");
   const [savingVorlage, setSavingVorlage] = useState(false);
 
+  /**
+   * Bereits aus dieser Kalkulation erstelltes Angebot (nicht storniert).
+   * NULL = keines / Spalte kalkulation_id noch nicht eingespielt (dann bleibt
+   * das Feature still deaktiviert, statt eine Fehlermeldung zu werfen).
+   */
+  const [bestehendesAngebot, setBestehendesAngebot] = useState<{ id: string; nummer: string; typ: string } | null>(null);
+  const [angebotWarnOpen, setAngebotWarnOpen] = useState(false);
+
   // Katalog-Übernahme
   const [katalogOpen, setKatalogOpen] = useState(false);
   const [uebernahme, setUebernahme] = useState<UebernahmeZeile[]>([]);
@@ -140,6 +187,32 @@ export default function KalkulationEditor() {
     })();
     return () => { cancelled = true; };
   }, [id, navigate, toast]);
+
+  // ------------------------------------------- Bereits übernommenes Angebot
+  /**
+   * Existiert zu dieser Kalkulation schon ein Angebot/eine AB? Dann soll der
+   * Chef nicht versehentlich ein zweites anlegen (zwei Angebote mit derselben
+   * Leistung beim selben Kunden).
+   *
+   * DEFENSIV: Solange die Migration 20260722110000 nicht eingespielt ist, gibt
+   * es die Spalte kalkulation_id nicht — PostgREST antwortet dann mit einem
+   * Fehler. Der wird geschluckt, das Feature bleibt einfach aus.
+   */
+  const ladeBestehendesAngebot = useCallback(async () => {
+    if (!id) return;
+    const { data, error } = await supabase
+      .from("invoices")
+      .select("id, nummer, typ, datum")
+      .eq("kalkulation_id" as never, id as never)
+      .neq("status", "storniert")
+      .order("datum", { ascending: false })
+      .limit(1);
+    if (error) { setBestehendesAngebot(null); return; }
+    const treffer = ((data as any[]) || [])[0];
+    setBestehendesAngebot(treffer ? { id: treffer.id, nummer: treffer.nummer || "", typ: treffer.typ || "angebot" } : null);
+  }, [id]);
+
+  useEffect(() => { void ladeBestehendesAngebot(); }, [ladeBestehendesAngebot]);
 
   // ---------------------------------------------------------- Berechnungen
   const bd = useMemo(
@@ -461,17 +534,31 @@ export default function KalkulationEditor() {
   };
 
   // --------------------------------------------------------------- Aktionen
-  const handleAngebot = async () => {
-    const { items } = buildAngebotItems(projekt);
-    if (items.length === 0) {
+  /**
+   * „Als Angebot übernehmen".
+   *
+   * Existiert zu dieser Kalkulation bereits ein Angebot, wird zuerst
+   * rückgefragt (Alternative: das bestehende öffnen). `trotzdem` überspringt
+   * die Rückfrage, wenn der Anwender sie bereits bestätigt hat.
+   */
+  const handleAngebot = async (trotzdem = false) => {
+    if (bestehendesAngebot && !trotzdem) {
+      setAngebotWarnOpen(true);
+      return;
+    }
+    const { items: rohItems } = buildAngebotItems(projekt);
+    if (rohItems.length === 0) {
       toast({ variant: "destructive", title: "Noch nichts kalkuliert", description: "Es wurden keine Aufbauten mit Betrag gefunden." });
       return;
     }
+    setAngebotWarnOpen(false);
     await persist({ silent: true });
     sessionStorage.setItem("kalkulation_to_angebot", JSON.stringify({
       betreff: name ? `Angebot – ${name}` : "Angebot lt. Kalkulation",
       customer_id: customerId,
-      items,
+      // Herkunft: das Angebot merkt sich, aus welcher Kalkulation es stammt.
+      kalkulation_id: id ?? null,
+      items: mitSelbstkosten(rohItems, projekt),
     }));
     navigate("/invoices/new?typ=angebot&from_kalkulation=1");
   };
@@ -541,7 +628,7 @@ export default function KalkulationEditor() {
           <KBButton icon={PackagePlus} label="In Katalog übernehmen" badge={freiePositionen.length}
             onClick={oeffneUebernahme}
             title="Frei eingetippte Positionen in die Stammdaten (Katalog) übernehmen" />
-          <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={handleAngebot}
+          <KBButton icon={FileText} label="Als Angebot übernehmen" variant="blue" onClick={() => handleAngebot()}
             title="Aufbauten als Positionen in ein neues Angebot übernehmen" />
         </div>
       </KBToolbar>
@@ -550,7 +637,7 @@ export default function KalkulationEditor() {
         {/* Handy-Aktionsleiste: große Flächen zum Antippen */}
         <div className="flex gap-2 sm:hidden">
           <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={FileText} label="Angebot"
-            variant="blue" onClick={handleAngebot} />
+            variant="blue" onClick={() => handleAngebot()} />
           <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={PackagePlus} label="Katalog"
             badge={freiePositionen.length} onClick={oeffneUebernahme} />
           <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={LayoutTemplate} label="Vorlage"
@@ -618,6 +705,32 @@ export default function KalkulationEditor() {
             </div>
           </div>
         </div>
+
+        {/* Bereits übernommen: verhindert, dass zur selben Kalkulation
+            versehentlich ein zweites Angebot entsteht. Der Weg zurück zum
+            bestehenden Beleg ist ein Klick entfernt. */}
+        {bestehendesAngebot && (
+          <div
+            data-testid="kalk-bereits-angebot"
+            className="flex flex-wrap items-center gap-2.5 rounded border-2 border-kb-blue-dark/30 bg-kb-blue-dark/5 px-4 py-3 text-sm"
+          >
+            <FileCheck2 className="h-5 w-5 shrink-0 text-kb-blue-dark" />
+            <div className="min-w-0 flex-1">
+              <div className="font-bold text-kb-blue-dark">
+                Wurde bereits als {getDocConfig(bestehendesAngebot.typ).label} übernommen
+                {bestehendesAngebot.nummer ? ` (${bestehendesAngebot.nummer})` : ""}
+              </div>
+              <div className="mt-0.5 text-xs text-muted-foreground">
+                Änderungen an dieser Kalkulation wirken nicht automatisch im Beleg — dort auf
+                „Positionen neu übernehmen" klicken.
+              </div>
+            </div>
+            <Button size="sm" variant="outline" className="h-9"
+              onClick={() => { persist({ silent: true }); navigate(`/invoices/${bestehendesAngebot.id}`); }}>
+              {getDocConfig(bestehendesAngebot.typ).label} öffnen
+            </Button>
+          </div>
+        )}
 
         {/* Konflikt-Hinweis: zwei Geräte/Tabs haben dieselbe Kalkulation offen.
             Der Autosave ist gestoppt, damit nichts überschrieben wird. */}
@@ -804,6 +917,37 @@ export default function KalkulationEditor() {
             <Button onClick={handleUebernahme} disabled={uebernahmeSaving || !darfKatalogSchreiben}>
               {uebernahmeSaving ? "Wird übernommen …" : "In Katalog übernehmen"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rückfrage: zu dieser Kalkulation existiert schon ein Beleg */}
+      <Dialog open={angebotWarnOpen} onOpenChange={setAngebotWarnOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {getDocConfig(bestehendesAngebot?.typ || "angebot").label} existiert bereits
+            </DialogTitle>
+          </DialogHeader>
+          <p className="py-2 text-sm">
+            Zu dieser Kalkulation existiert bereits{" "}
+            {getDocConfig(bestehendesAngebot?.typ || "angebot").label}
+            {bestehendesAngebot?.nummer ? ` ${bestehendesAngebot.nummer}` : ""}.
+            Trotzdem ein NEUES Angebot anlegen?
+          </p>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <Button variant="outline" onClick={() => setAngebotWarnOpen(false)}>Abbrechen</Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setAngebotWarnOpen(false);
+                persist({ silent: true });
+                if (bestehendesAngebot) navigate(`/invoices/${bestehendesAngebot.id}`);
+              }}
+            >
+              Bestehendes öffnen
+            </Button>
+            <Button onClick={() => handleAngebot(true)}>Neues Angebot anlegen</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
