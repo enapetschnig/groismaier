@@ -18,6 +18,7 @@ import { de } from "date-fns/locale";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { ExportInvoicesDialog } from "@/components/ExportInvoicesDialog";
 import { CreateProjectDialog } from "@/components/CreateProjectDialog";
+import { DokumentKopierenDialog, KOPIER_OPTIONEN_KEY } from "@/components/DokumentKopierenDialog";
 import {
   Dialog,
   DialogContent,
@@ -154,6 +155,9 @@ export default function Invoices() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [kommentarOpen, setKommentarOpen] = useState(false);
   const [kommentarText, setKommentarText] = useState("");
+  // „Kopieren in …": erst der KingBill-Dialog „Was soll kopiert werden?",
+  // dann Navigation in den from_doc-Kopierfluss mit den gewählten Optionen.
+  const [kopierenZielTyp, setKopierenZielTyp] = useState<string | null>(null);
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
   const [bankBic, setBankBic] = useState("");
@@ -748,7 +752,7 @@ export default function Invoices() {
                     ] as const).map(([typ, label]) => (
                       <DropdownMenuItem
                         key={typ}
-                        onClick={() => (sel ? navigate(`/invoices/new?typ=${typ}&from_doc=${sel.id}`) : brauchtAuswahl())}
+                        onClick={() => (sel ? setKopierenZielTyp(typ) : brauchtAuswahl())}
                       >
                         <FileText className="w-4 h-4 mr-2" /> {label}
                       </DropdownMenuItem>
@@ -1361,6 +1365,21 @@ export default function Invoices() {
           open={exportDialogOpen}
           onClose={() => setExportDialogOpen(false)}
           bankData={{ kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic }}
+        />
+
+        {/* „Dokument kopieren — Was soll kopiert werden?" (KingBill 1:1) */}
+        <DokumentKopierenDialog
+          open={!!kopierenZielTyp}
+          onClose={() => setKopierenZielTyp(null)}
+          onKopieren={(optionen) => {
+            if (!selectedId || !kopierenZielTyp) return;
+            try {
+              sessionStorage.setItem(KOPIER_OPTIONEN_KEY, JSON.stringify(optionen));
+            } catch { /* ohne sessionStorage: Vollkopie wie bisher */ }
+            const ziel = kopierenZielTyp;
+            setKopierenZielTyp(null);
+            navigate(`/invoices/new?typ=${ziel}&from_doc=${selectedId}`);
+          }}
         />
 
         {/* Kommentar/Notiz zum markierten Beleg (KingBill-Toolbar „Kommentare") */}

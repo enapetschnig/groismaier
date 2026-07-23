@@ -1258,6 +1258,63 @@ export default function InvoiceDetail() {
         parent_invoice_id: fromDocId,
       } as any));
 
+      // ── KingBill „Dokument kopieren"-Optionen (einmalig konsumieren) ─────
+      // Gesetzt vom „Was soll kopiert werden?"-Dialog der Belegliste. Ohne
+      // Eintrag (z. B. Umwandeln aus dem Editor) bleibt alles wie bisher.
+      let kopierOpt: any = null;
+      try {
+        const raw = sessionStorage.getItem("dokument_kopieren_optionen");
+        if (raw) { kopierOpt = JSON.parse(raw); sessionStorage.removeItem("dokument_kopieren_optionen"); }
+      } catch { /* volle Kopie */ }
+      if (kopierOpt) {
+        setForm(prev => {
+          const p: any = { ...prev };
+          if (!kopierOpt.zahlungsbedingungen) {
+            p.zahlungsbedingungen = "14 Tage"; p.skonto_prozent = 0; p.skonto_tage = 0; p.zahlungstext = "";
+          }
+          if (!kopierOpt.projekt) p.project_id = null;
+          if (!kopierOpt.vortext) p.custom_intro_text = "";
+          if (!kopierOpt.schlusstext) p.custom_closing_text = "";
+          if (!kopierOpt.lieferadresse) p.lieferadresse = "";
+          if (!kopierOpt.referenz) p.referenz = "";
+          if (kopierOpt.mwst_neu_laden && !p.reverse_charge) p.mwst_satz = 20;
+          if (kopierOpt.kundendaten === "nicht") {
+            Object.assign(p, {
+              customer_id: null, kunde_name: "", kunde_adresse: "", kunde_plz: "",
+              kunde_ort: "", kunde_land: "Österreich", kunde_email: "", kunde_telefon: "",
+              kunde_uid: "", kunde_anrede: "", kunde_titel: "", kundennummer: "",
+              kunde_kontaktperson: "",
+            });
+          }
+          return p;
+        });
+        // „Kundendaten neu laden": frische Stammdaten statt Beleg-Snapshot.
+        if (kopierOpt.kundendaten === "neu" && data.customer_id) {
+          const { data: cust } = await supabase
+            .from("customers")
+            .select("id, name, anrede, titel, uid_nummer, adresse, plz, ort, land, email, telefon, kundennummer, ansprechpartner")
+            .eq("id", data.customer_id)
+            .maybeSingle();
+          if (cust) {
+            setForm(prev => ({
+              ...prev,
+              kunde_name: cust.name,
+              kunde_adresse: cust.adresse || "",
+              kunde_plz: cust.plz || "",
+              kunde_ort: cust.ort || "",
+              kunde_land: cust.land || "Österreich",
+              kunde_email: cust.email || "",
+              kunde_telefon: cust.telefon || "",
+              kunde_uid: cust.uid_nummer || "",
+              kunde_anrede: (cust as any).anrede || "",
+              kunde_titel: (cust as any).titel || "",
+              kundennummer: (cust as any).kundennummer || "",
+              kunde_kontaktperson: (cust as any).ansprechpartner || "",
+            } as any));
+          }
+        }
+      }
+
       const srcItems = (itemsRes.data || []) as any[];
       let nextItems: InvoiceItem[] = srcItems.map((it, idx) => ({
         position: idx + 1,
@@ -1290,6 +1347,39 @@ export default function InvoiceDetail() {
         auf_pdf: (it as any).auf_pdf !== false,
         ist_gruppensumme: !!(it as any).ist_gruppensumme,
       }));
+
+      // „Preise neu laden" (Dokument-kopieren-Option): aktuelle Katalogpreise
+      // (invoice_templates) über die Produktnummer nachziehen. Detail- und
+      // MwSt-freie Zeilen bleiben unangetastet.
+      if (kopierOpt?.preise_neu_laden) {
+        const nummern = Array.from(new Set(
+          nextItems
+            .filter((it) => !it.mwst_exempt && !istDetailzeile(it) && (it.produktnummer || "").trim())
+            .map((it) => (it.produktnummer as string).trim()),
+        ));
+        if (nummern.length > 0) {
+          const { data: tpl } = await supabase
+            .from("invoice_templates")
+            .select("produktnummer, netto_preis, vk_netto, einzelpreis")
+            .in("produktnummer", nummern);
+          const preisVon = new Map<string, number>();
+          ((tpl as any[]) || []).forEach((t) => {
+            const p = Number(t.netto_preis ?? t.vk_netto) || Number(t.einzelpreis) || 0;
+            if (p > 0) preisVon.set(String(t.produktnummer).trim(), round2(p));
+          });
+          nextItems = nextItems.map((it) => {
+            const neu = preisVon.get((it.produktnummer || "").trim());
+            if (neu === undefined || it.mwst_exempt || istDetailzeile(it)) return it;
+            const menge = Number(it.menge) || 0;
+            const rabatt = Number(it.rabatt_prozent) || 0;
+            return {
+              ...it,
+              einzelpreis: neu,
+              gesamtpreis: round2(menge * neu * (1 - rabatt / 100)),
+            };
+          });
+        }
+      }
 
       // Anzahlungsrechnung: nur eine Zeile mit dem Anzahlungsbetrag.
       if (targetTyp === "anzahlungsrechnung" && (opts?.anzahlungBetrag || opts?.anzahlungProzent)) {

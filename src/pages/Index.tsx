@@ -393,7 +393,7 @@ export default function Index() {
                 icon={Receipt}
                 label="Offene Posten"
                 badge={offenePostenCount}
-                onClick={() => navigate("/invoices?tab=rechnung&status=offen")}
+                onClick={() => navigate("/offene-posten")}
               />
             </KBBereich>
           )}
