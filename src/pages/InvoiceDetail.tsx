@@ -5092,25 +5092,34 @@ export default function InvoiceDetail() {
                 {/* Zahlungsbedingungen — Frist / Fälligkeit / Skonto */}
                 {allgemeinSubTab === "zahlung" && (
                   <fieldset disabled={isLocked} className="min-w-0 space-y-4" data-subtab="zahlung">
-                    {form.typ === "rechnung" ? (
+                    {!hidePrices ? (
                       <>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <Label>Zahlungsfrist</Label>
-                            <Select
-                              value={form.zahlungsbedingungen || "14 Tage"}
-                              onValueChange={(v) => updateField("zahlungsbedingungen", v)}
-                            >
-                              <SelectTrigger><SelectValue /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="sofort">Sofort fällig</SelectItem>
-                                <SelectItem value="7 Tage">7 Tage</SelectItem>
-                                <SelectItem value="14 Tage">14 Tage</SelectItem>
-                                <SelectItem value="30 Tage">30 Tage</SelectItem>
-                                <SelectItem value="60 Tage">60 Tage</SelectItem>
-                                <SelectItem value="individuell">Individuelles Datum…</SelectItem>
-                              </SelectContent>
-                            </Select>
+                            {/* Frei editierbar (z.B. „21 Tage", „sofort", „individuell") —
+                                die Fälligkeit rechnet aus der Tageszahl automatisch mit;
+                                „individuell" gibt das Fällig-am-Feld im Kopf frei. */}
+                            <Input
+                              list="zahlungsfrist-liste"
+                              value={form.zahlungsbedingungen || ""}
+                              onChange={(e) => updateField("zahlungsbedingungen", e.target.value)}
+                              placeholder="z.B. 14 Tage"
+                            />
+                            <datalist id="zahlungsfrist-liste">
+                              <option value="sofort" />
+                              <option value="7 Tage" />
+                              <option value="14 Tage" />
+                              <option value="21 Tage" />
+                              <option value="30 Tage" />
+                              <option value="60 Tage" />
+                              <option value="individuell" />
+                            </datalist>
+                            {form.typ !== "rechnung" && (
+                              <p className="text-[11px] text-muted-foreground mt-0.5">
+                                Wird bei der Umwandlung in die Rechnung übernommen.
+                              </p>
+                            )}
                           </div>
                           {/* „Fällig am" steht wie bei KingBill im Allgemein-Kopf. */}
                         </div>
@@ -5163,9 +5172,7 @@ export default function InvoiceDetail() {
                       </>
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        {form.typ === "angebot"
-                          ? "Zahlungsfrist und Skonto werden bei der Umwandlung in eine Rechnung festgelegt. Das Gültig-bis-Datum des Angebots steht oben im Kopf."
-                          : "Für diesen Belegtyp sind keine Zahlungsfristen zu setzen."}
+                        Der Lieferschein ist preislos — Zahlungsbedingungen entfallen.
                       </p>
                     )}
                     {/* Zahlungsbedingungen-TEXT (KingBill zeigt hier den Textbaustein).
@@ -5737,117 +5744,8 @@ export default function InvoiceDetail() {
               {(form as any).kundennummer && (
                 <p className="text-xs text-muted-foreground">Kundennr.: {(form as any).kundennummer}</p>
               )}
-              {/* Ansprechpartner (Sachbearbeiter) pro Dokument */}
-              <div className="mt-3 p-3 rounded-lg bg-muted/30 border space-y-2">
-                <p className="text-xs font-medium text-muted-foreground">
-                  Ihr Ansprechpartner (erscheint rechts oben im PDF)
-                </p>
-                <Select
-                  value={(form as any).ansprechpartner_employee_id || "__none__"}
-                  disabled={isLocked}
-                  onValueChange={(val) => {
-                    if (val === "__none__") {
-                      // "Keiner" leert auch die Freitext-Felder, damit im
-                      // PDF gar kein Ansprechpartner erscheint.
-                      setForm(prev => ({
-                        ...prev,
-                        ansprechpartner_employee_id: null,
-                        ansprechpartner_name: "",
-                        ansprechpartner_telefon: "",
-                        ansprechpartner_email: "",
-                      } as any));
-                      if (!loading) setIsDirty(true);
-                      return;
-                    }
-                    if (val === "__manual__") {
-                      // Manuelle Eingabe: Dropdown-Referenz löschen, aber
-                      // Freitext-Felder lassen wie sie sind, sodass der
-                      // User sie editieren kann.
-                      setForm(prev => ({
-                        ...prev,
-                        ansprechpartner_employee_id: null,
-                      } as any));
-                      if (!loading) setIsDirty(true);
-                      return;
-                    }
-                    const emp = employees.find(e => e.id === val);
-                    if (!emp) return;
-                    setForm(prev => ({
-                      ...prev,
-                      ansprechpartner_employee_id: emp.id,
-                      ansprechpartner_name: `${emp.vorname} ${emp.nachname}`.trim(),
-                      ansprechpartner_telefon: emp.telefon || "",
-                      ansprechpartner_email: emp.email || "",
-                    } as any));
-                    if (!loading) setIsDirty(true);
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Mitarbeiter auswählen…" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">
-                      <span className="text-muted-foreground">— Keiner (im PDF ausblenden)</span>
-                    </SelectItem>
-                    <SelectItem value="__manual__">
-                      <span className="text-muted-foreground">— Manuell eingeben…</span>
-                    </SelectItem>
-                    {employees.map(emp => (
-                      <SelectItem key={emp.id} value={emp.id}>
-                        {emp.vorname} {emp.nachname}
-                        {emp.position ? <span className="text-muted-foreground ml-1">— {emp.position}</span> : null}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* Freitext-Felder: immer editierbar (nur gesperrt, wenn die
-                    ganze Rechnung locked ist). Bei Mitarbeiter-Auswahl werden
-                    die Werte übernommen, können aber danach überschrieben
-                    werden — die Employee-ID wird dabei automatisch gelöst,
-                    damit später klar ist, dass es ein angepasster Snapshot
-                    und keine Live-Referenz auf den Mitarbeiter mehr ist. */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                  <Input
-                    value={(form as any).ansprechpartner_name || ""}
-                    onChange={(e) => {
-                      updateField("ansprechpartner_name" as any, e.target.value);
-                      if ((form as any).ansprechpartner_employee_id) {
-                        updateField("ansprechpartner_employee_id" as any, null);
-                      }
-                    }}
-                    placeholder="Name"
-                    disabled={isLocked}
-                  />
-                  <Input
-                    value={(form as any).ansprechpartner_telefon || ""}
-                    onChange={(e) => {
-                      updateField("ansprechpartner_telefon" as any, e.target.value);
-                      if ((form as any).ansprechpartner_employee_id) {
-                        updateField("ansprechpartner_employee_id" as any, null);
-                      }
-                    }}
-                    placeholder="Telefon"
-                    type="tel"
-                    disabled={isLocked}
-                  />
-                  <Input
-                    value={(form as any).ansprechpartner_email || ""}
-                    onChange={(e) => {
-                      updateField("ansprechpartner_email" as any, e.target.value);
-                      if ((form as any).ansprechpartner_employee_id) {
-                        updateField("ansprechpartner_employee_id" as any, null);
-                      }
-                    }}
-                    placeholder="E-Mail"
-                    type="email"
-                    disabled={isLocked}
-                  />
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  Bei Mitarbeiter-Auswahl vorbefüllt, jederzeit editierbar. Leer lassen, wenn auf dem PDF kein Ansprechpartner erscheinen soll.
-                </p>
-              </div>
+              {/* „Ihr Ansprechpartner" wurde entfernt — der Bearbeiter
+                  wird im Allgemein-Kopf gewählt (KingBill-Feld „Bearbeiter"). */}
 
               {/* Zahlungseinstellungen (vom Kunden) */}
               {form.typ === "rechnung" && (form.skonto_prozent > 0 || form.skonto_tage > 0 || (form as any).zahlungsbedingungen) && (

@@ -1,18 +1,25 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import {
+  CustomerForm,
+  EMPTY_CUSTOMER_FORM,
+  composeCustomerName,
+  type CustomerFormData,
+} from "@/components/CustomerForm";
 
 /**
- * Schnell-Editor für Kunden-Stammdaten (aufgerufen z. B. aus dem
- * Beleg-Editor). KingBill-Look: blaue Toolbar mit Zurück-Knopf und
- * grünem „Speichern & Schließen", darunter das zweispaltige Formular
- * (links Identität, rechts Adresse + Kontakt) wie im Kunden-Editor.
+ * „Kunde bearbeiten" aus dem Beleg-Editor — die VOLLE KingBill-Kundenmaske
+ * (CustomerForm variant="full": zweispaltiges Formular + Reiter Kommentar |
+ * Rechnungsadresse | Zahlungsbedingungen | Wichtige Daten), identisch zur
+ * Maske der Kunden-Seite. Blaue Toolbar mit Zurück + grünem
+ * „Speichern & Schließen" wie im Original.
+ *
+ * Lädt und speichert den KOMPLETTEN Kundendatensatz (nicht nur die
+ * Adressfelder) — dieselben Spalten wie Customers.tsx.
  */
 
 export interface CustomerEditDialogProps {
@@ -23,7 +30,8 @@ export interface CustomerEditDialogProps {
   onSaved?: (customer: CustomerFields) => void;
 }
 
-interface CustomerFields {
+/** Felder, die der Beleg-Editor als Snapshot übernimmt. */
+export interface CustomerFields {
   id: string;
   name: string;
   anrede: string | null;
@@ -39,80 +47,140 @@ interface CustomerFields {
   ansprechpartner: string | null;
 }
 
-const EMPTY_FORM: Omit<CustomerFields, "id"> = {
-  name: "",
-  anrede: "",
-  titel: "",
-  adresse: "",
-  plz: "",
-  ort: "",
-  land: "Österreich",
-  email: "",
-  telefon: "",
-  uid_nummer: "",
-  kundennummer: "",
-  ansprechpartner: "",
-};
-
 export function CustomerEditDialog({ open, onClose, customerId, onSaved }: CustomerEditDialogProps) {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [form, setForm] = useState<typeof EMPTY_FORM>({ ...EMPTY_FORM });
+  const [form, setForm] = useState<CustomerFormData>({ ...EMPTY_CUSTOMER_FORM });
 
   useEffect(() => {
     if (!open || !customerId) return;
     setLoading(true);
     supabase
       .from("customers")
-      .select("name, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundennummer, ansprechpartner")
+      .select("*")
       .eq("id", customerId)
       .maybeSingle()
       .then(({ data }) => {
         if (data) {
-          const d: any = data;
+          const c: any = data;
           setForm({
-            name: d.name || "",
-            anrede: d.anrede || "",
-            titel: d.titel || "",
-            adresse: d.adresse || "",
-            plz: d.plz || "",
-            ort: d.ort || "",
-            land: d.land || "Österreich",
-            email: d.email || "",
-            telefon: d.telefon || "",
-            uid_nummer: d.uid_nummer || "",
-            kundennummer: d.kundennummer || "",
-            ansprechpartner: d.ansprechpartner || "",
+            name: c.name || "",
+            kundennummer: c.kundennummer || "",
+            anrede: c.anrede || "",
+            titel: c.titel || "",
+            vorname: c.vorname || "",
+            nachname: c.nachname || "",
+            ansprechpartner: c.ansprechpartner || "",
+            uid_nummer: c.uid_nummer || "",
+            adresse: c.adresse || "",
+            plz: c.plz || "",
+            ort: c.ort || "",
+            land: c.land || "Österreich",
+            email: c.email || "",
+            telefon: c.telefon || "",
+            telefon2: c.telefon2 || "",
+            notizen: c.notizen || "",
+            zahlungsbedingungen: c.zahlungsbedingungen || "",
+            skonto_prozent: Number(c.skonto_prozent) || 0,
+            skonto_tage: Number(c.skonto_tage) || 0,
+            nettofrist: Number(c.nettofrist) || 0,
+            kundentyp: c.kundentyp === "privatkunde" ? "privatkunde" : "geschaeftskunde",
+            firmenname: c.firmenname || "",
+            branche: c.branche || "",
+            website: c.website || "",
+            rechnungs_adresse: c.rechnungs_adresse || "",
+            rechnungs_plz: c.rechnungs_plz || "",
+            rechnungs_ort: c.rechnungs_ort || "",
+            rechnungs_land: c.rechnungs_land || "",
+            herkunft: c.herkunft || "",
+            wichtige_daten: Array.isArray(c.wichtige_daten) ? c.wichtige_daten : [],
           });
         }
         setLoading(false);
       });
   }, [open, customerId]);
 
-  const set = <K extends keyof typeof EMPTY_FORM>(k: K, v: string) =>
-    setForm((prev) => ({ ...prev, [k]: v }));
-
   const handleSave = async () => {
     if (!customerId || saving) return;
-    if (!form.name.trim()) {
-      toast({ variant: "destructive", title: "Name erforderlich" });
+    // Name aus Kundentyp-Feldern komponieren (wie auf der Kunden-Seite).
+    const composedName = composeCustomerName(form);
+    if (!composedName) {
+      toast({
+        variant: "destructive",
+        title: "Pflichtfelder fehlen",
+        description: form.kundentyp === "geschaeftskunde"
+          ? "Firmenname ist erforderlich."
+          : "Vor- und Nachname sind erforderlich.",
+      });
       return;
     }
+    if (form.email && form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      toast({ variant: "destructive", title: "Ungültige E-Mail", description: "Bitte gültige E-Mail-Adresse eingeben (z.B. name@firma.at)" });
+      return;
+    }
+    // Zahlungsbedingungen-Plausibilität (identisch zur Kunden-Seite).
+    const nettofrist = Number(form.nettofrist) || 0;
+    const skontoProzent = Number(form.skonto_prozent) || 0;
+    const skontoTage = Number(form.skonto_tage) || 0;
+    if (nettofrist < 0 || nettofrist > 365) {
+      toast({ variant: "destructive", title: "Zahlungsfrist ungültig", description: "Zahlungsfrist muss zwischen 0 und 365 Tagen liegen" });
+      return;
+    }
+    if (skontoProzent < 0 || skontoProzent > 20) {
+      toast({ variant: "destructive", title: "Skonto ungültig", description: "Skonto muss zwischen 0 und 20 % liegen" });
+      return;
+    }
+    if (skontoTage < 0 || (nettofrist > 0 && skontoTage > nettofrist)) {
+      toast({ variant: "destructive", title: "Skonto-Tage ungültig", description: "Skonto-Tage müssen zwischen 0 und der Zahlungsfrist liegen" });
+      return;
+    }
+    // Duplikat-Check Kundennummer (gegen andere Kunden).
+    if (form.kundennummer?.trim()) {
+      const { data: existing } = await supabase
+        .from("customers")
+        .select("id")
+        .eq("kundennummer", form.kundennummer.trim())
+        .neq("id", customerId)
+        .maybeSingle();
+      if (existing) {
+        toast({ variant: "destructive", title: "Kundennummer existiert bereits", description: `Die Nummer ${form.kundennummer} ist bereits vergeben.` });
+        return;
+      }
+    }
+
     setSaving(true);
-    const payload = {
-      name: form.name.trim(),
+    const payload: any = {
+      name: composedName,
+      kundennummer: form.kundennummer || null,
       anrede: form.anrede || null,
-      titel: form.titel.trim() || null,
-      adresse: form.adresse.trim() || null,
-      plz: form.plz.trim() || null,
-      ort: form.ort.trim() || null,
-      land: form.land.trim() || null,
-      email: form.email.trim() || null,
-      telefon: form.telefon.trim() || null,
-      uid_nummer: form.uid_nummer.trim() || null,
-      kundennummer: form.kundennummer.trim() || null,
-      ansprechpartner: form.ansprechpartner.trim() || null,
+      titel: form.titel || null,
+      vorname: form.vorname || null,
+      nachname: form.nachname || null,
+      ansprechpartner: form.ansprechpartner || null,
+      uid_nummer: form.uid_nummer || null,
+      adresse: form.adresse || null,
+      plz: form.plz || null,
+      ort: form.ort || null,
+      land: form.land || null,
+      email: form.email || null,
+      telefon: form.telefon || null,
+      telefon2: form.telefon2 || null,
+      notizen: form.notizen || null,
+      zahlungsbedingungen: form.zahlungsbedingungen || null,
+      skonto_prozent: form.skonto_prozent || 0,
+      skonto_tage: form.skonto_tage || 0,
+      nettofrist: form.nettofrist || 0,
+      kundentyp: form.kundentyp || "geschaeftskunde",
+      firmenname: form.firmenname || null,
+      branche: form.branche || null,
+      website: form.website || null,
+      rechnungs_adresse: form.rechnungs_adresse || null,
+      rechnungs_plz: form.rechnungs_plz || null,
+      rechnungs_ort: form.rechnungs_ort || null,
+      rechnungs_land: form.rechnungs_land || null,
+      herkunft: form.herkunft || null,
+      wichtige_daten: form.wichtige_daten || [],
     };
     const { error } = await supabase.from("customers").update(payload).eq("id", customerId);
     if (error) {
@@ -121,23 +189,37 @@ export function CustomerEditDialog({ open, onClose, customerId, onSaved }: Custo
       return;
     }
     toast({ title: "Kunde gespeichert" });
-    onSaved?.({ id: customerId, ...payload } as CustomerFields);
+    onSaved?.({
+      id: customerId,
+      name: composedName,
+      anrede: payload.anrede,
+      titel: payload.titel,
+      adresse: payload.adresse,
+      plz: payload.plz,
+      ort: payload.ort,
+      land: payload.land,
+      email: payload.email,
+      telefon: payload.telefon,
+      uid_nummer: payload.uid_nummer,
+      kundennummer: payload.kundennummer,
+      ansprechpartner: payload.ansprechpartner,
+    });
     setSaving(false);
     onClose();
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && !saving && onClose()}>
-      <DialogContent className="max-w-3xl w-[96vw] max-h-[90vh] overflow-y-auto p-0 gap-0">
+      <DialogContent className="max-w-5xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0" hideClose>
         <DialogHeader className="sr-only">
-          <DialogTitle>Kunden bearbeiten</DialogTitle>
+          <DialogTitle>Kunde bearbeiten</DialogTitle>
         </DialogHeader>
         <KBToolbar
           sticky={false}
-          className="rounded-t-md pr-12"
+          className="rounded-t-md"
           onBack={onClose}
-          backLabel="Schließen ohne Speichern"
-          title="Kunden bearbeiten"
+          backLabel="Zurück"
+          title="Kunde bearbeiten"
           rightActions={
             <KBToolbarButton
               icon={Check}
@@ -148,88 +230,11 @@ export function CustomerEditDialog({ open, onClose, customerId, onSaved }: Custo
             />
           }
         />
-
         {loading ? (
-          <div className="py-8 text-center text-sm text-muted-foreground">Lädt…</div>
+          <div className="py-10 text-center text-sm text-muted-foreground">Lädt…</div>
         ) : (
-          <div className="p-4 sm:p-5 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-            {/* ── Linke Spalte: Identität ── */}
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Kundennummer</Label>
-                <Input value={form.kundennummer || ""} onChange={(e) => set("kundennummer", e.target.value)} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Anrede</Label>
-                  <Select value={form.anrede || "none"} onValueChange={(v) => set("anrede", v === "none" ? "" : v)}>
-                    <SelectTrigger><SelectValue placeholder="—" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">—</SelectItem>
-                      <SelectItem value="Herr">Herr</SelectItem>
-                      <SelectItem value="Frau">Frau</SelectItem>
-                      <SelectItem value="Firma">Firma</SelectItem>
-                      <SelectItem value="Familie">Familie</SelectItem>
-                      <SelectItem value="Divers">Divers</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Titel</Label>
-                  <Input value={form.titel || ""} onChange={(e) => set("titel", e.target.value)} placeholder="Mag., Dr., Ing." />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Firma / Name *</Label>
-                <Input value={form.name} onChange={(e) => set("name", e.target.value)} placeholder="Firma oder Name" />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Kontaktperson</Label>
-                <Input value={form.ansprechpartner || ""} onChange={(e) => set("ansprechpartner", e.target.value)} />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">UID-Nummer</Label>
-                <Input value={form.uid_nummer || ""} onChange={(e) => set("uid_nummer", e.target.value)} placeholder="ATU..." />
-              </div>
-            </div>
-
-            {/* ── Rechte Spalte: Adresse + Kontakt ── */}
-            <div className="space-y-3">
-              <div className="space-y-1">
-                <Label className="text-xs">Straße / Nr.</Label>
-                <Input value={form.adresse || ""} onChange={(e) => set("adresse", e.target.value)} placeholder="Straße + Hausnr." />
-              </div>
-
-              <div className="grid grid-cols-[90px_1fr] gap-3">
-                <div className="space-y-1">
-                  <Label className="text-xs">Plz</Label>
-                  <Input value={form.plz || ""} onChange={(e) => set("plz", e.target.value)} />
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Ort</Label>
-                  <Input value={form.ort || ""} onChange={(e) => set("ort", e.target.value)} />
-                </div>
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Land</Label>
-                <Input value={form.land || ""} onChange={(e) => set("land", e.target.value)} />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">Telefon</Label>
-                <Input value={form.telefon || ""} onChange={(e) => set("telefon", e.target.value)} />
-              </div>
-
-              <div className="space-y-1">
-                <Label className="text-xs">E-Mail</Label>
-                <Input type="email" value={form.email || ""} onChange={(e) => set("email", e.target.value)} />
-              </div>
-            </div>
+          <div className="p-4 sm:p-5">
+            <CustomerForm value={form} onChange={setForm} variant="full" />
           </div>
         )}
       </DialogContent>

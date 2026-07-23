@@ -257,6 +257,80 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     a.click();
   };
 
+  // E-Rechnung: ebInterface-6.1-XML erzeugen und herunterladen (der
+  // Generator wird im Repo gegen das offizielle XSD validiert).
+  const handleERechnung = async () => {
+    try {
+      const { buildEbInterfaceXml } = await import("@/lib/eRechnung");
+      const fd: any = formData;
+      const its: any[] = (items as any[]) || [];
+      // Falls die Vorschau noch nie lief: Bank/UID/Layout jetzt laden.
+      if (!settingsRef.current) {
+        const bank: BankData = { ...DEFAULT_BANK };
+        let uid = "";
+        let layout: InvoiceLayoutSettings = DEFAULT_LAYOUT;
+        const { data } = await supabase
+          .from("app_settings")
+          .select("key, value")
+          .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "invoice_layout"]);
+        data?.forEach((row: any) => {
+          if (row.key === "bank_kontoinhaber") bank.kontoinhaber = row.value;
+          if (row.key === "bank_iban") bank.iban = row.value;
+          if (row.key === "bank_bic") bank.bic = row.value;
+          if (row.key === "firmen_uid") uid = row.value;
+          if (row.key === "invoice_layout") layout = parseLayoutSettings(row.value);
+        });
+        settingsRef.current = { bank, uid, layout };
+      }
+      const L = settingsRef.current.layout || DEFAULT_LAYOUT;
+      // "PLZ Ort" aus address_line2 trennen (z. B. "8841 Frojach-Katsch").
+      const m = String(L.company.address_line2 || "").trim().match(/^(\S+)\s+(.*)$/);
+      const xml = buildEbInterfaceXml(
+        {
+          typ: fd.typ, nummer: fd.nummer, datum: fd.datum,
+          leistungsdatum: fd.leistungsdatum, leistungsdatum_bis: fd.leistungsdatum_bis,
+          faellig_am: fd.faellig_am, referenz: fd.referenz,
+          mwst_satz: Number(fd.mwst_satz) || 0, reverse_charge: !!fd.reverse_charge,
+          rabatt_prozent: Number(fd.rabatt_prozent) || 0, rabatt_betrag: Number(fd.rabatt_betrag) || 0,
+          skonto_prozent: Number(fd.skonto_prozent) || 0, skonto_tage: Number(fd.skonto_tage) || 0,
+          zahlungstext: fd.zahlungstext, betreff: fd.betreff,
+        },
+        its.map((it) => ({
+          beschreibung: it.beschreibung || it.kurztext || "",
+          menge: Number(it.menge) || 1,
+          einheit: it.einheit || "Stk.",
+          gesamtpreis: Number(it.gesamtpreis) || 0,
+          mwst_exempt: !!it.mwst_exempt,
+          produktnummer: it.produktnummer || "",
+        })),
+        {
+          name: L.company.name, street: L.company.address_line1,
+          zip: m?.[1] || "", town: m?.[2] || L.company.address_line2 || "-",
+          land: "Österreich", email: L.company.email, phone: L.company.phone,
+          uid: settingsRef.current?.uid || "",
+        },
+        {
+          name: fd.kunde_name || "", street: fd.kunde_adresse || "",
+          zip: fd.kunde_plz || "", town: fd.kunde_ort || "-",
+          land: fd.kunde_land || "Österreich", email: fd.kunde_email || "",
+          phone: fd.kunde_telefon || "", uid: fd.kunde_uid || "",
+          contact: fd.kunde_kontaktperson || "",
+        },
+        settingsRef.current?.bank || {},
+      );
+      const blob = new Blob([xml], { type: "application/xml" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${fd.nummer || fileName || "Beleg"}_ebInterface.xml`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast({ title: "E-Rechnung exportiert", description: "ebInterface-6.1-XML wurde heruntergeladen (u.a. für e-rechnung.gv.at)." });
+    } catch (err: any) {
+      toast({ variant: "destructive", title: "E-Rechnung nicht möglich", description: err?.message || "Unbekannter Fehler" });
+    }
+  };
+
   // Per E-Mail: öffnet den Mail-Client mit Kundenadresse + Betreff vorbelegt.
   // Das PDF lässt sich per Browser-mailto nicht anhängen — Hinweis im Text.
   const kundeEmail = (formData as any)?.kunde_email as string | undefined;
@@ -431,14 +505,8 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
             className="w-full"
             icon={FileCode2}
             label="E-Rechnung"
-            onClick={() =>
-              toast({
-                title: "E-Rechnung",
-                description:
-                  "Der strukturierte E-Rechnungs-Export (ebInterface/XRechnung) ist in Vorbereitung — bis dahin bitte „Export als PDF“ verwenden.",
-              })
-            }
-            title="E-Rechnung (ebInterface/XRechnung) — in Vorbereitung"
+            onClick={() => void handleERechnung()}
+            title="E-Rechnung als ebInterface-6.1-XML exportieren (österreichischer Standard, u.a. e-rechnung.gv.at)"
           />
         )}
         <KBButton
