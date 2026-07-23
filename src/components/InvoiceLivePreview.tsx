@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown, Copy, Mail } from "lucide-react";
+import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown, Copy, Mail, FileCode2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 import { KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -61,6 +62,7 @@ const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName }: InvoiceLivePreviewProps) {
+  const { toast } = useToast();
   const [open, setOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) !== "0";
@@ -423,6 +425,22 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           disabled={!pdfUrl}
           title="Als PDF exportieren"
         />
+        {/* E-Rechnung — nur bei rechnungsartigen Belegen (wie KingBill). */}
+        {["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"].includes(String((formData as any)?.typ)) && (
+          <KBButton
+            className="w-full"
+            icon={FileCode2}
+            label="E-Rechnung"
+            onClick={() =>
+              toast({
+                title: "E-Rechnung",
+                description:
+                  "Der strukturierte E-Rechnungs-Export (ebInterface/XRechnung) ist in Vorbereitung — bis dahin bitte „Export als PDF“ verwenden.",
+              })
+            }
+            title="E-Rechnung (ebInterface/XRechnung) — in Vorbereitung"
+          />
+        )}
         <KBButton
           className="w-full"
           icon={Mail}

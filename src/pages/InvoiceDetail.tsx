@@ -4096,7 +4096,48 @@ export default function InvoiceDetail() {
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
         {/* KingBill-Layout: Editor links, permanente Beleg-Live-Vorschau rechts (xl+) */}
-        <div className="xl:flex xl:items-start xl:gap-6">
+        <div className="xl:flex xl:items-start xl:gap-4">
+        {/* KingBill: schmale Icon-Leiste ganz links (Katalog · Position weg ·
+            Position neu · Beleg-Scan). Nur Desktop + editierbare Belege. */}
+        {!isLocked && (
+          <div className="sticky top-20 hidden shrink-0 flex-col gap-2 self-start xl:flex">
+            <button
+              type="button"
+              className="kb-btn h-10 min-h-0 w-10 justify-center px-0"
+              title="Materialkatalog öffnen"
+              onClick={() => { setActiveStep(3); setTemplateDialogOpen(true); }}
+            >
+              <Package className="h-5 w-5 text-kb-blue-dark" />
+            </button>
+            <button
+              type="button"
+              className="kb-btn h-10 min-h-0 w-10 justify-center px-0"
+              title="Letzte Position entfernen"
+              onClick={() => {
+                setActiveStep(3);
+                if (items.length > 0) removeItem(items.length - 1);
+              }}
+            >
+              <span className="text-lg font-bold leading-none text-kb-blue-dark">−</span>
+            </button>
+            <button
+              type="button"
+              className="kb-btn h-10 min-h-0 w-10 justify-center px-0"
+              title="Neue Position"
+              onClick={() => { setActiveStep(3); setArtikelSubTab("dokument"); addItem(); }}
+            >
+              <span className="text-lg font-bold leading-none text-kb-green">＋</span>
+            </button>
+            <button
+              type="button"
+              className="kb-btn h-10 min-h-0 w-10 justify-center px-0 opacity-50"
+              title="Beleg-Scan — folgt in einer späteren Version"
+              onClick={() => toast({ title: "Beleg-Scan", description: "Folgt in einer späteren Version." })}
+            >
+              <Eye className="h-5 w-5 text-kb-icon-gray" />
+            </button>
+          </div>
+        )}
         <div className="space-y-6 min-w-0 xl:flex-1">
           {/* ═══════════ SCHRITT 1 · ALLGEMEIN ═══════════
               Belegweiter Lifecycle (Kette / Status / Zahlungen / Mahnungen —
