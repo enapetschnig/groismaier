@@ -1409,7 +1409,7 @@ export default function Invoices() {
             </div>
               );
             })()}
-            <div className="flex justify-end gap-2 pt-2">
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setPaymentDialogOpen(false)}>Abbrechen</Button>
               <Button onClick={async () => {
                 if (!paymentInvoiceId || !paymentBetrag) return;

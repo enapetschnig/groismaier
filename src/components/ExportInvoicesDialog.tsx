@@ -305,7 +305,7 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
           )}
         </div>
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose} disabled={exporting}>Abbrechen</Button>
           <Button onClick={handleExport} disabled={exporting} className="gap-2">
             {exporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}

@@ -283,7 +283,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Abbrechen</Button>
           {selectedId && (
             <Button onClick={handleImport} disabled={selected.length === 0} className="gap-2">

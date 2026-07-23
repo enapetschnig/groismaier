@@ -176,6 +176,13 @@ export function PriceAdjustDialog({
   const nettoAlt = useMemo(() => r2(belegSummeAlt - rabattAlt), [belegSummeAlt, rabattAlt]);
   const nettoNeu = useMemo(() => r2(belegSummeNeu - rabattNeu), [belegSummeNeu, rabattNeu]);
 
+  const bruttoAlt = useMemo(
+    () =>
+      r2(
+        nettoAlt * (1 + (Number(mwstSatz) || 0) / 100) + (Number(exemptBrutto) || 0)
+      ),
+    [nettoAlt, mwstSatz, exemptBrutto]
+  );
   const bruttoNeu = useMemo(
     () =>
       r2(
@@ -663,17 +670,22 @@ export function PriceAdjustDialog({
                       </div>
                     )}
                     <div className="flex justify-between font-medium">
-                      <span>Belegsumme neu (netto)</span>
+                      <span>Belegsumme netto</span>
                       <span className="tabular-nums">
                         € {fmt(nettoAlt)} → <strong>€ {fmt(nettoNeu)}</strong>
                       </span>
                     </div>
-                    <div className="flex justify-between text-xs text-muted-foreground">
+                    <div className="flex justify-between font-semibold border-t pt-1 mt-1">
                       <span>
-                        inkl. {Number(mwstSatz) || 0} % MwSt (Vorschau)
-                        {(Number(exemptBrutto) || 0) !== 0 ? " inkl. Anzahlungs-Abzug" : ""}
+                        Belegsumme brutto
+                        <span className="font-normal text-muted-foreground">
+                          {" "}(inkl. {Number(mwstSatz) || 0} % MwSt
+                          {(Number(exemptBrutto) || 0) !== 0 ? ", inkl. Anzahlungs-Abzug" : ""})
+                        </span>
                       </span>
-                      <span className="tabular-nums">€ {fmt(bruttoNeu)}</span>
+                      <span className="tabular-nums">
+                        € {fmt(bruttoAlt)} → <strong>€ {fmt(bruttoNeu)}</strong>
+                      </span>
                     </div>
                   </div>
                 </div>

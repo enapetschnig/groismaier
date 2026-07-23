@@ -619,6 +619,8 @@ export default function InvoiceDetail() {
   const [kalkulationName, setKalkulationName] = useState<string>("");
   /** Warnschwelle Marge aus app_settings.kalk_warn_marge_prozent (Default 35 %). */
   const [warnMargeProzent, setWarnMargeProzent] = useState<number>(35);
+  /** Roh-Eingabe des Warnschwellen-Feldes (österreichisches Komma tippbar). */
+  const [warnSchwelleRoh, setWarnSchwelleRoh] = useState<string>("35");
   const [kalkErsetzenOpen, setKalkErsetzenOpen] = useState(false);
   const [kalkErsetzenLaeuft, setKalkErsetzenLaeuft] = useState(false);
   const [kalkVerlassenOpen, setKalkVerlassenOpen] = useState(false);
@@ -784,6 +786,24 @@ export default function InvoiceDetail() {
     })();
     return () => { cancelled = true; };
   }, [kalkulationId]);
+
+  /**
+   * Warnschwelle direkt an der Warnung speichern (app_settings.kalk_warn_marge_prozent,
+   * admin-only). Gilt als Standard für alle Kalkulationen und Angebote.
+   */
+  const speichereWarnschwelle = async () => {
+    const v = clamp(toNumber(warnSchwelleRoh, warnMargeProzent), 0, 100);
+    setWarnSchwelleRoh(formatForInput(v));
+    if (v === warnMargeProzent) return;
+    setWarnMargeProzent(v);
+    const { error } = await supabase.from("app_settings")
+      .upsert({ key: "kalk_warn_marge_prozent", value: String(v) }, { onConflict: "key" });
+    if (error) {
+      toast({ variant: "destructive", title: "Warnschwelle nicht gespeichert", description: error.message });
+    } else {
+      toast({ title: "Warnschwelle gespeichert", description: `Warnung ab Marge unter ${formatForInput(v)} %.` });
+    }
+  };
 
   /** Auswählbare Kalkulationen laden (keine Vorlagen), neueste zuerst. */
   const ladeVerfuegbareKalks = async () => {
@@ -1128,7 +1148,7 @@ export default function InvoiceDetail() {
           if (row.key === "invoice_layout") setInvoiceLayout(parseLayoutSettings(row.value));
           if (row.key === "kalk_warn_marge_prozent") {
             const n = parseDecimal(String(row.value ?? ""));
-            if (n !== null && n > 0) setWarnMargeProzent(n);
+            if (n !== null && n > 0) { setWarnMargeProzent(n); setWarnSchwelleRoh(formatForInput(n)); }
           }
           if (isNew && row.key === "default_betreff_rechnung" && defaultTyp === "rechnung" && row.value) {
             setForm(prev => prev.betreff ? prev : { ...prev, betreff: row.value });
@@ -1758,43 +1778,127 @@ export default function InvoiceDetail() {
   };
 
   // ── Preise anpassen (Rabatt/Aufschlag + KI) ───────────────────────────────
-  // Positionen, auf die eine Preisanpassung überhaupt wirken kann. Ausgenommen
-  // sind mwst_exempt-Zeilen (Anzahlungs-Abzüge sind Brutto-Verrechnungszeilen
-  // und dürfen nicht angefasst werden) sowie die Detailzeilen einer Gruppe:
-  // sie tragen keinen Betrag (gesamtpreis 0) und dürfen keinen bekommen —
-  // sonst würde der Aufbau doppelt verrechnet.
-  const priceAdjustLines = useMemo<AdjustLine[]>(
-    () =>
-      items
-        .map((it, idx) => ({ it, idx }))
-        .filter(({ it }) => !it.mwst_exempt && !istDetailzeile(it))
-        .map(({ it, idx }) => ({
-          index: idx,
-          beschreibung: it.beschreibung || it.kurztext || "",
-          menge: Number(it.menge) || 0,
-          einheit: it.einheit || "",
-          einzelpreis: Number(it.einzelpreis) || 0,
-          rabatt_prozent: Number(it.rabatt_prozent) || 0,
-          gesamtpreis: Number(it.gesamtpreis) || 0,
-        })),
-    [items]
-  );
+  // Positionen, auf die eine Preisanpassung wirken kann. mwst_exempt-Zeilen
+  // (Anzahlungs-Abzüge) bleiben tabu.
+  //
+  // Aufbauten (Gruppen) werden auf EINZELPOSITIONS-Ebene angepasst: Trägt ein
+  // Aufbau eine Detail-Aufschlüsselung (Material, Arbeitszeit … mit VK-Betrag
+  // in ek_preis), so wandern seine Detailzeilen in die Auswahl — der Auf-/
+  // Abschlag verteilt sich schlau auf die einzelnen Positionen, und die
+  // Sammelzeile wird daraus neu gerechnet (siehe applyPriceAdjust). Nur reine
+  // Pauschal-Aufbauten OHNE Aufschlüsselung bleiben über ihre Sammelzeile
+  // anpassbar. Die betragslosen Detailzeilen tragen ihr Gewicht im ek_preis,
+  // nicht im gesamtpreis (der bleibt 0, sonst würde der Aufbau doppelt gezählt).
+  const priceAdjustLines = useMemo<AdjustLine[]>(() => {
+    const gruppenMitDetails = new Set<string>();
+    items.forEach((it) => {
+      if (istDetailzeile(it) && (Number(it.ek_preis) || 0) > 0) {
+        const g = gruppeVon(it);
+        if (g) gruppenMitDetails.add(g);
+      }
+    });
 
-  // Übernimmt neue Einzelpreise aus dem Dialog. Gesamtpreise laufen über
-  // computeItemTotal (gleiche Formel wie überall im Editor), die Belegsummen
-  // werden davon abgeleitet neu berechnet.
+    const out: AdjustLine[] = [];
+    items.forEach((it, idx) => {
+      if (it.mwst_exempt) return;
+      const g = gruppeVon(it);
+
+      if (istDetailzeile(it)) {
+        // Detailposition eines Aufbaus — Gewicht ist ihr interner VK-Betrag
+        // (ek_preis); der gesamtpreis ist bewusst 0. Bewusst als Pauschale
+        // (menge 1) geführt: der Kunde sieht keinen Detail-Zeilenpreis, dafür
+        // trifft die Zielsumme centgenau (ein m²-Preis mit 2 Nachkommastellen
+        // könnte den Rest-Cent bei krummer Fläche sonst nicht aufnehmen).
+        const vk = round2(Number(it.ek_preis) || 0);
+        if (vk <= 0) return;
+        out.push({
+          index: idx,
+          beschreibung: g ? `${g}: ${it.beschreibung || it.kurztext || ""}` : (it.beschreibung || it.kurztext || ""),
+          menge: 1,
+          einheit: "Pauschale",
+          einzelpreis: vk,
+          rabatt_prozent: 0, // Details tragen intern keinen Positionsrabatt
+          gesamtpreis: vk,
+        });
+        return;
+      }
+
+      // Sammelzeile eines Aufbaus MIT Details: nicht direkt anpassbar, sie
+      // wird aus den Detailzeilen neu berechnet (sonst doppelt gezählt).
+      if (it.ist_gruppensumme && g && gruppenMitDetails.has(g)) return;
+
+      // Ungruppierte Position oder Pauschal-Aufbau ohne Aufschlüsselung.
+      out.push({
+        index: idx,
+        beschreibung: it.beschreibung || it.kurztext || "",
+        menge: Number(it.menge) || 0,
+        einheit: it.einheit || "",
+        einzelpreis: Number(it.einzelpreis) || 0,
+        rabatt_prozent: Number(it.rabatt_prozent) || 0,
+        gesamtpreis: Number(it.gesamtpreis) || 0,
+      });
+    });
+    return out;
+  }, [items]);
+
+  // Übernimmt neue Einzelpreise aus dem Dialog.
+  //  • Detailposition: Einzelpreis + interner VK-Betrag (ek_preis) wachsen,
+  //    der gesamtpreis bleibt 0 (der Kunde zahlt die Sammelzeile).
+  //  • Ungruppierte Position / Pauschal-Sammelzeile: Gesamtpreis via
+  //    computeItemTotal (gleiche Formel wie überall im Editor).
+  //  • Danach werden die Sammelzeilen der betroffenen Aufbauten centgenau aus
+  //    ihren Detailzeilen neu berechnet — ihre Selbstkosten (ek_preis der
+  //    Sammelzeile) bleiben unangetastet.
   const applyPriceAdjust = (neuePreise: Record<number, number>) => {
-    setItemsDirty(prev =>
-      prev.map((it, idx) => {
+    setItemsDirty((prev) => {
+      const next = prev.map((it, idx) => {
         const neu = neuePreise[idx];
         if (neu === undefined || !isFinite(neu)) return it;
-        // Sicherheitsnetz: Detailzeilen einer Gruppe bleiben betragslos.
-        if (istDetailzeile(it)) return it;
-        const next = { ...it, einzelpreis: Math.max(0, Math.round(neu * 100) / 100) };
-        next.gesamtpreis = computeItemTotal(next);
-        return next;
-      })
-    );
+        if (istDetailzeile(it)) {
+          // Detail-Zeilen laufen im Dialog als Pauschale (menge 1): `neu` ist
+          // der neue VK-BETRAG der Position. Er landet centgenau im ek_preis;
+          // der m²-Einzelpreis wird daraus nur fürs Editor-Display abgeleitet.
+          const betrag = Math.max(0, round2(neu));
+          const menge = Number(it.menge) || 0;
+          return {
+            ...it,
+            ek_preis: betrag,
+            einzelpreis: menge > 0 ? round2(betrag / menge) : betrag,
+            gesamtpreis: 0,
+          };
+        }
+        const ep = Math.max(0, round2(neu));
+        const cand = { ...it, einzelpreis: ep };
+        cand.gesamtpreis = computeItemTotal(cand);
+        return cand;
+      });
+
+      // Welche Aufbauten haben geänderte Detailzeilen?
+      const betroffeneGruppen = new Set<string>();
+      prev.forEach((it, idx) => {
+        if (neuePreise[idx] !== undefined && istDetailzeile(it)) {
+          const g = gruppeVon(it);
+          if (g) betroffeneGruppen.add(g);
+        }
+      });
+      if (betroffeneGruppen.size === 0) return next;
+
+      return next.map((it) => {
+        if (!it.ist_gruppensumme) return it;
+        const g = gruppeVon(it);
+        if (!g || !betroffeneGruppen.has(g)) return it;
+        const summe = round2(
+          next.reduce(
+            (s, d) => s + (istDetailzeile(d) && gruppeVon(d) === g ? (Number(d.ek_preis) || 0) : 0),
+            0,
+          ),
+        );
+        const menge = Number(it.menge) || 0;
+        const einzelpreis = menge > 0 ? round2(summe / menge) : summe;
+        // gesamtpreis = Σ Details (exakt), einzelpreis nur fürs m²-Preis-Display.
+        return { ...it, gesamtpreis: summe, einzelpreis };
+      });
+    });
     setIsDirty(true);
   };
 
@@ -5984,6 +6088,26 @@ export default function InvoiceDetail() {
                     </div>
                   </div>
                 </div>
+                {/* Warnschwelle direkt hier einstellbar — gilt als Standard
+                    für alle Kalkulationen und Angebote. */}
+                <div className="flex flex-wrap items-center gap-2 border-t pt-3 text-sm">
+                  <Label htmlFor="warnschwelle" className="text-muted-foreground">Warnung ab Marge unter</Label>
+                  <div className="flex items-center gap-1">
+                    <Input
+                      id="warnschwelle"
+                      data-testid="warnschwelle-feld"
+                      type="text"
+                      inputMode="decimal"
+                      className="h-8 w-16 text-right"
+                      value={warnSchwelleRoh}
+                      onChange={(e) => setWarnSchwelleRoh(e.target.value)}
+                      onBlur={speichereWarnschwelle}
+                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
+                    />
+                    <span className="text-muted-foreground">%</span>
+                  </div>
+                  <span className="text-xs text-muted-foreground">— gilt als Standard für alle Kalkulationen &amp; Angebote</span>
+                </div>
                 {positionenOhneKosten > 0 && (
                   <p className="text-xs text-muted-foreground">
                     Hinweis: {positionenOhneKosten} Position(en) mit Betrag haben keine
@@ -6055,7 +6179,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Actions */}
-          <div className="flex justify-end gap-3">
+          <div className="flex flex-wrap justify-end gap-3">
             <Button variant="outline" onClick={handleBackNav}>
               {isLocked ? "Zurück" : "Abbrechen"}
             </Button>
@@ -6370,7 +6494,7 @@ export default function InvoiceDetail() {
 
         {/* Kalkulation öffnen, obwohl der Beleg ungespeicherte Änderungen hat */}
         <Dialog open={kalkVerlassenOpen} onOpenChange={setKalkVerlassenOpen}>
-          <DialogContent className="sm:max-w-md">
+          <DialogContent className="sm:max-w-lg">
             <DialogHeader>
               <DialogTitle>Zur Kalkulation wechseln?</DialogTitle>
               <DialogDescription>
@@ -6378,7 +6502,7 @@ export default function InvoiceDetail() {
                 in die Auftragskalkulation gespeichert werden?
               </DialogDescription>
             </DialogHeader>
-            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+            <div className="flex flex-col-reverse flex-wrap gap-2 pt-2 sm:flex-row sm:justify-end">
               <KBButton label="Zurück" onClick={() => setKalkVerlassenOpen(false)} />
               <KBButton
                 label="Ohne Speichern"
@@ -6921,7 +7045,7 @@ export default function InvoiceDetail() {
                 rows={3}
               />
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setStornoDialogOpen(false)} disabled={stornoLaeuft}>Abbrechen</Button>
               <Button variant="destructive" disabled={!stornoGrund.trim() || stornoLaeuft} onClick={async () => {
                 // Guard: bereits storniert

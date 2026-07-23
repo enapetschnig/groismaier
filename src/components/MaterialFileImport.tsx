@@ -443,7 +443,7 @@ export function MaterialFileImport({ open, onClose, onImported }: MaterialFileIm
           </div>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="outline" onClick={() => { onClose(); resetState(); }}>Abbrechen</Button>
           {materials.length > 0 && (
             <Button onClick={handleSave} disabled={saving || selectedCount === 0} className="gap-2">

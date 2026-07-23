@@ -917,7 +917,7 @@ export function CreateProjectDialog({
             </div>
 
             {/* ======== Actions ======== */}
-            <div className="flex justify-end gap-2 pt-4 border-t">
+            <div className="flex flex-wrap justify-end gap-2 pt-4 border-t">
               <Button variant="outline" onClick={onClose}>
                 Abbrechen
               </Button>

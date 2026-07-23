@@ -427,7 +427,7 @@ export function ImportFromProjectDialog({
           </>
         )}
 
-        <div className="flex justify-end gap-2 pt-2">
+        <div className="flex flex-wrap justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Abbrechen</Button>
           <Button onClick={handleImport} disabled={selected.length === 0} className="gap-2">
             <FolderOpen className="w-4 h-4" />

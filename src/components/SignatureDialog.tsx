@@ -377,7 +377,7 @@ export const SignatureDialog = ({
 
         {/* Action Buttons — Unterschrift speichern ist der Hauptweg,
             der E-Mail-Versand ist optional (braucht eine Kunden-E-Mail). */}
-        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t bg-background flex-shrink-0">
+        <div className="flex flex-col-reverse flex-wrap sm:flex-row sm:justify-end gap-2 sm:gap-3 pt-3 border-t bg-background flex-shrink-0">
           <Button
             variant="ghost"
             className="h-11 sm:h-10"
