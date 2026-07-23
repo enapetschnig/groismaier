@@ -915,6 +915,106 @@ export default function InvoiceDetail() {
   };
 
   /**
+   * Kunde übernehmen — gemeinsame Logik für den CustomerSelect UND die
+   * KingBill-Kundenliste im Kunde-Schritt. null = Verknüpfung/Kunde entfernen.
+   */
+  const waehleKunde = async (customer: CustomerData | null) => {
+    if (!customer) {
+      if (!loading) setIsDirty(true);
+      setForm((prev) => ({
+        ...prev,
+        customer_id: null,
+        kunde_name: "",
+        kunde_adresse: "",
+        kunde_plz: "",
+        kunde_ort: "",
+        kunde_land: "Österreich",
+        kunde_email: "",
+        kunde_telefon: "",
+        kunde_uid: "",
+        kunde_anrede: "",
+        kunde_titel: "",
+        kundennummer: "",
+      } as any));
+      return;
+    }
+    const updates: any = {
+      customer_id: customer.id,
+      kunde_name: customer.name,
+      kunde_adresse: customer.adresse || "",
+      kunde_plz: customer.plz || "",
+      kunde_ort: customer.ort || "",
+      kunde_land: customer.land || "Österreich",
+      kunde_email: customer.email || "",
+      kunde_telefon: customer.telefon || "",
+      kunde_uid: customer.uid_nummer || "",
+      kunde_anrede: customer.anrede || "",
+      kunde_titel: customer.titel || "",
+      kundennummer: customer.kundennummer || "",
+    };
+    const hints: string[] = [];
+    if (form.typ === "rechnung") {
+      const { data: fullCust } = await supabase
+        .from("customers").select("skonto_prozent, skonto_tage, nettofrist").eq("id", customer.id).single();
+      if (fullCust) {
+        const custSkonto = Number(fullCust.skonto_prozent) || 0;
+        const custSkontoTage = Number(fullCust.skonto_tage) || 0;
+        const custNettofrist = Number(fullCust.nettofrist) || 0;
+        if (custSkonto > 0) {
+          updates.skonto_prozent = custSkonto;
+          updates.skonto_tage = custSkontoTage;
+          hints.push(`Skonto: ${custSkonto}% / ${custSkontoTage} Tage`);
+        }
+        const zb = nettofristToDropdown(custNettofrist);
+        updates.zahlungsbedingungen = zb;
+        if (zb === "individuell" && custNettofrist > 0 && form.datum) {
+          const due = new Date(form.datum + "T12:00:00");
+          due.setDate(due.getDate() + custNettofrist);
+          updates.faellig_am = due.toISOString().split("T")[0];
+        }
+        if (custNettofrist > 0) hints.push(`Zahlungsfrist: ${custNettofrist} Tage`);
+      }
+    }
+    if (!loading) setIsDirty(true);
+    setForm((prev) => ({ ...prev, ...updates }));
+    if (hints.length > 0) {
+      toast({ title: "Kundeneinstellungen übernommen", description: hints.join(" · ") });
+    }
+    if ((customer as any).kundentyp === "geschaeftskunde" && !(customer.uid_nummer || "").trim()) {
+      toast({
+        variant: "destructive",
+        title: "UID fehlt",
+        description: `${customer.name} ist ein Geschäftskunde, hat aber keine UID-Nummer hinterlegt. Bitte im Kunden-Datensatz ergänzen — sie erscheint sonst nicht im Rechnungs-Adressfeld.`,
+        duration: 8000,
+      });
+    }
+  };
+
+  // Kundenliste für den KingBill-Kunde-Schritt (Tabelle mit Auswahl).
+  const [kundenListe, setKundenListe] = useState<CustomerData[]>([]);
+  const [kundenSuche, setKundenSuche] = useState("");
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("customers")
+        .select("id, name, kundennummer, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundentyp")
+        .order("name");
+      setKundenListe(((data as any[]) || []) as CustomerData[]);
+    })();
+  }, []);
+  const kundenTreffer = (() => {
+    const q = kundenSuche.trim().toLowerCase();
+    const base = q
+      ? kundenListe.filter((c) =>
+          (c.name || "").toLowerCase().includes(q) ||
+          ((c as any).kundennummer || "").toLowerCase().includes(q) ||
+          ((c as any).ort || "").toLowerCase().includes(q) ||
+          ((c as any).adresse || "").toLowerCase().includes(q))
+      : kundenListe;
+    return base.slice(0, 100);
+  })();
+
+  /**
    * „Positionen neu übernehmen": lädt die verknüpfte Kalkulation frisch,
    * rechnet sie durch und ERSETZT die daraus entstandenen Positionen.
    *
@@ -5205,86 +5305,7 @@ export default function InvoiceDetail() {
                 <CustomerSelect
                   className="min-w-0 sm:w-64"
                   value={form.customer_id || null}
-                  onChange={async (id, customer) => {
-                    if (!customer) {
-                      if (!loading) setIsDirty(true);
-                      setForm(prev => ({
-                        ...prev,
-                        customer_id: null,
-                        kunde_name: "",
-                        kunde_adresse: "",
-                        kunde_plz: "",
-                        kunde_ort: "",
-                        kunde_land: "Österreich",
-                        kunde_email: "",
-                        kunde_telefon: "",
-                        kunde_uid: "",
-                        kunde_anrede: "",
-                        kunde_titel: "",
-                        kundennummer: "",
-                      } as any));
-                      return;
-                    }
-                    const updates: any = {
-                      customer_id: customer.id,
-                      kunde_name: customer.name,
-                      kunde_adresse: customer.adresse || "",
-                      kunde_plz: customer.plz || "",
-                      kunde_ort: customer.ort || "",
-                      kunde_land: customer.land || "Österreich",
-                      kunde_email: customer.email || "",
-                      kunde_telefon: customer.telefon || "",
-                      kunde_uid: customer.uid_nummer || "",
-                      kunde_anrede: customer.anrede || "",
-                      kunde_titel: customer.titel || "",
-                      kundennummer: customer.kundennummer || "",
-                      // Ansprechpartner wird NICHT aus den Kundendaten übernommen —
-                      // er ist der Sachbearbeiter und wird pro Dokument aus
-                      // der Mitarbeiter-Liste gewählt.
-                    };
-                    // Übernehme Skonto + Zahlungsfrist vom Kunden (nur bei Rechnungen)
-                    const hints: string[] = [];
-                    if (form.typ === "rechnung") {
-                      const { data: fullCust } = await supabase.from("customers").select("skonto_prozent, skonto_tage, nettofrist").eq("id", customer.id).single();
-                      if (fullCust) {
-                        const custSkonto = Number(fullCust.skonto_prozent) || 0;
-                        const custSkontoTage = Number(fullCust.skonto_tage) || 0;
-                        const custNettofrist = Number(fullCust.nettofrist) || 0;
-                        if (custSkonto > 0) {
-                          updates.skonto_prozent = custSkonto;
-                          updates.skonto_tage = custSkontoTage;
-                          hints.push(`Skonto: ${custSkonto}% / ${custSkontoTage} Tage`);
-                        }
-                        const zb = nettofristToDropdown(custNettofrist);
-                        updates.zahlungsbedingungen = zb;
-                        if (zb === "individuell" && custNettofrist > 0 && form.datum) {
-                          const due = new Date(form.datum + "T12:00:00");
-                          due.setDate(due.getDate() + custNettofrist);
-                          updates.faellig_am = due.toISOString().split("T")[0];
-                        }
-                        if (custNettofrist > 0) {
-                          hints.push(`Zahlungsfrist: ${custNettofrist} Tage`);
-                        }
-                      }
-                    }
-                    if (!loading) setIsDirty(true);
-                    setForm(prev => ({ ...prev, ...updates }));
-                    if (hints.length > 0) {
-                      toast({ title: "Kundeneinstellungen übernommen", description: hints.join(" · ") });
-                    }
-                    // Hinweis bei Geschäftskunde ohne UID — die UID ist für
-                    // den Empfänger-Block am PDF wichtig (Reverse-Charge,
-                    // B2B-Nachweis). Besser jetzt darauf hinweisen, als
-                    // später eine UID-lose Rechnung zu drucken.
-                    if ((customer as any).kundentyp === "geschaeftskunde" && !(customer.uid_nummer || "").trim()) {
-                      toast({
-                        variant: "destructive",
-                        title: "UID fehlt",
-                        description: `${customer.name} ist ein Geschäftskunde, hat aber keine UID-Nummer hinterlegt. Bitte im Kunden-Datensatz ergänzen — sie erscheint sonst nicht im Rechnungs-Adressfeld.`,
-                        duration: 8000,
-                      });
-                    }
-                  }}
+                  onChange={(id, customer) => { void waehleKunde(customer); }}
                 />
               </div>
               {form.customer_id && (
@@ -5501,6 +5522,85 @@ export default function InvoiceDetail() {
             </CardContent>
             </fieldset>
           </Card>
+
+          {/* Lieferadresse (abweichend) — KingBill-Kundenschritt */}
+          <Card className={`kb-panel ${isKundeLocked ? "opacity-80" : ""}`}>
+            <fieldset disabled={isKundeLocked} className="min-w-0">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base">Lieferadresse (optional)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Textarea
+                  rows={3}
+                  value={(form as any).lieferadresse || ""}
+                  onChange={(e) => updateField("lieferadresse" as any, e.target.value)}
+                  placeholder="Abweichende Lieferanschrift — leer lassen, wenn identisch mit der Rechnungsadresse."
+                  className="resize-y"
+                />
+              </CardContent>
+            </fieldset>
+          </Card>
+
+          {/* KingBill-Kundenliste: Klick auf eine Zeile übernimmt den Kunden. */}
+          {!isKundeLocked && (
+            <Card className="kb-panel">
+              <CardHeader className="pb-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-base">Kundenliste</CardTitle>
+                  <span className="text-xs text-muted-foreground">Neue Kunden über das Auswahlfeld oben („＋“) anlegen.</span>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    value={kundenSuche}
+                    onChange={(e) => setKundenSuche(e.target.value)}
+                    placeholder="Kunde suchen (Name, Nummer, Ort)…"
+                    className="h-9 pl-8"
+                  />
+                </div>
+                <div className="max-h-72 overflow-y-auto rounded-md border">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 bg-muted/60 text-xs text-muted-foreground">
+                      <tr>
+                        <th className="w-8 px-2 py-1.5"></th>
+                        <th className="px-2 py-1.5 text-left font-medium">Nummer</th>
+                        <th className="px-2 py-1.5 text-left font-medium">Kunde</th>
+                        <th className="hidden px-2 py-1.5 text-left font-medium sm:table-cell">Adresse</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {kundenTreffer.length === 0 ? (
+                        <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">Keine Kunden gefunden.</td></tr>
+                      ) : (
+                        kundenTreffer.map((c) => {
+                          const aktiv = form.customer_id === c.id;
+                          return (
+                            <tr
+                              key={c.id}
+                              onClick={() => { void waehleKunde(c); }}
+                              className={`cursor-pointer hover:bg-accent ${aktiv ? "bg-blue-50" : ""}`}
+                              title="Kunden übernehmen"
+                            >
+                              <td className="px-2 py-1.5 text-center">
+                                <span className={`inline-block h-2.5 w-2.5 rounded-full ${aktiv ? "bg-kb-green" : "bg-muted-foreground/30"}`} />
+                              </td>
+                              <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{(c as any).kundennummer || "—"}</td>
+                              <td className="px-2 py-1.5 font-medium">{c.name}</td>
+                              <td className="hidden px-2 py-1.5 text-muted-foreground sm:table-cell">
+                                {[(c as any).plz, (c as any).ort].filter(Boolean).join(" ") || (c as any).adresse || "—"}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           </>)}
           {/* ═══════════ SCHRITT 3 · ARTIKEL ═══════════
