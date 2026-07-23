@@ -11,7 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
@@ -622,6 +622,11 @@ export default function InvoiceDetail() {
   const [kalkErsetzenOpen, setKalkErsetzenOpen] = useState(false);
   const [kalkErsetzenLaeuft, setKalkErsetzenLaeuft] = useState(false);
   const [kalkVerlassenOpen, setKalkVerlassenOpen] = useState(false);
+  // „Mit Kalkulation verknüpfen": Wähler für Belege OHNE Herkunft.
+  const [kalkVerknuepfenOpen, setKalkVerknuepfenOpen] = useState(false);
+  const [kalkSuche, setKalkSuche] = useState("");
+  const [verfuegbareKalks, setVerfuegbareKalks] = useState<{ id: string; name: string; summe: number; updated_at: string }[]>([]);
+  const [ladeKalks, setLadeKalks] = useState(false);
   /** Nur Administratoren sehen den internen Verdienst-Block. */
   const { isAdmin } = usePermissions();
 
@@ -779,6 +784,42 @@ export default function InvoiceDetail() {
     })();
     return () => { cancelled = true; };
   }, [kalkulationId]);
+
+  /** Auswählbare Kalkulationen laden (keine Vorlagen), neueste zuerst. */
+  const ladeVerfuegbareKalks = async () => {
+    setLadeKalks(true);
+    try {
+      const { data } = await (supabase.from("kalkulationen" as never) as any)
+        .select("id, name, summe, updated_at, ist_vorlage")
+        .order("updated_at", { ascending: false })
+        .limit(200);
+      const rows = (((data as any[]) || [])
+        .filter((r) => !r.ist_vorlage)
+        .map((r) => ({ id: r.id, name: r.name || "Ohne Namen", summe: Number(r.summe) || 0, updated_at: r.updated_at })));
+      setVerfuegbareKalks(rows);
+    } catch {
+      setVerfuegbareKalks([]);
+    } finally {
+      setLadeKalks(false);
+    }
+  };
+
+  /**
+   * Beleg mit einer Kalkulation verknüpfen (für Belege OHNE Herkunft).
+   * Setzt nur die Verknüpfung — die Positionen holt der Nutzer danach
+   * bewusst über „Positionen neu übernehmen“ (dann erscheint auch der
+   * interne Verdienst-Block). So wird nichts ungefragt ersetzt.
+   */
+  const verknuepfeMitKalk = (k: { id: string; name: string }) => {
+    setKalkulationId(k.id);
+    setKalkulationName(k.name);
+    setIsDirty(true);
+    setKalkVerknuepfenOpen(false);
+    toast({
+      title: "Mit Kalkulation verknüpft",
+      description: `„${k.name}“ — jetzt „Positionen neu übernehmen“, um die Aufbauten ins Angebot zu holen. Danach speichern.`,
+    });
+  };
 
   /**
    * „Positionen neu übernehmen": lädt die verknüpfte Kalkulation frisch,
@@ -3665,6 +3706,24 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
+          {/* Noch KEINE Kalkulation verknüpft: anbieten, eine zu verknüpfen —
+              dann werden Verdienst-Block und „Positionen neu übernehmen“
+              verfügbar. Nur bei preistragenden, editierbaren Belegen. */}
+          {!kalkulationId && !isLocked && !hidePrices && (
+            <div className="flex justify-end">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-blue-800"
+                data-testid="kalk-verknuepfen"
+                onClick={() => { setKalkSuche(""); setKalkVerknuepfenOpen(true); void ladeVerfuegbareKalks(); }}
+              >
+                <Link2 className="h-4 w-4" />
+                Mit Kalkulation verknüpfen
+              </Button>
+            </div>
+          )}
+
           {/* Status & Actions */}
           {!isNew && (
             <Card className="kb-panel">
@@ -6367,6 +6426,66 @@ export default function InvoiceDetail() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Wähler „Mit Kalkulation verknüpfen“ — für Belege ohne Herkunft. */}
+        <Dialog open={kalkVerknuepfenOpen} onOpenChange={setKalkVerknuepfenOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Mit Auftragskalkulation verknüpfen</DialogTitle>
+              <DialogDescription>
+                Wähle die Kalkulation, aus der dieser Beleg stammt. Danach kannst du die
+                Aufbauten über „Positionen neu übernehmen“ ins Angebot holen und siehst
+                den internen Verdienst.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                autoFocus
+                className="pl-8"
+                placeholder="Kalkulation suchen …"
+                value={kalkSuche}
+                onChange={(e) => setKalkSuche(e.target.value)}
+              />
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded-md border">
+              {ladeKalks ? (
+                <p className="p-4 text-center text-sm text-muted-foreground">Lädt …</p>
+              ) : (() => {
+                const q = kalkSuche.trim().toLowerCase();
+                const liste = verfuegbareKalks.filter((k) => !q || k.name.toLowerCase().includes(q));
+                if (liste.length === 0) {
+                  return <p className="p-4 text-center text-sm text-muted-foreground">
+                    {verfuegbareKalks.length === 0 ? "Keine Kalkulationen vorhanden." : "Keine Treffer."}
+                  </p>;
+                }
+                return liste.map((k) => (
+                  <button
+                    key={k.id}
+                    type="button"
+                    data-testid="kalk-verknuepfen-option"
+                    onClick={() => verknuepfeMitKalk(k)}
+                    className="flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-left last:border-b-0 hover:bg-accent"
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <Calculator className="h-4 w-4 shrink-0 text-primary" />
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm font-medium">{k.name}</span>
+                        <span className="block text-xs text-muted-foreground">
+                          {new Date(k.updated_at).toLocaleDateString("de-AT")}
+                        </span>
+                      </span>
+                    </span>
+                    <span className="shrink-0 text-sm font-semibold tabular-nums">€ {eur(k.summe)}</span>
+                  </button>
+                ));
+              })()}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setKalkVerknuepfenOpen(false)}>Abbrechen</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* PDF Preview Dialog — works both before and after saving */}
         <InvoicePdfPreview
