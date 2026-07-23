@@ -1031,6 +1031,7 @@ export default function InvoiceDetail() {
   // Kundenliste für den KingBill-Kunde-Schritt (Tabelle mit Auswahl).
   const [kundenListe, setKundenListe] = useState<CustomerData[]>([]);
   const [kundenSuche, setKundenSuche] = useState("");
+  const [kundenGruppenFilter, setKundenGruppenFilter] = useState<string>("alle");
   useEffect(() => {
     (async () => {
       const { data } = await supabase
@@ -1042,13 +1043,16 @@ export default function InvoiceDetail() {
   }, []);
   const kundenTreffer = (() => {
     const q = kundenSuche.trim().toLowerCase();
-    const base = q
-      ? kundenListe.filter((c) =>
-          (c.name || "").toLowerCase().includes(q) ||
-          ((c as any).kundennummer || "").toLowerCase().includes(q) ||
-          ((c as any).ort || "").toLowerCase().includes(q) ||
-          ((c as any).adresse || "").toLowerCase().includes(q))
-      : kundenListe;
+    let base = kundenGruppenFilter === "alle"
+      ? kundenListe
+      : kundenListe.filter((c) => ((c as any).kundentyp || "") === kundenGruppenFilter);
+    if (q) {
+      base = base.filter((c) =>
+        (c.name || "").toLowerCase().includes(q) ||
+        ((c as any).kundennummer || "").toLowerCase().includes(q) ||
+        ((c as any).ort || "").toLowerCase().includes(q) ||
+        ((c as any).adresse || "").toLowerCase().includes(q));
+    }
     return base.slice(0, 100);
   })();
 
@@ -5498,63 +5502,165 @@ export default function InvoiceDetail() {
               )}
             </CardHeader>
             <CardContent className="space-y-3">
-              {form.kunde_name ? (
-                <div className="rounded-lg border p-3 bg-muted/30 space-y-1 text-sm relative">
-                  {!isKundeLocked && (
-                    <div className="absolute top-2 right-2 flex items-center gap-1">
-                      {form.customer_id && (
-                        <button
-                          type="button"
-                          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors sm:h-7 sm:w-7"
-                          title="Kundendaten bearbeiten"
-                          onClick={() => setCustomerEditOpen(true)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
+              {/* ── KingBill-Kundenraster: links Anrede/Kunde/Kontaktperson/
+                  Adresse/Plz+Ort/Land, rechts UID/Keine MwSt./Lieferadresse.
+                  Direkt editierbar — Änderungen gelten für DIESEN Beleg
+                  (Beleg-Snapshot); Stammdaten über den Stift-Knopf. ── */}
+              <div className="grid grid-cols-1 gap-x-6 gap-y-2.5 lg:grid-cols-2">
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Anrede</Label>
+                    <Select
+                      value={(form as any).kunde_anrede || "__keine__"}
+                      onValueChange={(v) => updateField("kunde_anrede" as any, v === "__keine__" ? "" : v)}
+                    >
+                      <SelectTrigger className="h-9"><SelectValue placeholder="—" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="__keine__"><span className="text-muted-foreground">— keine —</span></SelectItem>
+                        <SelectItem value="Herr">Herr</SelectItem>
+                        <SelectItem value="Frau">Frau</SelectItem>
+                        <SelectItem value="Firma">Firma</SelectItem>
+                        <SelectItem value="Familie">Familie</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Kunde</Label>
+                    <div className="relative">
+                      <Input
+                        className="h-9 pr-16"
+                        value={form.kunde_name}
+                        onChange={(e) => updateField("kunde_name", e.target.value)}
+                        placeholder="Firmen-/Kundenname"
+                      />
+                      {!isKundeLocked && (
+                        <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+                          {form.customer_id && (
+                            <button
+                              type="button"
+                              className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-primary/10 hover:text-primary"
+                              title="Kunden-Stammdaten bearbeiten"
+                              onClick={() => setCustomerEditOpen(true)}
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className="flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                            title="Kunde entfernen"
+                            onClick={() => { void waehleKunde(null); }}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </div>
                       )}
-                      <button
-                        type="button"
-                        className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors sm:h-7 sm:w-7"
-                        title="Kunde entfernen"
-                        onClick={() => {
-                          if (!loading) setIsDirty(true);
-                          setForm(prev => ({
-                            ...prev,
-                            customer_id: null,
-                            kunde_name: "",
-                            kunde_adresse: "",
-                            kunde_plz: "",
-                            kunde_ort: "",
-                            kunde_land: "Österreich",
-                            kunde_email: "",
-                            kunde_telefon: "",
-                            kunde_uid: "",
-                            kunde_anrede: "",
-                            kunde_titel: "",
-                            kundennummer: "",
-                          } as any));
-                        }}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
                     </div>
-                  )}
-                  <div className="font-medium text-base pr-16">
-                    {(form as any).kunde_anrede && <span className="text-muted-foreground">{(form as any).kunde_anrede} </span>}
-                    {(form as any).kunde_titel && <span className="text-muted-foreground">{(form as any).kunde_titel} </span>}
-                    {form.kunde_name}
                   </div>
-                  {form.kunde_adresse && <div className="text-muted-foreground">{form.kunde_adresse}</div>}
-                  {(form.kunde_plz || form.kunde_ort) && <div className="text-muted-foreground">{form.kunde_plz} {form.kunde_ort} {form.kunde_land && form.kunde_land !== "Österreich" ? `· ${form.kunde_land}` : ""}</div>}
-                  <div className="flex gap-4 mt-1">
-                    {form.kunde_email && <span className="text-muted-foreground">{form.kunde_email}</span>}
-                    {form.kunde_telefon && <span className="text-muted-foreground">{form.kunde_telefon}</span>}
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Kontaktperson</Label>
+                    <Input
+                      className="h-9"
+                      value={(form as any).kunde_kontaktperson || ""}
+                      onChange={(e) => updateField("kunde_kontaktperson" as any, e.target.value)}
+                      placeholder="z.B. Hr. Mustermann"
+                    />
                   </div>
-                  {form.kunde_uid && <div className="text-muted-foreground">UID: {form.kunde_uid}</div>}
-                  {(form as any).kundennummer && <div className="text-muted-foreground">Kundennr.: {(form as any).kundennummer}</div>}
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Adresse</Label>
+                    <Input
+                      className="h-9"
+                      value={form.kunde_adresse}
+                      onChange={(e) => updateField("kunde_adresse", e.target.value)}
+                      placeholder="Straße und Nr"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Plz und Ort</Label>
+                    <div className="grid grid-cols-[6rem_1fr] gap-2">
+                      <Input
+                        className="h-9"
+                        value={form.kunde_plz}
+                        onChange={(e) => updateField("kunde_plz", e.target.value)}
+                        placeholder="PLZ"
+                      />
+                      <Input
+                        className="h-9"
+                        value={form.kunde_ort}
+                        onChange={(e) => updateField("kunde_ort", e.target.value)}
+                        placeholder="Ort"
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Land</Label>
+                    <Select value={form.kunde_land || "Österreich"} onValueChange={(v) => updateField("kunde_land", v)}>
+                      <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Österreich">Österreich</SelectItem>
+                        <SelectItem value="Deutschland">Deutschland</SelectItem>
+                        <SelectItem value="Schweiz">Schweiz</SelectItem>
+                        <SelectItem value="Italien">Italien</SelectItem>
+                        <SelectItem value="Slowenien">Slowenien</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Kein Kunde ausgewählt. Wählen Sie oben einen Kunden aus.</p>
+                <div className="space-y-2.5">
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>UID-Nr</Label>
+                    <Input
+                      className="h-9"
+                      value={form.kunde_uid}
+                      onChange={(e) => updateField("kunde_uid", e.target.value)}
+                      placeholder="ATU…"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Keine MwSt.</Label>
+                    <label className="flex h-9 cursor-pointer select-none items-center">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4 accent-kb-blue-dark"
+                        checked={Number(form.mwst_satz) === 0}
+                        onChange={(e) => updateField("mwst_satz", e.target.checked ? 0 : 20)}
+                        disabled={(form as any).reverse_charge}
+                        title={(form as any).reverse_charge ? "Bei Reverse Charge ist die MwSt bereits 0 %" : undefined}
+                      />
+                    </label>
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-start gap-2">
+                    <Label className="pt-2">Lieferadresse</Label>
+                    <Textarea
+                      rows={5}
+                      value={(form as any).lieferadresse || ""}
+                      onChange={(e) => updateField("lieferadresse" as any, e.target.value)}
+                      placeholder="Abweichende Lieferanschrift — leer = Rechnungsadresse."
+                      className="resize-y"
+                    />
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>E-Mail</Label>
+                    <Input
+                      className="h-9"
+                      type="email"
+                      value={form.kunde_email}
+                      onChange={(e) => updateField("kunde_email", e.target.value)}
+                    />
+                  </div>
+                  <div className="grid grid-cols-[7.5rem_1fr] items-center gap-2">
+                    <Label>Telefon</Label>
+                    <Input
+                      className="h-9"
+                      type="tel"
+                      value={form.kunde_telefon}
+                      onChange={(e) => updateField("kunde_telefon", e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+              {(form as any).kundennummer && (
+                <p className="text-xs text-muted-foreground">Kundennr.: {(form as any).kundennummer}</p>
               )}
               {/* Ansprechpartner (Sachbearbeiter) pro Dokument */}
               <div className="mt-3 p-3 rounded-lg bg-muted/30 border space-y-2">
@@ -5689,40 +5795,80 @@ export default function InvoiceDetail() {
             </fieldset>
           </Card>
 
-          {/* Lieferadresse (abweichend) — KingBill-Kundenschritt */}
-          <Card className={`kb-panel ${isKundeLocked ? "opacity-80" : ""}`}>
-            <fieldset disabled={isKundeLocked} className="min-w-0">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Lieferadresse (optional)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Textarea
-                  rows={3}
-                  value={(form as any).lieferadresse || ""}
-                  onChange={(e) => updateField("lieferadresse" as any, e.target.value)}
-                  placeholder="Abweichende Lieferanschrift — leer lassen, wenn identisch mit der Rechnungsadresse."
-                  className="resize-y"
-                />
-              </CardContent>
-            </fieldset>
-          </Card>
+          {/* Lieferadresse steht jetzt im Kundenraster (rechte Spalte). */}
 
-          {/* KingBill-Kundenliste: Klick auf eine Zeile übernimmt den Kunden. */}
+          {/* KingBill-Kundenliste: Reiter-Optik, Werkzeugleiste, Suche +
+              „Filter nach Gruppe", Tabelle Status·Nummer·Kunde·Gruppe·Adresse.
+              Klick auf eine Zeile übernimmt den Kunden. */}
           {!isKundeLocked && (
-            <Card className="kb-panel">
-              <CardHeader className="pb-2">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="text-base">Kundenliste</CardTitle>
-                  <span className="text-xs text-muted-foreground">Neue Kunden über das Auswahlfeld oben („＋“) anlegen.</span>
+            <div>
+              <KBSubTabs
+                className="px-1"
+                activeId="kundenliste"
+                onSelect={() => {}}
+                items={[{ id: "kundenliste", label: "Kundenliste" }]}
+              />
+              <Card className="kb-panel rounded-tl-none">
+              <CardContent className="space-y-2 pt-4">
+                {/* Werkzeugleiste wie im Original: erste/nächste Zeile, Stammdaten, Neu */}
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    className="kb-btn h-9 min-h-0 px-2"
+                    title="Ersten Kunden übernehmen"
+                    onClick={() => { if (kundenTreffer[0]) void waehleKunde(kundenTreffer[0]); }}
+                  >
+                    <ChevronUp className="h-4 w-4 text-kb-blue-dark" />
+                  </button>
+                  <button
+                    type="button"
+                    className="kb-btn h-9 min-h-0 px-2"
+                    title="Nächsten Kunden übernehmen"
+                    onClick={() => {
+                      const idx = kundenTreffer.findIndex((c) => c.id === form.customer_id);
+                      const next = kundenTreffer[(idx + 1) % Math.max(1, kundenTreffer.length)];
+                      if (next) void waehleKunde(next);
+                    }}
+                  >
+                    <ChevronRight className="h-4 w-4 text-kb-blue-dark" />
+                  </button>
+                  <button
+                    type="button"
+                    className="kb-btn h-9 min-h-0 px-2"
+                    title="Kunden-Stammdaten bearbeiten"
+                    disabled={!form.customer_id}
+                    onClick={() => setCustomerEditOpen(true)}
+                  >
+                    <Pencil className="h-4 w-4 text-kb-yellow" />
+                  </button>
+                  <button
+                    type="button"
+                    className="kb-btn h-9 min-h-0 px-2"
+                    title="Neuen Kunden anlegen (über das Kunden-Auswahlfeld)"
+                    onClick={() => {
+                      toast({ title: "Neuen Kunden anlegen", description: "Namen im Feld „Kunde“ eintippen — beim Speichern wird er automatisch als Stammkunde angelegt." });
+                    }}
+                  >
+                    <Plus className="h-4 w-4 text-kb-green" />
+                  </button>
+                  <div className="ml-auto flex min-w-[12rem] items-center gap-2">
+                    <Label className="whitespace-nowrap text-xs text-muted-foreground">Filter nach Gruppe</Label>
+                    <Select value={kundenGruppenFilter} onValueChange={setKundenGruppenFilter}>
+                      <SelectTrigger className="h-9 w-40"><SelectValue placeholder="Aus Liste wählen …" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="alle">Alle</SelectItem>
+                        <SelectItem value="geschaeftskunde">Geschäftskunde</SelectItem>
+                        <SelectItem value="privatkunde">Privatkunde</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
-              </CardHeader>
-              <CardContent className="space-y-2">
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                   <Input
                     value={kundenSuche}
                     onChange={(e) => setKundenSuche(e.target.value)}
-                    placeholder="Kunde suchen (Name, Nummer, Ort)…"
+                    placeholder="Suche …"
                     className="h-9 pl-8"
                   />
                 </div>
@@ -5730,15 +5876,16 @@ export default function InvoiceDetail() {
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-muted/60 text-xs text-muted-foreground">
                       <tr>
-                        <th className="w-8 px-2 py-1.5"></th>
+                        <th className="w-12 px-2 py-1.5 text-left font-medium">Status</th>
                         <th className="px-2 py-1.5 text-left font-medium">Nummer</th>
                         <th className="px-2 py-1.5 text-left font-medium">Kunde</th>
+                        <th className="hidden px-2 py-1.5 text-left font-medium md:table-cell">Gruppe</th>
                         <th className="hidden px-2 py-1.5 text-left font-medium sm:table-cell">Adresse</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {kundenTreffer.length === 0 ? (
-                        <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">Keine Kunden gefunden.</td></tr>
+                        <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Keine Kunden gefunden.</td></tr>
                       ) : (
                         kundenTreffer.map((c) => {
                           const aktiv = form.customer_id === c.id;
@@ -5749,13 +5896,17 @@ export default function InvoiceDetail() {
                               className={`cursor-pointer hover:bg-accent ${aktiv ? "bg-blue-50" : ""}`}
                               title="Kunden übernehmen"
                             >
-                              <td className="px-2 py-1.5 text-center">
+                              <td className="px-2 py-1.5">
                                 <span className={`inline-block h-2.5 w-2.5 rounded-full ${aktiv ? "bg-kb-green" : "bg-muted-foreground/30"}`} />
                               </td>
                               <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{(c as any).kundennummer || "—"}</td>
                               <td className="px-2 py-1.5 font-medium">{c.name}</td>
+                              <td className="hidden px-2 py-1.5 text-muted-foreground md:table-cell">
+                                {(c as any).kundentyp === "geschaeftskunde" ? "Geschäftskunde"
+                                  : (c as any).kundentyp === "privatkunde" ? "Privatkunde" : "—"}
+                              </td>
                               <td className="hidden px-2 py-1.5 text-muted-foreground sm:table-cell">
-                                {[(c as any).plz, (c as any).ort].filter(Boolean).join(" ") || (c as any).adresse || "—"}
+                                {[(c as any).adresse, [(c as any).plz, (c as any).ort].filter(Boolean).join(" ")].filter(Boolean).join(", ") || "—"}
                               </td>
                             </tr>
                           );
@@ -5765,7 +5916,8 @@ export default function InvoiceDetail() {
                   </table>
                 </div>
               </CardContent>
-            </Card>
+              </Card>
+            </div>
           )}
 
           </>)}
