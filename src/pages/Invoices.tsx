@@ -5,7 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter } from "lucide-react";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Textarea } from "@/components/ui/textarea";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 
 interface Invoice {
@@ -147,6 +148,12 @@ export default function Invoices() {
   const [searchQuery, setSearchQuery] = useState(searchParams.get("q") || "");
   const [showArchive, setShowArchive] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  // KingBill-Auswahlmodell: Klick markiert die Zeile (gelb), Doppelklick
+  // öffnet den Beleg; die Toolbar-Aktionen (Bearbeiten / Kopieren in … /
+  // Status ändern / Kommentare / Löschen) wirken auf die markierte Zeile.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [kommentarOpen, setKommentarOpen] = useState(false);
+  const [kommentarText, setKommentarText] = useState("");
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
   const [bankBic, setBankBic] = useState("");
@@ -218,14 +225,14 @@ export default function Invoices() {
   const fetchInvoices = async () => {
     const { data, error } = await supabase
       .from("invoices")
-      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer")
+      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer, betreff, kunde_adresse, kunde_plz, kunde_ort, leistungsdatum, leistungsdatum_bis, lieferadresse, notizen")
       .order("datum", { ascending: false })
       .order("created_at", { ascending: false });
 
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnungen konnten nicht geladen werden" });
     } else {
-      setInvoices((data || []).map(d => ({ ...d, mahnstufe: (d as any).mahnstufe || 0, gueltig_bis: (d as any).gueltig_bis || null, bezahlt_betrag: Number((d as any).bezahlt_betrag) || 0, archiviert: !!(d as any).archiviert })));
+      setInvoices(((data as any[]) || []).map(d => ({ ...d, mahnstufe: (d as any).mahnstufe || 0, gueltig_bis: (d as any).gueltig_bis || null, bezahlt_betrag: Number((d as any).bezahlt_betrag) || 0, archiviert: !!(d as any).archiviert })));
     }
     setLoading(false);
   };
@@ -700,47 +707,90 @@ export default function Invoices() {
           </DropdownMenu>
         </div>
 
-        {/* Ab sm: die gewohnten KingBill-Einzelknöpfe */}
+        {/* Ab sm: KingBill-Aktionsleiste — Neu | Bearbeiten | Kopieren in … |
+            Status ändern | Kommentare | Löschen. Die Aktionen wirken auf die
+            in der Liste MARKIERTE Zeile (Klick = markieren, Doppelklick =
+            öffnen) — exakt wie im Original. */}
         <div className="hidden sm:contents">
-          <KBToolbarButton
-            icon={Plus}
-            iconClassName="text-kb-green"
-            label="Neues Angebot"
-            onClick={() => navigate("/invoices/new?typ=angebot")}
-          />
-          <KBToolbarButton
-            icon={Plus}
-            iconClassName="text-kb-green"
-            label="Neue Rechnung"
-            onClick={() => navigate("/invoices/new?typ=rechnung")}
-          />
-          <KBToolbarButton
-            icon={Plus}
-            iconClassName="text-kb-green"
-            label="Neuer Lieferschein"
-            onClick={() => navigate("/invoices/new?typ=lieferschein")}
-          />
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <KBToolbarButton icon={ChevronDown} label="Weitere Belegart" title="Weitere Belegart wählen" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-64">
-              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=auftragsbestaetigung")}>
-                <FileText className="w-4 h-4 mr-2" /> Neue Auftragsbestätigung
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=anzahlungsrechnung")}>
-                <Receipt className="w-4 h-4 mr-2" /> Neue Anzahlungsrechnung
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=schlussrechnung")}>
-                <Receipt className="w-4 h-4 mr-2" /> Neue Schlussrechnung
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => navigate("/invoices/new?typ=gutschrift")}>
-                <Undo2 className="w-4 h-4 mr-2" /> Neue Gutschrift
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+          {(() => {
+            const sel = invoices.find((i) => i.id === selectedId) || null;
+            const brauchtAuswahl = () =>
+              toast({ title: "Kein Beleg markiert", description: "Bitte zuerst eine Zeile in der Liste anklicken." });
+            const neuTyp =
+              filterTyp === "angebot" ? "angebot" :
+              filterTyp === "lieferschein" ? "lieferschein" : "rechnung";
+            return (
+              <>
+                <KBToolbarButton
+                  icon={Plus}
+                  iconClassName="text-kb-green"
+                  label="Neu"
+                  onClick={() => navigate(`/invoices/new?typ=${neuTyp}`)}
+                  title={`Neuen Beleg anlegen (${neuTyp === "angebot" ? "Angebot" : neuTyp === "lieferschein" ? "Lieferschein" : "Rechnung"})`}
+                />
+                <KBToolbarButton
+                  icon={Pencil}
+                  iconClassName="text-kb-yellow"
+                  label="Bearbeiten"
+                  onClick={() => (sel ? navigate(`/invoices/${sel.id}`) : brauchtAuswahl())}
+                />
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <KBToolbarButton icon={CopyIcon} label="Kopieren in …" title="Markierten Beleg in einen neuen Beleg kopieren" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-64">
+                    {([
+                      ["angebot", "ein neues Angebot"],
+                      ["auftragsbestaetigung", "einen neuen Auftrag"],
+                      ["lieferschein", "einen neuen Lieferschein"],
+                      ["rechnung", "eine neue Rechnung"],
+                      ["gutschrift", "eine neue Gutschrift"],
+                    ] as const).map(([typ, label]) => (
+                      <DropdownMenuItem
+                        key={typ}
+                        onClick={() => (sel ? navigate(`/invoices/new?typ=${typ}&from_doc=${sel.id}`) : brauchtAuswahl())}
+                      >
+                        <FileText className="w-4 h-4 mr-2" /> {label}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <KBToolbarButton icon={CircleDot} iconClassName="text-kb-green" label="Status ändern" title="Status des markierten Belegs ändern" />
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-56">
+                    {sel ? (
+                      docMeta(sel).availableStatuses.map((s) => (
+                        <DropdownMenuItem key={s} onClick={() => handleStatusChange(sel.id, s, { stopPropagation: () => {} } as any)}>
+                          {statusLabels[s] || s}
+                        </DropdownMenuItem>
+                      ))
+                    ) : (
+                      <DropdownMenuItem disabled>Zuerst eine Zeile markieren</DropdownMenuItem>
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <KBToolbarButton
+                  icon={FileText}
+                  label="Kommentare"
+                  title="Kommentar/Notiz zum markierten Beleg"
+                  onClick={() => {
+                    if (!sel) return brauchtAuswahl();
+                    setKommentarText(((sel as any).notizen as string) || "");
+                    setKommentarOpen(true);
+                  }}
+                />
+                <KBToolbarButton
+                  icon={Trash2}
+                  label="Löschen"
+                  title="Markierten Beleg löschen"
+                  onClick={(e) => (sel ? handleDelete(sel.id, e as any) : brauchtAuswahl())}
+                />
+                <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
+              </>
+            );
+          })()}
         </div>
       </KBToolbar>
 
@@ -853,9 +903,29 @@ export default function Invoices() {
                 </Select>
               )}
 
-              {/* Anzahl-Zähler wie im KingBill-Original */}
-              <div className="border-t border-border pt-2 text-sm font-bold">
-                Anzahl: {loading ? "…" : filtered.length}
+              {/* Summen wie im KingBill-Original: Anzahl · Summe Netto · Summe Brutto
+                  — bezogen auf die aktuell GEFILTERTE Liste. */}
+              <div className="border-t border-border pt-2 text-sm space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Anzahl {filterTyp === "angebot" ? "Angebote" : filterTyp === "lieferschein" ? "Lieferscheine" : filterTyp === "storno" ? "Storni" : "Rechnungen"}</span>
+                  <span className="font-bold tabular-nums">{loading ? "…" : filtered.length}</span>
+                </div>
+                {filterTyp !== "lieferschein" && (
+                  <>
+                    <div className="flex justify-between">
+                      <span>Summe Netto</span>
+                      <span className="font-bold tabular-nums">
+                        € {filtered.reduce((s, i) => s + Number((i as any).netto_summe || 0), 0).toFixed(2)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Summe Brutto</span>
+                      <span className="font-bold tabular-nums">
+                        € {filtered.reduce((s, i) => s + Number(i.brutto_summe || 0), 0).toFixed(2)}
+                      </span>
+                    </div>
+                  </>
+                )}
               </div>
 
         {/* Kompakte Stats — kontextuell gefiltert */}
@@ -1125,103 +1195,95 @@ export default function Invoices() {
                 })}
               </div>
 
-              {/* ══ Desktop: KingBill-Grid ══ */}
+              {/* ══ Desktop: KingBill-Grid — Spalten wie im Original:
+                  Status·Datum·Betreff·Kundennumm·Kunde·Adresse·Plz·Ort·
+                  Leistungszeitraum·Lieferadresse·Projekt·Netto·Brutto·Kommentare.
+                  Klick markiert die Zeile GELB, Doppelklick öffnet den Beleg. */}
               <div className="hidden lg:block print:block overflow-x-auto">
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      {/* Status-Ampel-Punkt in der ersten Spalte (KingBill-Grid) */}
-                      <TableHead className="w-8"><span className="sr-only">Status-Ampel</span></TableHead>
-                      <TableHead>Nummer</TableHead>
-                      <TableHead>Kunde</TableHead>
+                      <TableHead className="w-10">Status</TableHead>
                       <TableHead>Datum</TableHead>
-                      {/* Lieferscheine sind preislos → statt €-Spalten das Projekt zeigen */}
-                      {filterTyp === "lieferschein" && <TableHead>Projekt</TableHead>}
-                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Brutto</TableHead>}
-                      {filterTyp !== "angebot" && filterTyp !== "lieferschein" && <TableHead className="text-right">Bezahlt</TableHead>}
-                      <TableHead>Status</TableHead>
+                      <TableHead className="min-w-[12rem]">Betreff</TableHead>
+                      <TableHead>Kundennumm</TableHead>
+                      <TableHead>Kunde</TableHead>
+                      <TableHead className="hidden xl:table-cell">Adresse</TableHead>
+                      <TableHead className="hidden xl:table-cell">Plz</TableHead>
+                      <TableHead className="hidden xl:table-cell">Ort</TableHead>
+                      <TableHead className="hidden 2xl:table-cell">Leistungszeitraum</TableHead>
+                      <TableHead className="hidden 2xl:table-cell">Lieferadresse</TableHead>
+                      <TableHead className="hidden xl:table-cell">Projekt</TableHead>
+                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Summe Netto</TableHead>}
+                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Summe Brutto</TableHead>}
+                      <TableHead className="hidden xl:table-cell">Kommentare</TableHead>
                       <TableHead className="w-12 print:hidden"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {filtered.map((inv) => {
                       const { overdue, brutto, bezahlt, offen, availableStatuses, dotColor, warn } = docMeta(inv);
+                      const selektiert = selectedId === inv.id;
                       return (
                         <TableRow
                           key={inv.id}
-                          className={`cursor-pointer hover:bg-muted/50 ${overdue ? "bg-red-50" : ""}`}
-                          onClick={() => navigate(`/invoices/${inv.id}`)}
+                          className={`cursor-pointer ${
+                            selektiert
+                              ? "bg-[#FFF3B8] hover:bg-[#FFEE9E]"
+                              : `hover:bg-muted/50 ${overdue ? "bg-red-50" : ""}`
+                          }`}
+                          onClick={() => setSelectedId(inv.id)}
+                          onDoubleClick={() => navigate(`/invoices/${inv.id}`)}
                         >
-                          <TableCell className="w-8">
+                          <TableCell className="w-10">
                             <span
-                              className={`block h-2.5 w-2.5 rounded-full ${dotColor}`}
-                              title={statusLabels[inv.status] || inv.status}
+                              className={`block h-3 w-3 rounded-full border border-black/10 ${dotColor}`}
+                              title={`${statusLabels[inv.status] || inv.status}${warn ? ` — ${warn}` : ""}`}
                             />
                           </TableCell>
-                          <TableCell className="font-mono font-medium">
+                          <TableCell className="whitespace-nowrap">{formatDateShort(inv.datum)}</TableCell>
+                          <TableCell className="max-w-[18rem]">
                             <div className="flex items-center gap-2">
                               <TypBadge typ={inv.typ} />
-                              <span>{inv.nummer}</span>
+                              <span className="truncate font-medium">
+                                {((inv as any).betreff as string)?.trim() || inv.nummer}
+                              </span>
                             </div>
                           </TableCell>
-                          <TableCell>{inv.kunde_name}</TableCell>
-                          <TableCell>{formatDateShort(inv.datum)}</TableCell>
-                          {filterTyp === "lieferschein" && (
-                            <TableCell className="text-sm text-muted-foreground">
-                              {inv.project_id ? (projectNames[inv.project_id] || "—") : "—"}
-                            </TableCell>
+                          <TableCell className="font-mono text-xs text-muted-foreground">{(inv as any).kundennummer || "—"}</TableCell>
+                          <TableCell className="max-w-[12rem] truncate">{inv.kunde_name}</TableCell>
+                          <TableCell className="hidden max-w-[10rem] truncate text-muted-foreground xl:table-cell">{(inv as any).kunde_adresse || ""}</TableCell>
+                          <TableCell className="hidden text-muted-foreground xl:table-cell">{(inv as any).kunde_plz || ""}</TableCell>
+                          <TableCell className="hidden max-w-[8rem] truncate text-muted-foreground xl:table-cell">{(inv as any).kunde_ort || ""}</TableCell>
+                          <TableCell className="hidden whitespace-nowrap text-muted-foreground 2xl:table-cell">
+                            {(() => {
+                              const von = (inv as any).leistungsdatum as string | null;
+                              const bis = (inv as any).leistungsdatum_bis as string | null;
+                              if (!von) return "";
+                              return bis && bis !== von
+                                ? `${formatDateShort(von)} – ${formatDateShort(bis)}`
+                                : formatDateShort(von);
+                            })()}
+                          </TableCell>
+                          <TableCell className="hidden max-w-[9rem] truncate text-muted-foreground 2xl:table-cell">
+                            {(((inv as any).lieferadresse as string) || "").split("\n")[0]}
+                          </TableCell>
+                          <TableCell className="hidden max-w-[9rem] truncate text-muted-foreground xl:table-cell">
+                            {inv.project_id ? (projectNames[inv.project_id] || "") : ""}
+                          </TableCell>
+                          {filterTyp !== "lieferschein" && (
+                            <TableCell className="text-right tabular-nums">{Number(inv.netto_summe || 0).toFixed(2)}</TableCell>
                           )}
                           {filterTyp !== "lieferschein" && (
-                            <TableCell className="text-right font-medium">€ {brutto.toFixed(2)}</TableCell>
-                          )}
-                          {filterTyp !== "angebot" && filterTyp !== "lieferschein" && (
-                            <TableCell className="text-right">
-                              {PAYABLE_INVOICE_TYPES.has(inv.typ) ? (
-                                <div>
-                                  {inv.status === "bezahlt" ? (
-                                    <span className="text-green-600 font-medium">€ {brutto.toFixed(2)}</span>
-                                  ) : bezahlt > 0 ? (
-                                    <div>
-                                      <span className="text-yellow-600 font-medium">€ {bezahlt.toFixed(2)}</span>
-                                      <div className="text-xs text-muted-foreground">offen: € {offen.toFixed(2)}</div>
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
+                            <TableCell className="text-right font-medium tabular-nums">
+                              {brutto.toFixed(2)}
+                              {PAYABLE_INVOICE_TYPES.has(inv.typ) && bezahlt > 0 && inv.status !== "bezahlt" && (
+                                <div className="text-[10px] font-normal text-muted-foreground">offen: € {offen.toFixed(2)}</div>
                               )}
                             </TableCell>
                           )}
-                          <TableCell onClick={(e) => e.stopPropagation()}>
-                            <div className="flex items-center gap-2">
-                              {inv.status === "storniert" ? (
-                                <span className="text-xs font-medium text-red-700">
-                                  Storniert{(inv as any).storno_nummer ? ` (${(inv as any).storno_nummer})` : ""}
-                                </span>
-                              ) : (
-                                <Select
-                                  value={inv.status}
-                                  onValueChange={(val) => {
-                                    const fakeEvent = { stopPropagation: () => {} } as React.MouseEvent;
-                                    handleStatusChange(inv.id, val, fakeEvent);
-                                  }}
-                                >
-                                  <SelectTrigger className="h-7 text-xs font-medium border-0 shadow-none bg-transparent px-1 hover:bg-muted w-auto min-w-[90px]">
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {availableStatuses.map(s => (
-                                      <SelectItem key={s} value={s}>{statusLabels[s]}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                              )}
-                              {warn && (
-                                <span className="text-[10px] text-red-600 font-medium">{warn}</span>
-                              )}
-                            </div>
+                          <TableCell className="hidden max-w-[10rem] truncate text-xs text-muted-foreground xl:table-cell">
+                            {(((inv as any).notizen as string) || "").split("\n")[0]}
                           </TableCell>
                           <TableCell className="print:hidden" onClick={(e) => e.stopPropagation()}>
                             <DropdownMenu>
@@ -1300,6 +1362,42 @@ export default function Invoices() {
           onClose={() => setExportDialogOpen(false)}
           bankData={{ kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic }}
         />
+
+        {/* Kommentar/Notiz zum markierten Beleg (KingBill-Toolbar „Kommentare") */}
+        <Dialog open={kommentarOpen} onOpenChange={(o) => !o && setKommentarOpen(false)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Kommentar zum Beleg</DialogTitle>
+            </DialogHeader>
+            <Textarea
+              rows={5}
+              value={kommentarText}
+              onChange={(e) => setKommentarText(e.target.value)}
+              placeholder="Interner Kommentar/Notiz zu diesem Beleg …"
+            />
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={() => setKommentarOpen(false)}>Abbrechen</Button>
+              <Button
+                onClick={async () => {
+                  if (!selectedId) return;
+                  const { error } = await supabase
+                    .from("invoices")
+                    .update({ notizen: kommentarText.trim() || null })
+                    .eq("id", selectedId);
+                  if (error) {
+                    toast({ variant: "destructive", title: "Fehler", description: error.message });
+                    return;
+                  }
+                  setInvoices((prev) => prev.map((i) => i.id === selectedId ? ({ ...i, notizen: kommentarText.trim() } as any) : i));
+                  setKommentarOpen(false);
+                  toast({ title: "Kommentar gespeichert" });
+                }}
+              >
+                Speichern
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
         {/* Create Project Dialog (when offer accepted) */}
         <CreateProjectDialog
           open={createProjectDialogOpen}
