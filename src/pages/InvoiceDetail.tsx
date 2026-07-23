@@ -986,6 +986,7 @@ export default function InvoiceDetail() {
         kunde_anrede: "",
         kunde_titel: "",
         kundennummer: "",
+        kunde_kontaktperson: "",
       } as any));
       return;
     }
@@ -1002,6 +1003,9 @@ export default function InvoiceDetail() {
       kunde_anrede: customer.anrede || "",
       kunde_titel: customer.titel || "",
       kundennummer: customer.kundennummer || "",
+      // Kontaktperson des Kunden übernehmen (KingBill-Feld) — beim
+      // Kundenwechsel darf keine alte Kontaktperson stehen bleiben (Audit).
+      kunde_kontaktperson: (customer as any).ansprechpartner || "",
     };
     const hints: string[] = [];
     if (form.typ === "rechnung") {
@@ -1045,15 +1049,17 @@ export default function InvoiceDetail() {
   const [kundenListe, setKundenListe] = useState<CustomerData[]>([]);
   const [kundenSuche, setKundenSuche] = useState("");
   const [kundenGruppenFilter, setKundenGruppenFilter] = useState<string>("alle");
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("customers")
-        .select("id, name, kundennummer, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundentyp")
-        .order("name");
-      setKundenListe(((data as any[]) || []) as CustomerData[]);
-    })();
-  }, []);
+  // Als Funktion, damit die Liste nach Stammdaten-Änderungen (CustomerEdit-
+  // Dialog) neu geladen werden kann — sonst überschriebe ein Klick auf eine
+  // veraltete Zeile die frisch bearbeiteten Daten (Audit-Befund).
+  const ladeKundenListe = async () => {
+    const { data } = await supabase
+      .from("customers")
+      .select("id, name, kundennummer, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundentyp, ansprechpartner")
+      .order("name");
+    setKundenListe(((data as any[]) || []) as CustomerData[]);
+  };
+  useEffect(() => { void ladeKundenListe(); }, []);
   const kundenTreffer = (() => {
     const q = kundenSuche.trim().toLowerCase();
     let base = kundenGruppenFilter === "alle"
@@ -2063,11 +2069,20 @@ export default function InvoiceDetail() {
       }
       (updated[index] as any)[field] = value;
       if (field === "menge" || field === "einzelpreis" || field === "rabatt_prozent") {
-        const m = Number(updated[index].menge) || 0;
-        const p = Number(updated[index].einzelpreis) || 0;
-        const r = Number(updated[index].rabatt_prozent) || 0;
-        const total = m * p * (1 - r / 100);
-        updated[index].gesamtpreis = isFinite(total) ? round2(total) : 0;
+        // WICHTIG: Detailzeilen eines Aufbaus tragen bewusst gesamtpreis 0
+        // (der Betrag steckt in der Sammelzeile). Ohne diesen Guard setzte
+        // ein bloßes Fokus+Blur im Mengen-/Preisfeld gesamtpreis auf
+        // menge×einzelpreis — der Aufbau zählte doppelt in die Belegsumme
+        // (Audit-Befund).
+        if (istDetailzeile(updated[index])) {
+          updated[index].gesamtpreis = 0;
+        } else {
+          const m = Number(updated[index].menge) || 0;
+          const p = Number(updated[index].einzelpreis) || 0;
+          const r = Number(updated[index].rabatt_prozent) || 0;
+          const total = m * p * (1 - r / 100);
+          updated[index].gesamtpreis = isFinite(total) ? round2(total) : 0;
+        }
       }
       return updated;
     });
@@ -3424,6 +3439,17 @@ export default function InvoiceDetail() {
           skonto_tage: form.skonto_tage || 0,
           gueltig_bis: form.gueltig_bis || null,
           customer_id: form.customer_id || null,
+          // Beleg-Texte + KingBill-Kopffelder mitkopieren — vorher verlor das
+          // Duplikat Vortext/Schlusstext/Referenz/Zahlungstext etc. (Audit).
+          betreff: form.betreff || null,
+          kundennummer: (form as any).kundennummer || null,
+          custom_intro_text: (form as any).custom_intro_text?.trim() || null,
+          custom_closing_text: (form as any).custom_closing_text?.trim() || null,
+          lieferadresse: (form as any).lieferadresse?.trim() || null,
+          referenz: (form as any).referenz?.trim() || null,
+          zeige_faelligkeit: (form as any).zeige_faelligkeit !== false,
+          zahlungstext: (form as any).zahlungstext?.trim() || null,
+          kunde_kontaktperson: (form as any).kunde_kontaktperson?.trim() || null,
           // Duplikate sind bewusst unabhängig — kein parent_invoice_id und
           // keine Anzahlungs-Felder, damit das Duplikat nicht versehentlich
           // in einer Schlussrechnung als Abzug auftaucht.
@@ -3936,6 +3962,11 @@ export default function InvoiceDetail() {
     menge: item.menge,
     einheit: item.einheit,
     einzelpreis: item.einzelpreis,
+    // OHNE rabatt_prozent druckte die Vorschau/der Vorschau-Export bei
+    // Positionsrabatten eine ZU HOHE Zeilensumme (der PDF-Generator rechnet
+    // menge × einzelpreis × (1 − rabatt%) selbst nach) — Audit-Befund.
+    rabatt_prozent: Number(item.rabatt_prozent) || 0,
+    produktnummer: (item as any).produktnummer || "",
     gesamtpreis: item.gesamtpreis,
     mwst_exempt: !!(item as any).mwst_exempt,
     // Vorschau/PDF entscheiden anhand dieser Felder, was der Kunde sieht.
@@ -6988,15 +7019,9 @@ export default function InvoiceDetail() {
                 Storno-Beleg
               </Button>
             )}
-            {isLocked && form.typ === "angebot" && form.status !== "verrechnet" && (
-              <Button variant="destructive" onClick={async () => {
-                if (!confirm("Angebot wirklich löschen?")) return;
-                await supabase.from("invoice_items").delete().eq("invoice_id", invoiceId);
-                await supabase.from("invoices").delete().eq("id", invoiceId);
-                toast({ title: "Angebot gelöscht" });
-                navigate("/invoices");
-              }}>Löschen</Button>
-            )}
+            {/* Toter Löschen-Button entfernt: Angebote sind nie isLocked
+                (RECHNUNGSARTIGE_TYPEN), die Bedingung war unerfüllbar (Audit).
+                Löschen läuft über Status & Aktionen. */}
             {isLocked ? (
               <>
                 <Button onClick={handleDownloadPdf} variant="outline" className="gap-2">
@@ -7553,7 +7578,12 @@ export default function InvoiceDetail() {
               kunde_telefon: cust.telefon || "",
               kunde_uid: cust.uid_nummer || "",
               kundennummer: cust.kundennummer || "",
+              kunde_kontaktperson: cust.ansprechpartner || "",
             } as any));
+            // Snapshot-Änderung MUSS als ungespeichert gelten (Audit) …
+            setIsDirty(true);
+            // … und die Kundenliste darf keine veralteten Zeilen zeigen.
+            void ladeKundenListe();
           }}
         />
 

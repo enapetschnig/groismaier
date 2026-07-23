@@ -293,7 +293,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           mwst_satz: Number(fd.mwst_satz) || 0, reverse_charge: !!fd.reverse_charge,
           rabatt_prozent: Number(fd.rabatt_prozent) || 0, rabatt_betrag: Number(fd.rabatt_betrag) || 0,
           skonto_prozent: Number(fd.skonto_prozent) || 0, skonto_tage: Number(fd.skonto_tage) || 0,
-          zahlungstext: fd.zahlungstext, betreff: fd.betreff,
+          zahlungstext: fd.zahlungstext, betreff: fd.betreff, lieferadresse: fd.lieferadresse,
         },
         its.map((it) => ({
           beschreibung: it.beschreibung || it.kurztext || "",

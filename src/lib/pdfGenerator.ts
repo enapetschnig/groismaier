@@ -283,10 +283,26 @@ export async function generateInvoicePdf(
   pdf.setFont("helvetica", "normal");
   pdf.setFontSize(10);
   pdf.setTextColor(0, 0, 0);
+  // Kontaktperson des Kunden — „z.H. …" im Anschriftenblock (KingBill-Feld).
+  const kundeKontaktperson = ((invoice as any).kunde_kontaktperson || "").trim();
+  if (kundeKontaktperson) { pdf.text(`z.H. ${kundeKontaktperson}`, ml, y + 2); y += 5; }
   if (invoice.kunde_adresse) { pdf.text(invoice.kunde_adresse, ml, y + 2); y += 5; }
   if (invoice.kunde_plz || invoice.kunde_ort) {
     pdf.text(`${invoice.kunde_plz || ""} ${invoice.kunde_ort || ""}`.trim(), ml, y + 2);
     y += 5;
+  }
+  // Abweichende Lieferadresse — klein unter der Anschrift (KingBill-Feld).
+  const lieferadresseText = ((invoice as any).lieferadresse || "").trim();
+  if (lieferadresseText) {
+    y += 1;
+    pdf.setFontSize(8);
+    pdf.setTextColor(100, 100, 100);
+    pdf.text("Lieferadresse:", ml, y + 2); y += 3.5;
+    pdf.setTextColor(0, 0, 0);
+    for (const zeile of lieferadresseText.split(/\n/).slice(0, 3)) {
+      pdf.text(zeile.trim(), ml, y + 2); y += 3.5;
+    }
+    pdf.setFontSize(10);
   }
 
   // Meta info (right side) – Informationsblock nach DIN 5008:

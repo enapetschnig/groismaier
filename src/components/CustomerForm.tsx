@@ -202,12 +202,14 @@ export function CustomerForm({
       setVatResult(data);
       if (data.valid) {
         toast({ title: "UID gültig", description: data.name ? `${data.name}` : "UID-Nummer ist gültig" });
-        if (data.name && !form.firmenname.trim()) {
-          onChange({ ...form, firmenname: data.name.trim() });
-        }
-        if (data.address && !form.adresse.trim()) {
-          onChange({ ...form, adresse: data.address.trim() });
-        }
+        // BEIDE Felder in EINEM onChange setzen — zwei Aufrufe spreaden
+        // dasselbe eingefrorene form-Prop, der zweite überschriebe den
+        // firmenname des ersten wieder mit dem alten Wert (Audit-Befund).
+        const next = { ...form };
+        let geaendert = false;
+        if (data.name && !form.firmenname.trim()) { next.firmenname = data.name.trim(); geaendert = true; }
+        if (data.address && !form.adresse.trim()) { next.adresse = data.address.trim(); geaendert = true; }
+        if (geaendert) onChange(next);
       } else {
         toast({ variant: "destructive", title: "UID ungültig", description: data.error || "UID-Nummer konnte nicht verifiziert werden" });
       }

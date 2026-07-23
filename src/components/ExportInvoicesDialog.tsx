@@ -157,14 +157,8 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
             if (!docTextsByTyp[inv.typ]) docTextsByTyp[inv.typ] = await loadDocumentTexts(inv.typ);
             const tageMatchExp = (inv.zahlungsbedingungen || "").match(/\d+/);
             const invoiceWithTexts = applyDocumentTextsToInvoice({
-              typ: inv.typ, nummer: inv.nummer, status: inv.status,
-              kunde_name: inv.kunde_name, kunde_adresse: inv.kunde_adresse,
-              kunde_plz: inv.kunde_plz, kunde_ort: inv.kunde_ort,
-              kunde_land: inv.kunde_land, kunde_email: inv.kunde_email,
-              kunde_telefon: inv.kunde_telefon, kunde_uid: inv.kunde_uid,
-              datum: inv.datum, faellig_am: inv.faellig_am,
-              leistungsdatum: inv.leistungsdatum, gueltig_bis: inv.gueltig_bis,
-              zahlungsbedingungen: inv.zahlungsbedingungen, notizen: inv.notizen,
+              // Komplette Zeile spreaden — neue Felder + Beleg-Texte mitnehmen (Audit).
+              ...(inv as any),
               netto_summe: Number(inv.netto_summe), mwst_satz: Number(inv.mwst_satz),
               mwst_betrag: Number(inv.mwst_betrag), brutto_summe: Number(inv.brutto_summe),
               bezahlt_betrag: Number(inv.bezahlt_betrag), rabatt_prozent: Number(inv.rabatt_prozent),
@@ -181,6 +175,11 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
                 kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
                 menge: Number(it.menge), einheit: it.einheit || "Stk.",
                 einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
+                rabatt_prozent: Number(it.rabatt_prozent) || 0,
+                produktnummer: it.produktnummer || "",
+                gruppe: it.gruppe || null,
+                auf_pdf: it.auf_pdf !== false,
+                ist_gruppensumme: !!it.ist_gruppensumme,
                 mwst_exempt: !!(it as any).mwst_exempt,
               })),
               bankData, logoUri, qrUri, firmenUid, layout

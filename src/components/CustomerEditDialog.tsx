@@ -234,7 +234,7 @@ export function CustomerEditDialog({ open, onClose, customerId, onSaved }: Custo
           <div className="py-10 text-center text-sm text-muted-foreground">Lädt…</div>
         ) : (
           <div className="p-4 sm:p-5">
-            <CustomerForm value={form} onChange={setForm} variant="full" />
+            <CustomerForm value={form} onChange={setForm} variant="full" editId={customerId} />
           </div>
         )}
       </DialogContent>

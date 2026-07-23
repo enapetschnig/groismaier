@@ -22,11 +22,14 @@ export function useInvoiceLayout() {
 
   const save = useCallback(async (newLayout: InvoiceLayoutSettings) => {
     setLayout(newLayout);
-    await supabase.from("app_settings").upsert({
+    const { error } = await supabase.from("app_settings").upsert({
       key: "invoice_layout",
       value: JSON.stringify(newLayout),
       updated_at: new Date().toISOString(),
     });
+    // Fehler dürfen nicht verschluckt werden — der Aufrufer zeigt sonst
+    // „Gespeichert" an, obwohl nichts geschrieben wurde (Audit-Befund).
+    if (error) throw new Error(error.message);
   }, []);
 
   return { layout, loading, save, reload: load };

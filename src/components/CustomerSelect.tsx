@@ -45,6 +45,8 @@ export interface CustomerData {
   uid_nummer?: string;
   kundennummer?: string;
   ansprechpartner?: string;
+  /** privatkunde | geschaeftskunde — für die UID-fehlt-Warnung im Beleg. */
+  kundentyp?: string;
 }
 
 interface CustomerSelectProps {
@@ -75,7 +77,7 @@ export function CustomerSelect({
     const { data } = await supabase
       .from("customers")
       .select(
-        "id, name, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundennummer, ansprechpartner"
+        "id, name, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundennummer, ansprechpartner, kundentyp"
       )
       .order("name");
     if (data) {
@@ -148,7 +150,7 @@ export function CustomerSelect({
         .from("customers")
         .insert(insertData as any)
         .select(
-          "id, name, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundennummer, ansprechpartner"
+          "id, name, anrede, titel, adresse, plz, ort, land, email, telefon, uid_nummer, kundennummer, ansprechpartner, kundentyp"
         )
         .single();
 

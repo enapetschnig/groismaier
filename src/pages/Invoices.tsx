@@ -347,14 +347,12 @@ export default function Invoices() {
       const docTexts = await loadDocumentTexts(inv.typ);
       const tageMatchDL = (inv.zahlungsbedingungen || "").match(/\d+/);
       const invoiceWithTexts = applyDocumentTextsToInvoice({
-        typ: inv.typ, nummer: inv.nummer, status: inv.status,
-        kunde_name: inv.kunde_name, kunde_adresse: inv.kunde_adresse,
-        kunde_plz: inv.kunde_plz, kunde_ort: inv.kunde_ort,
-        kunde_land: inv.kunde_land, kunde_email: inv.kunde_email,
-        kunde_telefon: inv.kunde_telefon, kunde_uid: inv.kunde_uid, kunde_anrede: inv.kunde_anrede || "", kunde_titel: inv.kunde_titel || "", reverse_charge: inv.reverse_charge || false,
-        datum: inv.datum, faellig_am: inv.faellig_am,
-        leistungsdatum: inv.leistungsdatum, gueltig_bis: inv.gueltig_bis,
-        zahlungsbedingungen: inv.zahlungsbedingungen, notizen: inv.notizen,
+        // KOMPLETTE Zeile spreaden — so kommen auch die neuen Felder
+        // (referenz, zeige_faelligkeit, zahlungstext, custom_*_text,
+        // lieferadresse, kunde_kontaktperson, kundennummer) mit aufs PDF
+        // und beleg-eigene Texte werden nicht mehr überschrieben (Audit).
+        ...(inv as any),
+        kunde_anrede: inv.kunde_anrede || "", kunde_titel: inv.kunde_titel || "", reverse_charge: inv.reverse_charge || false,
         netto_summe: Number(inv.netto_summe), mwst_satz: Number(inv.mwst_satz),
         mwst_betrag: Number(inv.mwst_betrag), brutto_summe: Number(inv.brutto_summe),
         bezahlt_betrag: Number(inv.bezahlt_betrag), rabatt_prozent: Number(inv.rabatt_prozent),
@@ -369,6 +367,13 @@ export default function Invoices() {
           kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
           menge: Number(it.menge), einheit: it.einheit || "Stk.",
           einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
+          // Positionsrabatt + Gruppen-/Sichtbarkeits-Felder MÜSSEN mit,
+          // sonst druckt der Generator falsche Summen bzw. Aufbauten doppelt.
+          rabatt_prozent: Number(it.rabatt_prozent) || 0,
+          produktnummer: it.produktnummer || "",
+          gruppe: it.gruppe || null,
+          auf_pdf: it.auf_pdf !== false,
+          ist_gruppensumme: !!it.ist_gruppensumme,
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout
@@ -426,14 +431,12 @@ export default function Invoices() {
       const docTexts = await loadDocumentTexts(inv.typ);
       const tageMatchDL = (inv.zahlungsbedingungen || "").match(/\d+/);
       const invoiceWithTexts = applyDocumentTextsToInvoice({
-        typ: inv.typ, nummer: inv.nummer, status: inv.status,
-        kunde_name: inv.kunde_name, kunde_adresse: inv.kunde_adresse,
-        kunde_plz: inv.kunde_plz, kunde_ort: inv.kunde_ort,
-        kunde_land: inv.kunde_land, kunde_email: inv.kunde_email,
-        kunde_telefon: inv.kunde_telefon, kunde_uid: inv.kunde_uid, kunde_anrede: inv.kunde_anrede || "", kunde_titel: inv.kunde_titel || "", reverse_charge: inv.reverse_charge || false,
-        datum: inv.datum, faellig_am: inv.faellig_am,
-        leistungsdatum: inv.leistungsdatum, gueltig_bis: inv.gueltig_bis,
-        zahlungsbedingungen: inv.zahlungsbedingungen, notizen: inv.notizen,
+        // KOMPLETTE Zeile spreaden — so kommen auch die neuen Felder
+        // (referenz, zeige_faelligkeit, zahlungstext, custom_*_text,
+        // lieferadresse, kunde_kontaktperson, kundennummer) mit aufs PDF
+        // und beleg-eigene Texte werden nicht mehr überschrieben (Audit).
+        ...(inv as any),
+        kunde_anrede: inv.kunde_anrede || "", kunde_titel: inv.kunde_titel || "", reverse_charge: inv.reverse_charge || false,
         netto_summe: Number(inv.netto_summe), mwst_satz: Number(inv.mwst_satz),
         mwst_betrag: Number(inv.mwst_betrag), brutto_summe: Number(inv.brutto_summe),
         bezahlt_betrag: Number(inv.bezahlt_betrag), rabatt_prozent: Number(inv.rabatt_prozent),
@@ -448,6 +451,13 @@ export default function Invoices() {
           kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
           menge: Number(it.menge), einheit: it.einheit || "Stk.",
           einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
+          // Positionsrabatt + Gruppen-/Sichtbarkeits-Felder MÜSSEN mit,
+          // sonst druckt der Generator falsche Summen bzw. Aufbauten doppelt.
+          rabatt_prozent: Number(it.rabatt_prozent) || 0,
+          produktnummer: it.produktnummer || "",
+          gruppe: it.gruppe || null,
+          auf_pdf: it.auf_pdf !== false,
+          ist_gruppensumme: !!it.ist_gruppensumme,
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout

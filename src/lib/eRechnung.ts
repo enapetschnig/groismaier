@@ -4,8 +4,10 @@
  * Erzeugt aus einem Beleg das strukturierte XML, das u. a. e-rechnung.gv.at
  * (Bund), Buchhaltungsprogramme (BMD, RZL …) und Peppol-Konverter einlesen.
  * Struktur und Element-REIHENFOLGE folgen exakt dem offiziellen Schema
- * http://www.ebinterface.at/schema/6p1/ (Invoice.xsd, Stand 2022-06-25) —
- * die Ausgabe dieses Generators wird im Repo-Test gegen das XSD validiert.
+ * http://www.ebinterface.at/schema/6p1/ (Invoice.xsd, Stand 2022-06-25).
+ * Die Ausgabe wurde bei der Entwicklung mit xmllint gegen das offizielle
+ * Invoice.xsd (austriapro) validiert (4 Szenarien: Normal mit Rabatt/Skonto,
+ * Reverse Charge, Schlussrechnung mit Anzahlungs-Abzug, Gutschrift).
  *
  * Beträge: unsere gesamte Pipeline ist netto-basiert mit EINEM USt-Satz je
  * Beleg (mwst_satz; 0 % bei Reverse Charge / steuerfrei).
@@ -56,6 +58,13 @@ export function countryCode(land: string): string {
     "schweiz": "CH", "switzerland": "CH", "ch": "CH",
     "italien": "IT", "italy": "IT", "it": "IT",
     "slowenien": "SI", "slovenia": "SI", "si": "SI",
+    "ungarn": "HU", "hungary": "HU", "hu": "HU",
+    "tschechien": "CZ", "czechia": "CZ", "cz": "CZ",
+    "slowakei": "SK", "slovakia": "SK", "sk": "SK",
+    "kroatien": "HR", "croatia": "HR", "hr": "HR",
+    "polen": "PL", "poland": "PL", "pl": "PL",
+    "frankreich": "FR", "niederlande": "NL", "belgien": "BE",
+    "liechtenstein": "LI", "luxemburg": "LU",
   };
   return map[l] || "AT";
 }
@@ -107,6 +116,8 @@ export interface ERechnungInvoice {
   skonto_tage?: number;
   zahlungstext?: string;
   betreff?: string;
+  /** Abweichende Lieferanschrift (Freitext) → Delivery/Description. */
+  lieferadresse?: string;
 }
 
 /** Belegtyp → ebInterface DocumentType. */
@@ -185,6 +196,10 @@ export function buildEbInterfaceXml(
     } else {
       x.push(`    <Date>${esc(von)}</Date>`);
     }
+    // Abweichende Lieferadresse (Freitext) als Delivery-Beschreibung.
+    if (invoice.lieferadresse?.trim()) {
+      x.push(`    <Description>Lieferadresse: ${esc(invoice.lieferadresse.trim().replace(/\s*\n\s*/g, ", "))}</Description>`);
+    }
     x.push(`  </Delivery>`);
   }
 
@@ -229,9 +244,13 @@ export function buildEbInterfaceXml(
   x.push(`  <Details>`);
   x.push(`    <ItemList>`);
   zeilen.forEach((it, i) => {
-    const menge = Number(it.menge) || 1;
+    // Menge mit 3 Nachkommastellen drucken (der Editor erlaubt 3) und den
+    // Einzelpreis gegen exakt die GEDRUCKTE Menge rechnen — sonst geht
+    // Quantity × UnitPrice ≠ LineItemAmount auf (Audit-Befund).
+    const mengeRoh = Number(it.menge) || 1;
+    const mengeStr = mengeRoh.toFixed(3);
+    const menge = Number(mengeStr) || 1;
     const zeilensumme = round2(Number(it.gesamtpreis) || 0);
-    // Effektiver Einzelpreis, damit Quantity × UnitPrice = LineItemAmount.
     const einzel = menge !== 0 ? zeilensumme / menge : zeilensumme;
     x.push(`      <ListLineItem>`);
     x.push(`        <PositionNumber>${i + 1}</PositionNumber>`);
@@ -239,7 +258,7 @@ export function buildEbInterfaceXml(
     if (it.produktnummer?.trim()) {
       x.push(`        <ArticleNumber ArticleNumberType="BillersArticleNumber">${esc(it.produktnummer)}</ArticleNumber>`);
     }
-    x.push(`        <Quantity Unit="${uneceUnit(it.einheit)}">${amt(menge)}</Quantity>`);
+    x.push(`        <Quantity Unit="${uneceUnit(it.einheit)}">${mengeStr}</Quantity>`);
     x.push(`        <UnitPrice>${einzel.toFixed(4)}</UnitPrice>`);
     x.push(`        <TaxItem>`);
     x.push(`          <TaxableAmount>${amt(zeilensumme)}</TaxableAmount>`);
@@ -298,7 +317,9 @@ export function buildEbInterfaceXml(
   // Zahlungsbedingungen (Fälligkeit + Skonto)
   const skontoP = Number(invoice.skonto_prozent) || 0;
   const skontoT = Number(invoice.skonto_tage) || 0;
-  if (invoice.faellig_am || (skontoP > 0 && skontoT > 0)) {
+  // Auch bei reinem Zahlungstext (ohne Fälligkeit/Skonto) den Block drucken —
+  // sonst ginge der beleg-eigene Text verloren (Audit-Befund).
+  if (invoice.faellig_am || (skontoP > 0 && skontoT > 0) || invoice.zahlungstext?.trim()) {
     x.push(`  <PaymentConditions>`);
     x.push(`    <DueDate>${esc(invoice.faellig_am || invoice.datum)}</DueDate>`);
     if (skontoP > 0 && skontoT > 0 && invoice.datum) {
