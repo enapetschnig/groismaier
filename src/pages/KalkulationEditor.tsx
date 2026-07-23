@@ -155,6 +155,14 @@ export default function KalkulationEditor() {
   const [uebernahmeSaving, setUebernahmeSaving] = useState(false);
   /** Zuletzt weggeklickte Positionsmenge — danach beim Speichern nicht erneut fragen. */
   const abgelehntRef = useRef("");
+  // Fortsetzung nach dem Katalog-Dialog (z. B. „Als Angebot übernehmen"):
+  // wird nach Übernahme ODER Ablehnen genau einmal ausgeführt.
+  const nachUebernahmeRef = useRef<null | (() => void)>(null);
+  const laufeNachUebernahme = () => {
+    const weiter = nachUebernahmeRef.current;
+    nachUebernahmeRef.current = null;
+    weiter?.();
+  };
 
   const dragIndexRef = useRef<number | null>(null);
 
@@ -441,6 +449,7 @@ export default function KalkulationEditor() {
   const schliesseUebernahme = () => {
     abgelehntRef.current = freiSignatur;
     setKatalogOpen(false);
+    laufeNachUebernahme();
   };
 
   const patchUebernahme = (i: number, patch: Partial<UebernahmeZeile>) =>
@@ -518,6 +527,7 @@ export default function KalkulationEditor() {
     setKatalogOpen(false);
     abgelehntRef.current = "";
     await katalog.reload();
+    laufeNachUebernahme();
     toast({
       title: "In den Katalog übernommen",
       description:
@@ -554,13 +564,24 @@ export default function KalkulationEditor() {
     setAngebotWarnOpen(false);
     await persist({ silent: true });
     sessionStorage.setItem("kalkulation_to_angebot", JSON.stringify({
-      betreff: name ? `Angebot – ${name}` : "Angebot lt. Kalkulation",
+      // KEIN "Angebot – "-Präfix: der Dokumenttitel heißt bereits
+      // „Angebot – ‹Betreff›" — sonst stünde „Angebot" doppelt am PDF.
+      betreff: name || "lt. Kalkulation",
       customer_id: customerId,
       // Herkunft: das Angebot merkt sich, aus welcher Kalkulation es stammt.
       kalkulation_id: id ?? null,
       items: mitSelbstkosten(rohItems, projekt),
     }));
-    navigate("/invoices/new?typ=angebot&from_kalkulation=1");
+    // Kundenwunsch: VOR dem Wechsel ins Angebot fragen, ob neu angelegte
+    // Positionen in den Katalog übernommen werden sollen. Danach (Übernahme
+    // oder Nein) geht es automatisch weiter ins Angebot.
+    const weiterInsAngebot = () => navigate("/invoices/new?typ=angebot&from_kalkulation=1");
+    if (freiePositionen.length > 0 && freiSignatur !== abgelehntRef.current) {
+      nachUebernahmeRef.current = weiterInsAngebot;
+      oeffneUebernahme();
+    } else {
+      weiterInsAngebot();
+    }
   };
 
   const handleSaveVorlage = async () => {

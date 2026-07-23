@@ -1050,15 +1050,29 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     // --- b) Detailzeilen ----------------------------------------------------
     // gesamtpreis IMMER 0: der Kunde zahlt die Sammelzeile, die Details sind
     // nur die Herleitung. Sonst würde jeder Aufbau doppelt in der Summe stehen.
-    const detail = (bezeichnung: string, betragRoh: number, menge?: number, einheit?: string) => {
+    //
+    // auchOhneBetrag: vom Nutzer BENANNTE Materialzeilen wandern auch mit
+    // 0 € ins Angebot (Kundenwunsch — z. B. Position, deren Preis erst im
+    // Angebot ergänzt wird). Die automatisch erzeugten Zeilen (Arbeitszeit,
+    // Fahrten, Kran …) erscheinen weiterhin nur mit Betrag, sonst füllte
+    // jeder Aufbau sich mit leeren Standardzeilen.
+    //
+    // Einheiten-Erhalt: Geht die Menge nicht centgenau auf, bleibt trotzdem
+    // die ECHTE Einheit/Menge aus der Kalkulation stehen (Detailzeilen
+    // drucken ohnehin keinen eigenen Betrag — der steckt in ek_preis);
+    // vorher fiel die Zeile fälschlich auf „Pauschale" zurück.
+    const detail = (bezeichnung: string, betragRoh: number, menge?: number, einheit?: string, auchOhneBetrag = false) => {
       const betrag = round2(betragRoh);
-      if (betrag <= 0 || !bezeichnung) return;
-      const auf = menge === undefined ? null : preisAufteilung(betrag, menge);
+      if (!bezeichnung) return;
+      if (betrag <= 0 && !auchOhneBetrag) return;
+      const mengeZahl = round2(num(menge));
+      const auf = betrag > 0 && menge !== undefined ? preisAufteilung(betrag, menge) : null;
+      const hatMenge = mengeZahl > 0;
       items.push({
         beschreibung: bezeichnung,
-        menge: auf ? auf.menge : 1,
-        einheit: auf ? (einheit || "Stk.") : "Pauschale",
-        einzelpreis: auf ? auf.einzelpreis : betrag,
+        menge: auf ? auf.menge : hatMenge ? mengeZahl : 1,
+        einheit: auf ? (einheit || "Stk.") : hatMenge ? (einheit || "Stk.") : "Pauschale",
+        einzelpreis: auf ? auf.einzelpreis : hatMenge ? round2(betrag / mengeZahl) : betrag,
         gesamtpreis: 0,
         gruppe, auf_pdf: false, ist_gruppensumme: false,
         ek_preis: betrag,
@@ -1070,13 +1084,15 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     // aber einen Betrag trägt, wird bewusst NICHT verschluckt: sonst fehlt im
     // Angebot Geld, das der Aufbau tatsächlich enthält (die Detailzeilen
     // müssen sich zur Sammelzeile aufaddieren). Sie bekommt einen neutralen
-    // Namen und ist im Editor sofort erkennbar.
+    // Namen und ist im Editor sofort erkennbar. Benannte Zeilen wandern auch
+    // OHNE Betrag mit (auchOhneBetrag).
     for (const mz of erg.material.zeilen) {
+      const hatName = !!mz.bezeichnung;
       const bezeichnung = mz.bezeichnung || "Sonstiges Material";
       if (mz.pauschal) {
-        detail(bezeichnung, mz.vkBetrag * faktor);
+        detail(bezeichnung, mz.vkBetrag * faktor, undefined, undefined, hatName);
       } else {
-        detail(bezeichnung, mz.vkBetrag * faktor, num(m.area), "m²");
+        detail(bezeichnung, mz.vkBetrag * faktor, num(m.area), "m²", hatName);
       }
     }
 

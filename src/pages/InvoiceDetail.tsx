@@ -561,6 +561,20 @@ export default function InvoiceDetail() {
     { position: 1, beschreibung: "", menge: 1, einheit: "Stk.", einzelpreis: 0, gesamtpreis: 0 },
   ]);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  // Mitarbeiter-Vorschläge für das Bearbeiter-Combo (Freitext + datalist).
+  const [employees, setEmployees] = useState<{ id: string; vorname: string; nachname: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("employees")
+        .select("id, vorname, nachname")
+        .eq("aktiv", true)
+        .order("vorname");
+      setEmployees(((data as any[]) || []).map((e) => ({
+        id: e.id, vorname: e.vorname || "", nachname: e.nachname || "",
+      })));
+    })();
+  }, []);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   // Aktive Mitarbeiter als Pool für den Ansprechpartner-Picker
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
@@ -1837,15 +1851,8 @@ export default function InvoiceDetail() {
     // Kapitel/Unterkapitel bewusst NICHT leeren — man erfasst meist mehrere
     // Positionen desselben Kapitels hintereinander.
   };
-  // „Preise sind Brutto" (Allgemein-Kopf): Eingabepreis der Maske ist brutto
-  // und wird beim Hinzufügen in netto umgerechnet — die gesamte Summen-
-  // Pipeline bleibt netto-basiert.
-  const maskPreisNetto = (() => {
-    const roh = toNumber(maskPreis, 0);
-    if (!(form as any).preise_brutto) return roh;
-    const satz = Number(form.mwst_satz) || 0;
-    return satz > 0 ? roh / (1 + satz / 100) : roh;
-  })();
+  // Maskenpreise sind IMMER netto („Preise sind Brutto" wurde entfernt).
+  const maskPreisNetto = toNumber(maskPreis, 0);
   const maskSummeNetto = round2(
     (toNumber(maskMenge, 0)) * round2(maskPreisNetto) * (1 - clamp(toNumber(maskRabatt, 0), 0, 100) / 100),
   );
@@ -4844,20 +4851,25 @@ export default function InvoiceDetail() {
                   </label>
                 </div>
 
-                {/* Zeile 4 — Bearbeiter/Ansprechpartner auf Kundenwunsch
-                    komplett entfernt (2026-07-23). */}
-                <div className="flex items-end pb-1">
-                  <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-kb-blue-dark"
-                      checked={!!(form as any).preise_brutto}
-                      onChange={(e) => updateField("preise_brutto" as any, e.target.checked)}
-                    />
-                    Preise sind Brutto
-                    <span className="text-xs text-muted-foreground">(Eingaben in der Artikelmaske inkl. MwSt)</span>
-                  </label>
+                {/* Zeile 4 — Bearbeiter: Freitext-Combo mit Mitarbeiter-
+                    Vorschlägen; neue Bearbeiter einfach direkt eintippen.
+                    Rein intern (wird NICHT aufs Kundendokument gedruckt).
+                    „Preise sind Brutto" wurde auf Kundenwunsch entfernt. */}
+                <div>
+                  <Label>Bearbeiter</Label>
+                  <Input
+                    list="bearbeiter-liste"
+                    value={(form as any).ansprechpartner_name || ""}
+                    onChange={(e) => updateField("ansprechpartner_name" as any, e.target.value)}
+                    placeholder="Name wählen oder neu eintippen …"
+                  />
+                  <datalist id="bearbeiter-liste">
+                    {employees.map((emp) => (
+                      <option key={emp.id} value={`${emp.vorname} ${emp.nachname}`.trim()} />
+                    ))}
+                  </datalist>
                 </div>
+                <div />
               </div>
             </CardContent>
             </fieldset>
@@ -5899,7 +5911,7 @@ export default function InvoiceDetail() {
                     )}
                   </div>
                   <div className="sm:col-span-3">
-                    <Label className="text-xs font-bold">{(form as any).preise_brutto ? "Preis Brutto" : "Preis Netto"}</Label>
+                    <Label className="text-xs font-bold">Preis Netto</Label>
                     <Input type="text" inputMode="decimal" value={maskPreis} onChange={(e) => setMaskPreis(e.target.value)} placeholder="0,00" className="h-9 text-right font-semibold" />
                   </div>
                   <div className="sm:col-span-3">
