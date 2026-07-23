@@ -645,7 +645,10 @@ export async function generateInvoicePdf(
 
   const tableFoot: string[][] = [];
   const isReverseCharge = (invoice as any).reverse_charge === true;
-  if (!hidePrices) {
+  // KingBill „Summe"-Häkchen: _hideTotals unterdrückt den Summenblock auf
+  // Wunsch (Vorschau/Ausdruck ohne Betragsblock). Default = Summen sichtbar.
+  const hideTotals = (invoice as any)._hideTotals === true;
+  if (!hidePrices && !hideTotals) {
     // Block 1: Item-Rabatt-Aufschlüsselung (nur falls Item-Rabatte vorhanden)
     if (itemRabattTotal > 0) {
       tableFoot.push(footRow("Zwischensumme", fmtCurrency(positionenBrutto)));

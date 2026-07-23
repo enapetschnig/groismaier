@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown } from "lucide-react";
+import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown, Copy, Mail } from "lucide-react";
 import { KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
@@ -74,6 +74,9 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   const [generating, setGenerating] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // KingBill-Kopf: „Logo" / „Summe"-Häkchen steuern echt das erzeugte PDF.
+  const [showLogo, setShowLogo] = useState(true);
+  const [showSummary, setShowSummary] = useState(true);
 
   // Immer die aktuellsten Props verwenden (wie im Vorschau-Dialog).
   const formDataRef = useRef(formData);
@@ -177,10 +180,13 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
       });
 
       const blob = await generateInvoicePdf(
-        invoiceWithTexts,
+        // _hideTotals blendet den Summenblock aus, wenn „Summe" abgehakt ist.
+        { ...invoiceWithTexts, _hideTotals: !showSummary } as typeof invoiceWithTexts,
         its,
         settingsRef.current.bank,
-        logoRef.current,
+        // „Logo"-Häkchen: ohne Häkchen kein Logo im PDF (Präsenz des Logos ist
+        // im Generator der De-facto-Schalter).
+        showLogo ? logoRef.current : undefined,
         qrDataUri,
         settingsRef.current.uid,
         settingsRef.current.layout
@@ -201,8 +207,9 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     }
   };
 
-  // Debounced Auto-Refresh: 800 ms nach der letzten Änderung an Form/Positionen.
-  const fingerprint = JSON.stringify([formData, items]);
+  // Debounced Auto-Refresh: 800 ms nach der letzten Änderung an Form/Positionen
+  // (oder wenn Logo/Summe umgeschaltet werden).
+  const fingerprint = JSON.stringify([formData, items, showLogo, showSummary]);
   useEffect(() => {
     if (!isXl || !open) return;
     const t = window.setTimeout(() => {
@@ -246,6 +253,19 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     a.href = pdfUrl;
     a.download = `${fileName || "Beleg"}.pdf`;
     a.click();
+  };
+
+  // Per E-Mail: öffnet den Mail-Client mit Kundenadresse + Betreff vorbelegt.
+  // Das PDF lässt sich per Browser-mailto nicht anhängen — Hinweis im Text.
+  const kundeEmail = (formData as any)?.kunde_email as string | undefined;
+  const handleEmail = () => {
+    const to = (kundeEmail || "").trim();
+    const betreff = `${(formData as any)?.nummer || fileName || "Beleg"}`;
+    const body =
+      "Sehr geehrte Damen und Herren,\n\nanbei übersenden wir Ihnen den Beleg im Anhang.\n\n" +
+      "(Bitte das zuvor exportierte PDF anhängen.)\n\nMit freundlichen Grüßen";
+    window.location.href =
+      `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(betreff)}&body=${encodeURIComponent(body)}`;
   };
 
   return (
@@ -310,6 +330,43 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           </div>
         </div>
 
+        {/* KingBill-Optionsleiste: Logo / Summe + Druckvorlage / Variable */}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-muted/40 px-2.5 py-1.5 text-xs">
+          <label className="flex cursor-pointer items-center gap-1.5 select-none">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-kb-blue-dark"
+              checked={showLogo}
+              onChange={(e) => setShowLogo(e.target.checked)}
+            />
+            Logo
+          </label>
+          <label className="flex cursor-pointer items-center gap-1.5 select-none">
+            <input
+              type="checkbox"
+              className="h-3.5 w-3.5 accent-kb-blue-dark"
+              checked={showSummary}
+              onChange={(e) => setShowSummary(e.target.checked)}
+            />
+            Summe
+          </label>
+          <select
+            className="h-6 rounded border border-input bg-background px-1 text-xs"
+            defaultValue="standard"
+            title="Druckvorlage"
+          >
+            <option value="standard">Druckvorlage</option>
+          </select>
+          <select
+            className="h-6 rounded border border-input bg-background px-1 text-xs text-muted-foreground"
+            defaultValue=""
+            title="Platzhalter-Variable (kommt später)"
+            disabled
+          >
+            <option value="">Variable</option>
+          </select>
+        </div>
+
         <div className="flex-1 overflow-hidden bg-gray-200">
           {error ? (
             <div className="flex h-full items-center justify-center p-4">
@@ -352,11 +409,27 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         />
         <KBButton
           className="w-full"
+          icon={Copy}
+          label="Druck-Kopien"
+          onClick={handlePrint}
+          disabled={!pdfUrl}
+          title="Öffnet den Druckdialog — die Kopienzahl dort einstellen"
+        />
+        <KBButton
+          className="w-full"
           icon={FileDown}
           label="Export als PDF"
           onClick={handleExportPdf}
           disabled={!pdfUrl}
           title="Als PDF exportieren"
+        />
+        <KBButton
+          className="w-full"
+          icon={Mail}
+          label="Per E-Mail senden"
+          onClick={handleEmail}
+          disabled={!kundeEmail}
+          title={kundeEmail ? `E-Mail an ${kundeEmail} vorbereiten` : "Keine Kunden-E-Mail hinterlegt"}
         />
       </div>
     </div>
