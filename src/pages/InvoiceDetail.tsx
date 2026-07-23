@@ -1841,37 +1841,64 @@ export default function InvoiceDetail() {
     }]);
   };
 
-  // KingBill-Eingabemaske („3. Artikel"): Name oben + „Hinzufügen".
+  // KingBill-Eingabemaske („3. Artikel"): Kapitel/Unterkapitel + Name +
+  // Preis/Rabatt/Menge/Einheit + optional-Häkchen, dann „Hinzufügen".
+  const [maskKapitel, setMaskKapitel] = useState("");
+  const [maskUnterkapitel, setMaskUnterkapitel] = useState("");
   const [maskName, setMaskName] = useState("");
   const [maskMenge, setMaskMenge] = useState("1");
   const [maskEinheit, setMaskEinheit] = useState("Stk.");
   const [maskPreis, setMaskPreis] = useState("");
   const [maskRabatt, setMaskRabatt] = useState("");
+  const [maskOptional, setMaskOptional] = useState(false);
   const [maskAcOpen, setMaskAcOpen] = useState(false);
   const maskReset = () => {
     setMaskName(""); setMaskMenge("1"); setMaskEinheit("Stk."); setMaskPreis(""); setMaskRabatt("");
-    setMaskAcOpen(false);
+    setMaskOptional(false); setMaskAcOpen(false);
+    // Kapitel/Unterkapitel bewusst NICHT leeren — man erfasst meist mehrere
+    // Positionen desselben Kapitels hintereinander.
   };
+  // „Preise sind Brutto" (Allgemein-Kopf): Eingabepreis der Maske ist brutto
+  // und wird beim Hinzufügen in netto umgerechnet — die gesamte Summen-
+  // Pipeline bleibt netto-basiert.
+  const maskPreisNetto = (() => {
+    const roh = toNumber(maskPreis, 0);
+    if (!(form as any).preise_brutto) return roh;
+    const satz = Number(form.mwst_satz) || 0;
+    return satz > 0 ? roh / (1 + satz / 100) : roh;
+  })();
   const maskSummeNetto = round2(
-    (toNumber(maskMenge, 0)) * (toNumber(maskPreis, 0)) * (1 - clamp(toNumber(maskRabatt, 0), 0, 100) / 100),
+    (toNumber(maskMenge, 0)) * round2(maskPreisNetto) * (1 - clamp(toNumber(maskRabatt, 0), 0, 100) / 100),
+  );
+  // Vorhandene Kapitel (Gruppen) im Beleg — für das Kapitel-Dropdown.
+  const vorhandeneKapitel = Array.from(
+    new Set(items.map((it) => gruppeVon(it)).filter(Boolean)),
   );
   const addItemFromMask = () => {
     const name = maskName.trim();
     if (!name) return;
     const menge = toNumber(maskMenge, 1) || 1;
-    const preis = round2(toNumber(maskPreis, 0));
+    const preis = round2(maskPreisNetto);
     const rabatt = clamp(toNumber(maskRabatt, 0), 0, 100);
+    // Kapitel + Unterkapitel → Gruppe des Belegs (rendert im PDF als
+    // Kapitelüberschrift; Positionen mit Betrag bleiben voll summenwirksam).
+    const kapitel = maskKapitel.trim();
+    const unterkapitel = maskUnterkapitel.trim();
+    const gruppe = kapitel ? (unterkapitel ? `${kapitel} — ${unterkapitel}` : kapitel) : "";
     const neu: InvoiceItem = {
       position: 0, // wird in mergeItems neu vergeben
-      beschreibung: name,
-      kurztext: name,
+      // Optionale Position: Kennzeichnung im Text (wie optionale Aufbauten der
+      // Kalkulation — sie stehen mit vollem Betrag im Beleg).
+      beschreibung: maskOptional ? `${name} (optional)` : name,
+      kurztext: maskOptional ? `${name} (optional)` : name,
       langtext: "",
       menge,
       einheit: maskEinheit || "Stk.",
       einzelpreis: preis,
       rabatt_prozent: rabatt,
       gesamtpreis: round2(menge * preis * (1 - rabatt / 100)),
-    };
+      ...(gruppe ? { gruppe, auf_pdf: true, ist_gruppensumme: false } : {}),
+    } as InvoiceItem;
     setItemsDirty((prev) => mergeItems(prev, [neu]));
     maskReset();
   };
@@ -1896,17 +1923,24 @@ export default function InvoiceDetail() {
   };
   // Suche im Artikelliste-Reiter (Katalog).
   const [katalogSuche, setKatalogSuche] = useState("");
+  const [katalogGruppenFilter, setKatalogGruppenFilter] = useState<string>("alle");
+  const katalogGruppen = Array.from(
+    new Set(templates.map((t) => String((t as any).produktgruppe || "").trim()).filter(Boolean)),
+  ).sort();
   const katalogTreffer = (() => {
     const q = katalogSuche.trim().toLowerCase();
-    const base = q
-      ? templates.filter((t) => {
-          const kb = ((t as any).kurzbezeichnung || t.name || "").toLowerCase();
-          const pn = ((t as any).produktnummer || "").toLowerCase();
-          const pg = ((t as any).produktgruppe || "").toLowerCase();
-          const lb = ((t as any).langbezeichnung || t.beschreibung || "").toLowerCase();
-          return kb.includes(q) || pn.includes(q) || pg.includes(q) || lb.includes(q);
-        })
-      : templates;
+    let base = katalogGruppenFilter === "alle"
+      ? templates
+      : templates.filter((t) => String((t as any).produktgruppe || "").trim() === katalogGruppenFilter);
+    if (q) {
+      base = base.filter((t) => {
+        const kb = ((t as any).kurzbezeichnung || t.name || "").toLowerCase();
+        const pn = ((t as any).produktnummer || "").toLowerCase();
+        const pg = ((t as any).produktgruppe || "").toLowerCase();
+        const lb = ((t as any).langbezeichnung || t.beschreibung || "").toLowerCase();
+        return kb.includes(q) || pn.includes(q) || pg.includes(q) || lb.includes(q);
+      });
+    }
     return base.slice(0, 100);
   })();
 
@@ -5932,9 +5966,34 @@ export default function InvoiceDetail() {
           <Card className="kb-panel">
             <CardContent className="pt-4">
               <fieldset disabled={isLocked} className="min-w-0 space-y-3">
+                {/* Zeile 1 wie KingBill: Kapitel | Unterkapitel */}
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label className="text-xs">Kapitel</Label>
+                    <Input
+                      list="mask-kapitel-liste"
+                      value={maskKapitel}
+                      onChange={(e) => setMaskKapitel(e.target.value)}
+                      placeholder="Aus Liste wählen …"
+                      className="h-9"
+                    />
+                    <datalist id="mask-kapitel-liste">
+                      {vorhandeneKapitel.map((g) => <option key={g} value={g} />)}
+                    </datalist>
+                  </div>
+                  <div>
+                    <Label className="text-xs">Unterkapitel</Label>
+                    <Input
+                      value={maskUnterkapitel}
+                      onChange={(e) => setMaskUnterkapitel(e.target.value)}
+                      className="h-9"
+                    />
+                  </div>
+                </div>
+                {/* Zeile 2: Name (fett wie im Original) | Preis | Rabatt */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                   <div className="relative sm:col-span-6">
-                    <Label className="text-xs">Artikelname</Label>
+                    <Label className="text-xs font-bold">Name</Label>
                     <Input
                       value={maskName}
                       onChange={(e) => { setMaskName(e.target.value); setMaskAcOpen(true); }}
@@ -5962,36 +6021,49 @@ export default function InvoiceDetail() {
                       </div>
                     )}
                   </div>
-                  <div className="sm:col-span-2">
-                    <Label className="text-xs">Menge</Label>
-                    <Input type="text" inputMode="decimal" value={maskMenge} onChange={(e) => setMaskMenge(e.target.value)} className="h-9" />
+                  <div className="sm:col-span-3">
+                    <Label className="text-xs font-bold">{(form as any).preise_brutto ? "Preis Brutto" : "Preis Netto"}</Label>
+                    <Input type="text" inputMode="decimal" value={maskPreis} onChange={(e) => setMaskPreis(e.target.value)} placeholder="0,00" className="h-9 text-right font-semibold" />
                   </div>
-                  <div className="sm:col-span-2">
-                    <Label className="text-xs">Einheit</Label>
-                    <Input value={maskEinheit} onChange={(e) => setMaskEinheit(e.target.value)} className="h-9" />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <Label className="text-xs">Preis Netto</Label>
-                    <Input type="text" inputMode="decimal" value={maskPreis} onChange={(e) => setMaskPreis(e.target.value)} placeholder="0,00" className="h-9" />
+                  <div className="sm:col-span-3">
+                    <Label className="text-xs">Rabatt in %</Label>
+                    <Input type="text" inputMode="decimal" value={maskRabatt} onChange={(e) => setMaskRabatt(e.target.value)} placeholder="0,00" className="h-9 text-right" />
                   </div>
                 </div>
+                {/* Zeile 3 wie KingBill: Menge | Einheit | MwSt % | Summe Netto | optional */}
                 <div className="flex flex-wrap items-end gap-3">
                   <div className="w-24">
-                    <Label className="text-xs">Rabatt %</Label>
-                    <Input type="text" inputMode="decimal" value={maskRabatt} onChange={(e) => setMaskRabatt(e.target.value)} placeholder="0" className="h-9" />
+                    <Label className="text-xs">Menge</Label>
+                    <Input type="text" inputMode="decimal" value={maskMenge} onChange={(e) => setMaskMenge(e.target.value)} className="h-9 text-right" />
+                  </div>
+                  <div className="w-32">
+                    <Label className="text-xs">Einheit</Label>
+                    <Input list="mask-einheit-liste" value={maskEinheit} onChange={(e) => setMaskEinheit(e.target.value)} className="h-9" />
+                    <datalist id="mask-einheit-liste">
+                      {einheiten.map((e) => <option key={e} value={e} />)}
+                    </datalist>
                   </div>
                   {!hidePrices && (
                     <div className="w-20">
-                      <Label className="text-xs">MwSt %</Label>
-                      <div className="flex h-9 items-center rounded-md border bg-muted/40 px-2 text-sm text-muted-foreground">{form.mwst_satz} %</div>
+                      <Label className="text-xs">MwSt. %</Label>
+                      <div className="flex h-9 items-center justify-end rounded-md border bg-muted/40 px-2 text-sm text-muted-foreground tabular-nums">{form.mwst_satz}</div>
                     </div>
                   )}
                   <div className="min-w-[8rem]">
                     <Label className="text-xs">Summe Netto</Label>
-                    <div className="flex h-9 items-center rounded-md border bg-muted/40 px-2 text-sm font-semibold tabular-nums">€ {eur(maskSummeNetto)}</div>
+                    <div className="flex h-9 items-center justify-end rounded-md border bg-muted/40 px-2 text-sm font-semibold tabular-nums">{eur(maskSummeNetto)}</div>
                   </div>
+                  <label className="flex h-9 cursor-pointer select-none items-center gap-1.5 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-kb-blue-dark"
+                      checked={maskOptional}
+                      onChange={(e) => setMaskOptional(e.target.checked)}
+                    />
+                    optional
+                  </label>
                   <div className="ml-auto flex gap-2">
-                    <KBButton icon={X} label="Abbrechen" onClick={maskReset} />
+                    <KBButton icon={X} iconClassName="text-destructive" label="Abbrechen" onClick={maskReset} />
                     <KBButton icon={Plus} variant="green" label="Hinzufügen" onClick={addItemFromMask} disabled={!maskName.trim()} />
                   </div>
                 </div>
@@ -6013,37 +6085,61 @@ export default function InvoiceDetail() {
             />
             {artikelSubTab === "liste" && (
               <Card className="kb-panel rounded-tl-none">
-                <CardContent className="pt-4 space-y-3">
-                  <div className="relative">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      value={katalogSuche}
-                      onChange={(e) => setKatalogSuche(e.target.value)}
-                      placeholder="Artikel im Katalog suchen…"
-                      className="h-9 pl-8"
-                    />
+                <CardContent className="pt-4 space-y-2">
+                  {/* Werkzeugleiste + Filter nach Gruppe wie im Original */}
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="relative min-w-[14rem] flex-1">
+                      <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={katalogSuche}
+                        onChange={(e) => setKatalogSuche(e.target.value)}
+                        placeholder="Suche …"
+                        className="h-9 pl-8"
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Label className="whitespace-nowrap text-xs text-muted-foreground">Filter nach Gruppe</Label>
+                      <Select value={katalogGruppenFilter} onValueChange={setKatalogGruppenFilter}>
+                        <SelectTrigger className="h-9 w-44"><SelectValue placeholder="Aus Liste wählen …" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="alle">Alle</SelectItem>
+                          {katalogGruppen.map((g) => <SelectItem key={g} value={g}>{g}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                  <div className="max-h-[24rem] overflow-y-auto rounded-md border divide-y">
-                    {katalogTreffer.length === 0 ? (
-                      <p className="p-4 text-center text-sm text-muted-foreground">Keine Artikel gefunden.</p>
-                    ) : (
-                      katalogTreffer.map((t) => (
-                        <button
-                          key={t.id}
-                          type="button"
-                          disabled={isLocked}
-                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
-                          onClick={() => { void addFromTemplate(t); }}
-                          title="Zum Dokument hinzufügen"
-                        >
-                          <span className="w-16 shrink-0 truncate text-xs text-muted-foreground">{(t as any).produktgruppe || "—"}</span>
-                          <span className="w-16 shrink-0 truncate font-mono text-xs text-muted-foreground">{(t as any).produktnummer || ""}</span>
-                          <span className="min-w-0 flex-1 truncate">{(t as any).kurzbezeichnung || t.name}</span>
-                          <span className="shrink-0 tabular-nums">€ {eur(Number((t as any).netto_preis ?? (t as any).vk_netto) || t.einzelpreis || 0)}</span>
-                          <Plus className="h-4 w-4 shrink-0 text-kb-green" />
-                        </button>
-                      ))
-                    )}
+                  <div className="max-h-[24rem] overflow-y-auto rounded-md border">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-muted/60 text-xs text-muted-foreground">
+                        <tr>
+                          <th className="px-2 py-1.5 text-left font-medium">Gruppe</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Nummer</th>
+                          <th className="px-2 py-1.5 text-left font-medium">Produkt</th>
+                          <th className="px-2 py-1.5 text-right font-medium">Verkaufspreis</th>
+                          <th className="w-8 px-2 py-1.5"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {katalogTreffer.length === 0 ? (
+                          <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">Keine Artikel gefunden.</td></tr>
+                        ) : (
+                          katalogTreffer.map((t) => (
+                            <tr
+                              key={t.id}
+                              onClick={() => { if (!isLocked) void addFromTemplate(t); }}
+                              className={`hover:bg-accent ${isLocked ? "opacity-50" : "cursor-pointer"}`}
+                              title="Zum Dokument hinzufügen"
+                            >
+                              <td className="max-w-[8rem] truncate px-2 py-1.5 text-xs text-muted-foreground">{(t as any).produktgruppe || "—"}</td>
+                              <td className="px-2 py-1.5 font-mono text-xs text-muted-foreground">{(t as any).produktnummer || ""}</td>
+                              <td className="min-w-0 max-w-[18rem] truncate px-2 py-1.5">{(t as any).kurzbezeichnung || t.name}</td>
+                              <td className="px-2 py-1.5 text-right tabular-nums">€ {eur(Number((t as any).netto_preis ?? (t as any).vk_netto) || t.einzelpreis || 0)}</td>
+                              <td className="px-2 py-1.5"><Plus className="h-4 w-4 text-kb-green" /></td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     Klick fügt den Artikel dem Dokument hinzu. Für Mengen/Sets die Schaltfläche „Materialien“ oben.
