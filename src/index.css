@@ -197,6 +197,9 @@
   .kb-page {
     background: linear-gradient(180deg, hsl(var(--kb-page-top)) 0%, hsl(var(--kb-page-mid)) 45%, hsl(var(--kb-page-bottom)) 100%);
     background-attachment: fixed;
+    /* Windows-/KingBill-Schriftbild: Segoe UI bzw. Tahoma statt System-Sans —
+       gilt für alle KingBill-Masken (Feinschliff-Wunsch „gleiche Schriftart"). */
+    font-family: "Segoe UI", Tahoma, Verdana, system-ui, sans-serif;
   }
 
   .kb-panel {
@@ -243,9 +246,12 @@
     transition: filter 0.12s ease, box-shadow 0.12s ease, transform 0.05s ease;
   }
   .kb-btn:hover {
-    /* Hover: minimal dunkler (kein Aufhellen) */
+    /* KingBill-Hover: die Umrandung leuchtet GELB-ORANGE auf (wie im
+       Original, siehe Screenshot „+ Neu" mit gelber Umrandung). */
     background: linear-gradient(180deg, hsl(210 40% 97%) 0%, hsl(212 30% 86%) 100%);
-    border-color: hsl(213 28% 58%);
+    border-color: hsl(var(--kb-yellow));
+    outline: 2px solid hsl(var(--kb-yellow));
+    outline-offset: -1px;
   }
   .kb-btn:active {
     transform: translateY(1px);
@@ -315,6 +321,31 @@
     border-color: hsl(var(--kb-yellow));
     outline: 2px solid hsl(var(--kb-yellow));
     outline-offset: -1px;
+  }
+  /* Hover auf inaktiven Tabs: gleiches gelbes Aufleuchten wie bei Buttons. */
+  .kb-tab:hover {
+    border-color: hsl(var(--kb-yellow));
+    outline: 2px solid hsl(var(--kb-yellow));
+    outline-offset: -1px;
+  }
+
+  /* Hauptmenü-Kachel (KingBill-Startseite): großer Knopf, Icon OBEN,
+     Label darunter — auf jeden KBButton per className="kb-tile" anwendbar. */
+  .kb-tile {
+    flex-direction: column;
+    justify-content: center;
+    text-align: center;
+    gap: 0.375rem;
+    min-height: 5.25rem;
+    padding: 0.625rem 0.5rem;
+  }
+  .kb-tile > svg {
+    height: 1.875rem;
+    width: 1.875rem;
+  }
+  .kb-tile > span.truncate {
+    white-space: normal;
+    line-height: 1.15;
   }
 
   .kb-badge {

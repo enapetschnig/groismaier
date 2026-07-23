@@ -30,7 +30,8 @@ function KBBereich({ icon, title, children }: { icon: LucideIcon; title: string;
   return (
     <section className="flex flex-col gap-2">
       <KBSectionHeader icon={icon} title={title} />
-      {children}
+      {/* KingBill-Hauptmenü: große Kacheln im 2er-Raster (Icon oben, Label unten) */}
+      <div className="grid grid-cols-2 gap-2">{children}</div>
     </section>
   );
 }
@@ -310,7 +311,7 @@ export default function Index() {
           {canView("rechnungen") && (
             <KBBereich icon={FileText} title="Dokumente">
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neues Angebot"
@@ -322,7 +323,7 @@ export default function Index() {
               />
               <div className="my-1 h-px bg-white/70" />
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neue Rechnung"
@@ -334,7 +335,7 @@ export default function Index() {
               />
               <div className="my-1 h-px bg-white/70" />
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={FileText}
                 label="Dokumentenliste"
                 title="Alle Belege: Angebote, Aufträge, Lieferscheine, Rechnungen"
@@ -352,7 +353,7 @@ export default function Index() {
                 Anlegen soll überall ganz oben und sofort sichtbar sein.
               */}
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neuer Kunde"
@@ -362,7 +363,7 @@ export default function Index() {
                 buttonLabel="Kunde suchen"
                 onSearch={(q) => navigate(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
               />
-              <KBButton className="w-full" icon={BookUser} label="Kundenliste" onClick={() => navigate("/customers")} />
+              <KBButton className="w-full kb-tile" icon={BookUser} label="Kundenliste" onClick={() => navigate("/customers")} />
             </KBBereich>
           )}
 
@@ -371,7 +372,7 @@ export default function Index() {
             <KBBereich icon={Package} title="Artikel">
               {/* „+ Neuer Artikel" ganz oben — gleiche Reihenfolge wie bei Dokumenten/Kunden. */}
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neuer Artikel"
@@ -381,7 +382,7 @@ export default function Index() {
                 buttonLabel="Artikel suchen"
                 onSearch={(q) => navigate(`/materials${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
               />
-              <KBButton className="w-full" icon={Package} label="Artikelliste" onClick={() => navigate("/materials")} />
+              <KBButton className="w-full kb-tile" icon={Package} label="Artikelliste" onClick={() => navigate("/materials")} />
             </KBBereich>
           )}
 
@@ -389,7 +390,7 @@ export default function Index() {
           {canView("rechnungen") && (
             <KBBereich icon={Banknote} title="Finanzen">
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Receipt}
                 label="Offene Posten"
                 badge={offenePostenCount}
@@ -402,14 +403,14 @@ export default function Index() {
           {canView("materialien") && (
             <KBBereich icon={Calculator} title="Kalkulation">
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Plus}
                 iconClassName="text-kb-green"
                 label="Neue Kalkulation"
                 onClick={() => navigate("/auftragskalkulation?neu=1")}
               />
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={Calculator}
                 label="Kalkulationsliste"
                 onClick={() => navigate("/auftragskalkulation")}
@@ -422,7 +423,7 @@ export default function Index() {
             <KBBereich icon={BarChart3} title="Auswertung">
               {canView("nachkalkulation") && (
                 <KBButton
-                  className="w-full"
+                  className="w-full kb-tile"
                   icon={TrendingUp}
                   label="Nachkalkulation"
                   onClick={() => navigate("/nachkalkulation")}
@@ -432,7 +433,7 @@ export default function Index() {
                   bleibt über Plantafel → Jahr erreichbar) */}
               {canView("stundenauswertung") && (
                 <KBButton
-                  className="w-full"
+                  className="w-full kb-tile"
                   icon={BarChart3}
                   label="Stundenauswertung"
                   onClick={() => navigate("/hours-report")}
@@ -443,28 +444,28 @@ export default function Index() {
 
           {/* ── Betrieb — für alle sichtbar ───────────────────── */}
           <KBBereich icon={HardHat} title="Betrieb">
-            <KBButton className="w-full" icon={Clock} label="Zeiterfassung" onClick={() => navigate("/time-tracking")} />
+            <KBButton className="w-full kb-tile" icon={Clock} label="Zeiterfassung" onClick={() => navigate("/time-tracking")} />
             {canView("plantafel") && (
-              <KBButton className="w-full" icon={LayoutGrid} label="Plantafel" onClick={() => navigate("/schedule")} />
+              <KBButton className="w-full kb-tile" icon={LayoutGrid} label="Plantafel" onClick={() => navigate("/schedule")} />
             )}
             {canView("regieberichte") && (
-              <KBButton className="w-full" icon={FileText} label="Regieberichte" onClick={() => navigate("/disturbances")} />
+              <KBButton className="w-full kb-tile" icon={FileText} label="Regieberichte" onClick={() => navigate("/disturbances")} />
             )}
             {canView("eingangsrechnungen") && (
               <KBButton
-                className="w-full"
+                className="w-full kb-tile"
                 icon={FileDown}
                 label="Eingangsrechnungen"
                 onClick={() => navigate("/eingangsrechnungen")}
               />
             )}
-            <KBButton className="w-full" icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
+            <KBButton className="w-full kb-tile" icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
             {canView("fahrzeuge") && (
-              <KBButton className="w-full" icon={Truck} label="Fahrzeuge" onClick={() => navigate("/fahrzeuge")} />
+              <KBButton className="w-full kb-tile" icon={Truck} label="Fahrzeuge" onClick={() => navigate("/fahrzeuge")} />
             )}
-            <KBButton className="w-full" icon={BarChart3} label="Meine Stunden" onClick={() => navigate("/my-hours")} />
+            <KBButton className="w-full kb-tile" icon={BarChart3} label="Meine Stunden" onClick={() => navigate("/my-hours")} />
             {!isAdmin && (
-              <KBButton className="w-full" icon={FileText} label="Meine Dokumente" onClick={() => navigate("/my-documents")} />
+              <KBButton className="w-full kb-tile" icon={FileText} label="Meine Dokumente" onClick={() => navigate("/my-documents")} />
             )}
           </KBBereich>
 
@@ -473,7 +474,7 @@ export default function Index() {
             <KBBereich icon={Shield} title="Verwaltung">
               {canView("admin") && (
                 <KBButton
-                  className="w-full"
+                  className="w-full kb-tile"
                   icon={Shield}
                   label="Admin-Bereich"
                   badge={pendingUsersCount}
@@ -481,7 +482,7 @@ export default function Index() {
                 />
               )}
               {isAdmin && (
-                <KBButton className="w-full" icon={HardHat} label="Mitarbeiter" onClick={() => navigate("/employees")} />
+                <KBButton className="w-full kb-tile" icon={HardHat} label="Mitarbeiter" onClick={() => navigate("/employees")} />
               )}
             </KBBereich>
           )}

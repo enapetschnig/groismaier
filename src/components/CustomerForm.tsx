@@ -140,12 +140,14 @@ interface CustomerFormProps {
 const ANREDE_OPTIONS = ["Herr", "Frau", "Divers", "Familie"];
 
 /** Untere Tab-Leiste des KingBill-Kunden-Editors (variant="full"). */
-type KBEditorTab = "kommentar" | "rechnungsadresse" | "zahlung" | "daten";
+type KBEditorTab = "kommentar" | "rechnungsadresse" | "zahlung" | "zahlungen" | "daten";
 
-const KB_EDITOR_TABS: { val: KBEditorTab; label: string }[] = [
+const KB_EDITOR_TABS: { val: KBEditorTab; label: string; nurBestand?: boolean }[] = [
   { val: "kommentar", label: "Kommentar" },
   { val: "rechnungsadresse", label: "Rechnungsadresse" },
   { val: "zahlung", label: "Zahlungsbedingungen" },
+  // Erst bei BESTEHENDEN Kunden sinnvoll (editId): echte Zahlungseingänge.
+  { val: "zahlungen", label: "Erhaltene Zahlungen", nurBestand: true },
   { val: "daten", label: "Wichtige Daten" },
 ];
 
@@ -163,6 +165,25 @@ export function CustomerForm({
   const [vatResult, setVatResult] = useState<{ valid: boolean; name?: string; address?: string; error?: string } | null>(null);
   const [herkunftOptions, setHerkunftOptions] = useState<Array<{ wert: string; label: string }>>([]);
   const [kbTab, setKbTab] = useState<KBEditorTab>("kommentar");
+  // Erhaltene Zahlungen des Kunden (Reiter, nur bei editId) — lazy geladen.
+  const [zahlungen, setZahlungen] = useState<Array<{ id: string; datum: string; betrag: number; notizen: string | null; nummer: string }>>([]);
+  const [zahlungenGeladen, setZahlungenGeladen] = useState(false);
+  useEffect(() => {
+    if (kbTab !== "zahlungen" || !editId || zahlungenGeladen) return;
+    (async () => {
+      const { data } = await (supabase
+        .from("invoice_payments") as any)
+        .select("id, datum, betrag, notizen, invoice:invoices!inner(nummer, customer_id)")
+        .eq("invoice.customer_id", editId)
+        .order("datum", { ascending: false })
+        .limit(200);
+      setZahlungen(((data as any[]) || []).map((p) => ({
+        id: p.id, datum: p.datum, betrag: Number(p.betrag) || 0,
+        notizen: p.notizen, nummer: p.invoice?.nummer || "—",
+      })));
+      setZahlungenGeladen(true);
+    })();
+  }, [kbTab, editId, zahlungenGeladen]);
 
   useEffect(() => {
     if (variant !== "full") return;
@@ -605,7 +626,7 @@ export function CustomerForm({
       {/* ── KingBill-Tab-Leiste unten mit großem Inhaltsbereich ── */}
       <div className="border-t border-border pt-3">
         <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Weitere Kundendaten">
-          {KB_EDITOR_TABS.map((t) => (
+          {KB_EDITOR_TABS.filter((t) => !t.nurBestand || !!editId).map((t) => (
             <button
               key={t.val}
               type="button"
@@ -629,6 +650,45 @@ export function CustomerForm({
                 rows={6}
                 placeholder="Interne Notizen zum Kunden…"
               />
+            </div>
+          )}
+
+          {kbTab === "zahlungen" && (
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <Label className="text-sm font-medium">Erhaltene Zahlungen</Label>
+                <span className="text-sm font-bold tabular-nums">
+                  Summe: € {zahlungen.reduce((s, z) => s + z.betrag, 0).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+              <div className="max-h-64 overflow-y-auto rounded border bg-white">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-muted/60 text-left text-xs text-muted-foreground">
+                    <tr>
+                      <th className="px-2 py-1.5 font-medium">Datum</th>
+                      <th className="px-2 py-1.5 font-medium">Rechnung</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Betrag</th>
+                      <th className="px-2 py-1.5 font-medium">Kommentar</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {!zahlungenGeladen ? (
+                      <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">Lädt …</td></tr>
+                    ) : zahlungen.length === 0 ? (
+                      <tr><td colSpan={4} className="p-4 text-center text-muted-foreground">Noch keine Zahlungen erhalten.</td></tr>
+                    ) : (
+                      zahlungen.map((z) => (
+                        <tr key={z.id}>
+                          <td className="whitespace-nowrap px-2 py-1.5">{new Date(z.datum + "T12:00:00").toLocaleDateString("de-AT")}</td>
+                          <td className="px-2 py-1.5 font-mono text-xs">{z.nummer}</td>
+                          <td className="px-2 py-1.5 text-right tabular-nums">€ {z.betrag.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                          <td className="max-w-[14rem] truncate px-2 py-1.5 text-muted-foreground">{z.notizen || ""}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
 

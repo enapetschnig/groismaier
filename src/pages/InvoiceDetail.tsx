@@ -3974,7 +3974,10 @@ export default function InvoiceDetail() {
   // und die angedockte Live-Vorschau (xl+) erhalten exakt dieselben Daten.
   const previewFormData = {
     typ: form.typ,
-    nummer: form.nummer,
+    // KingBill: solange der Beleg nicht gespeichert ist, hat er KEINE echte
+    // Nummer — Vorschau/PDF zeigen „vorläufig". Die fortlaufende Nummer wird
+    // erst beim ersten Speichern gezogen (Nummernkreis bleibt lückenlos).
+    nummer: form.nummer || "vorläufig",
     status: form.status,
     kunde_name: form.kunde_name,
     kunde_adresse: form.kunde_adresse,
@@ -4171,7 +4174,7 @@ export default function InvoiceDetail() {
         onBack={handleBackNav}
         /* Am Handy einen kurzen Titel — der lange Titel drängt sonst die
            Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
-        title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen`) : `${typLabel} ${form.nummer}`}
+        title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen — Nr. vorläufig`) : `${typLabel} ${form.nummer}`}
         rightActions={
           !isLocked ? (
             <>
