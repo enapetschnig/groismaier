@@ -2221,12 +2221,15 @@ export default function InvoiceDetail() {
 
     if (!form.kunde_name.trim()) {
       setSaving(false);
+      setActiveStep(2); // Kunde-Schritt öffnen, sonst zeigt der Toast auf ein verstecktes Feld
       toast({ variant: "destructive", title: "Fehler", description: "Kundenname ist erforderlich" });
       return false;
     }
     // Validate ALL items, not just the first
     const validItems = items.filter(item => item.beschreibung.trim());
     if (validItems.length === 0) {
+      setSaving(false);
+      setActiveStep(3); // Artikel-Schritt öffnen
       toast({ variant: "destructive", title: "Fehler", description: "Mindestens eine Position mit Beschreibung ist erforderlich" });
       return false;
     }
@@ -2244,12 +2247,16 @@ export default function InvoiceDetail() {
 
     // Skonto-Prozent muss zwischen 0 und 100 sein
     if (form.skonto_prozent < 0 || form.skonto_prozent > 100) {
+      setSaving(false);
+      setActiveStep(1); setAllgemeinSubTab("zahlung");
       toast({ variant: "destructive", title: "Ungültiger Skonto", description: "Skonto muss zwischen 0% und 100% liegen" });
       return false;
     }
 
     // Rabatt-Prozent muss zwischen 0 und 100 sein
     if ((form.rabatt_prozent ?? 0) < 0 || (form.rabatt_prozent ?? 0) > 100) {
+      setSaving(false);
+      setActiveStep(1);
       toast({ variant: "destructive", title: "Ungültiger Rabatt", description: "Rabatt muss zwischen 0% und 100% liegen" });
       return false;
     }
@@ -2258,6 +2265,8 @@ export default function InvoiceDetail() {
     // Rabatt erhöhte die Belegsumme, wurde im PDF aber nicht ausgewiesen —
     // die gedruckten Positionen passten dann nicht zur Nettosumme.
     if ((form.rabatt_betrag ?? 0) < 0) {
+      setSaving(false);
+      setActiveStep(1);
       toast({ variant: "destructive", title: "Ungültiger Rabatt", description: "Ein Rabatt kann nicht negativ sein. Bitte 0 oder einen positiven Betrag eintragen." });
       return false;
     }
@@ -2266,6 +2275,8 @@ export default function InvoiceDetail() {
     // Netto-Summe nicht überschreiten. positionenNetto (oben) schließt
     // mwst_exempt-Zeilen bereits aus.
     if (form.rabatt_betrag > positionenNetto) {
+      setSaving(false);
+      setActiveStep(1);
       toast({ variant: "destructive", title: "Ungültiger Rabatt", description: `Rabatt-Betrag (€${eur(form.rabatt_betrag)}) darf die Netto-Summe (€${eur(positionenNetto)}) nicht überschreiten` });
       return false;
     }
@@ -2279,6 +2290,8 @@ export default function InvoiceDetail() {
 
     // Reverse Charge: UID-Nummer des Kunden ist Pflicht (§ 19 UStG)
     if ((form as any).reverse_charge && !form.kunde_uid?.trim()) {
+      setSaving(false);
+      setActiveStep(2); // UID-Feld liegt im Kunde-Schritt
       toast({ variant: "destructive", title: "Fehler", description: "Bei Reverse Charge ist die UID-Nummer des Kunden Pflicht" });
       return false;
     }
@@ -2319,6 +2332,7 @@ export default function InvoiceDetail() {
     // Der Hinweis oben (needsUid-Block) weist deutlich darauf hin; hier wird
     // nur noch gewarnt, gespeichert wird trotzdem.
     if (form.typ === "rechnung" && saveBrutto > 10000 && !form.kunde_uid?.trim()) {
+      setActiveStep(2); // UID-Feld liegt im Kunde-Schritt
       toast({ variant: "destructive", title: "Kunden-UID fehlt", description: "Bei Rechnungen über €10.000 ist die UID-Nummer des Empfängers gesetzlich vorgeschrieben." });
       setSaving(false);
       return false;
