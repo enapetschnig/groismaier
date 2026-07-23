@@ -62,7 +62,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getDocConfig } from "@/lib/documentTypes";
+import { getDocConfig, interpolateText } from "@/lib/documentTypes";
 import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
 import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
@@ -522,6 +522,11 @@ export default function InvoiceDetail() {
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, []);
+  // WICHTIG (KingBill-Tab-Umbau): Der Positions-Wrapper existiert nur, wenn
+  // Schritt 3 aktiv UND der Unter-Reiter „Artikel im Dokument" gewählt ist.
+  // Deshalb MUSS der Observer neu anhängen, sobald sich activeStep/artikelSubTab
+  // ändert — sonst bleibt posNarrow auf dem Start-Rateschätzer eingefroren und
+  // die Tabelle↔Karten-Umschaltung ist tot (Regressions-Befund Review).
   useEffect(() => {
     const el = posWrapRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -531,7 +536,7 @@ export default function InvoiceDetail() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [loading]);
+  }, [loading, activeStep, artikelSubTab]);
   const [invoiceId, setInvoiceId] = useState<string | null>(isNew ? null : id || null);
   /**
    * Optimistic Locking: der `updated_at`-Stand, den DIESER Tab geladen hat.
@@ -720,6 +725,28 @@ export default function InvoiceDetail() {
     })();
     return () => { abbruch = true; };
   }, [form.typ]);
+
+  // Standardtexte MIT aufgelösten Platzhaltern ({{kunde_name}}, {{…_nr}}, {{datum}})
+  // — sowohl für den Platzhalter-Hinweis als auch für „Standardtext einfügen".
+  // Sonst persistierte der Knopf rohe {{…}} in custom_intro/-closing_text, die
+  // (weil der Beleg-Wert Vorrang hat) NICHT mehr interpoliert würden und
+  // literal im PDF stünden (Regressions-Befund Review).
+  const textDefaultsAngezeigt = useMemo(() => {
+    const datumAT = (() => {
+      try { return form.datum ? new Date(form.datum + "T12:00:00").toLocaleDateString("de-AT") : ""; }
+      catch { return form.datum || ""; }
+    })();
+    const vars: Record<string, string | number | null | undefined> = {
+      kunde_name: form.kunde_name,
+      rechnung_nr: form.nummer, ab_nr: form.nummer, angebot_nr: form.nummer,
+      rechnung_datum: datumAT, ab_datum: datumAT, angebot_datum: datumAT, datum: datumAT,
+      prozent: (form as any).anzahlung_prozent ?? undefined,
+    };
+    return {
+      intro: textDefaults.intro ? interpolateText(textDefaults.intro, vars) : "",
+      closing: textDefaults.closing ? interpolateText(textDefaults.closing, vars) : "",
+    };
+  }, [textDefaults, form.kunde_name, form.nummer, form.datum, (form as any).anzahlung_prozent]);
 
   // ── Zahleneingabe (deutsches Komma) ───────────────────────────────────────
   // Während des Tippens muss der ROHTEXT im Feld stehen bleiben ("12," oder
@@ -3699,6 +3726,10 @@ export default function InvoiceDetail() {
       setAbCanHardDelete(canHard);
       setAbFollowups(followups);
       setAbStornoGrund("Auftrag aufgehoben");
+      // Der Dialog lebt im Allgemein-Tab (Lifecycle). Falls der Nutzer während
+      // des await den Tab gewechselt hat, wieder auf Schritt 1 schalten, sonst
+      // wäre der Dialog beim Öffnen nicht gemountet (Race-Befund Review).
+      setActiveStep(1);
       setAbActionOpen(true);
     } finally {
       setAbActionLoading(false);
@@ -4996,13 +5027,13 @@ export default function InvoiceDetail() {
                   <fieldset disabled={isLocked} className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="vortext">Vortext (erscheint über den Positionen)</Label>
-                      {textDefaults.intro && (
+                      {textDefaultsAngezeigt.intro && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-7 gap-1 text-xs"
-                          onClick={() => updateField("custom_intro_text" as any, textDefaults.intro)}
+                          onClick={() => updateField("custom_intro_text" as any, textDefaultsAngezeigt.intro)}
                         >
                           <RotateCcw className="h-3.5 w-3.5" /> Standardtext einfügen
                         </Button>
@@ -5012,7 +5043,7 @@ export default function InvoiceDetail() {
                       id="vortext"
                       rows={5}
                       value={(form as any).custom_intro_text || ""}
-                      placeholder={textDefaults.intro || "z.B. Herzlichen Dank für Ihr Interesse …"}
+                      placeholder={textDefaultsAngezeigt.intro || "z.B. Herzlichen Dank für Ihr Interesse …"}
                       onChange={(e) => updateField("custom_intro_text" as any, e.target.value)}
                       className="resize-y"
                     />
@@ -5027,13 +5058,13 @@ export default function InvoiceDetail() {
                   <fieldset disabled={isLocked} className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="schlusstext">Schlusstext (erscheint unter den Positionen)</Label>
-                      {textDefaults.closing && (
+                      {textDefaultsAngezeigt.closing && (
                         <Button
                           type="button"
                           variant="ghost"
                           size="sm"
                           className="h-7 gap-1 text-xs"
-                          onClick={() => updateField("custom_closing_text" as any, textDefaults.closing)}
+                          onClick={() => updateField("custom_closing_text" as any, textDefaultsAngezeigt.closing)}
                         >
                           <RotateCcw className="h-3.5 w-3.5" /> Standardtext einfügen
                         </Button>
@@ -5043,7 +5074,7 @@ export default function InvoiceDetail() {
                       id="schlusstext"
                       rows={5}
                       value={(form as any).custom_closing_text || ""}
-                      placeholder={textDefaults.closing || "z.B. Dieses Angebot ist 14 Tage gültig …"}
+                      placeholder={textDefaultsAngezeigt.closing || "z.B. Dieses Angebot ist 14 Tage gültig …"}
                       onChange={(e) => updateField("custom_closing_text" as any, e.target.value)}
                       className="resize-y"
                     />
