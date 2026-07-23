@@ -325,6 +325,12 @@ interface InvoiceData {
   custom_closing_text?: string;
   // Abweichende Lieferadresse (KingBill-Kundenschritt). Leer = Rechnungsadresse.
   lieferadresse?: string;
+  // KingBill-Kopffelder (Migration 20260723110000)
+  referenz?: string;
+  zeige_faelligkeit?: boolean;
+  preise_brutto?: boolean;
+  zahlungstext?: string;
+  kunde_kontaktperson?: string;
 }
 
 interface TemplateItem {
@@ -708,6 +714,11 @@ export default function InvoiceDetail() {
     custom_intro_text: "",
     custom_closing_text: "",
     lieferadresse: "",
+    referenz: "",
+    zeige_faelligkeit: true,
+    preise_brutto: false,
+    zahlungstext: "",
+    kunde_kontaktperson: "",
   });
 
   // Standard-Vor-/Schlusstext des aktuellen Dokumenttyps laden (für die
@@ -1214,6 +1225,11 @@ export default function InvoiceDetail() {
         custom_intro_text: (data as any).custom_intro_text || "",
         custom_closing_text: (data as any).custom_closing_text || "",
         lieferadresse: (data as any).lieferadresse || "",
+        referenz: (data as any).referenz || "",
+        zeige_faelligkeit: (data as any).zeige_faelligkeit !== false,
+        preise_brutto: !!(data as any).preise_brutto,
+        zahlungstext: (data as any).zahlungstext || "",
+        kunde_kontaktperson: (data as any).kunde_kontaktperson || "",
         anzahlung_prozent: opts?.anzahlungProzent ?? null,
         anzahlung_betrag: opts?.anzahlungBetrag ?? null,
         parent_invoice_id: fromDocId,
@@ -1665,6 +1681,12 @@ export default function InvoiceDetail() {
       custom_intro_text: (data as any).custom_intro_text || "",
       custom_closing_text: (data as any).custom_closing_text || "",
       lieferadresse: (data as any).lieferadresse || "",
+      // KingBill-Kopffelder (Migration 20260723110000)
+      referenz: (data as any).referenz || "",
+      zeige_faelligkeit: (data as any).zeige_faelligkeit !== false,
+      preise_brutto: !!(data as any).preise_brutto,
+      zahlungstext: (data as any).zahlungstext || "",
+      kunde_kontaktperson: (data as any).kunde_kontaktperson || "",
     } as any);
 
     const { data: itemsData } = await supabase
@@ -2662,6 +2684,12 @@ export default function InvoiceDetail() {
         custom_intro_text: (form as any).custom_intro_text?.trim() || null,
         custom_closing_text: (form as any).custom_closing_text?.trim() || null,
         lieferadresse: (form as any).lieferadresse?.trim() || null,
+        // KingBill-Kopffelder (ebenfalls Toleranz-Spalten)
+        referenz: (form as any).referenz?.trim() || null,
+        zeige_faelligkeit: (form as any).zeige_faelligkeit !== false,
+        preise_brutto: !!(form as any).preise_brutto,
+        zahlungstext: (form as any).zahlungstext?.trim() || null,
+        kunde_kontaktperson: (form as any).kunde_kontaktperson?.trim() || null,
       };
 
       // leistungsdatum_bis nur mitschicken, wenn der User es befüllt hat —
@@ -2715,6 +2743,7 @@ export default function InvoiceDetail() {
         "leistungsdatum_bis", "allgemeine_angaben_aktiv",
         "verrechnet_mit_invoice_id", "verrechnet_am", "kalkulation_id",
         "custom_intro_text", "custom_closing_text", "lieferadresse",
+        "referenz", "zeige_faelligkeit", "preise_brutto", "zahlungstext", "kunde_kontaktperson",
         ...aaFields,
       ];
       const isSchemaCacheMiss = (err: any) =>
@@ -3868,6 +3897,11 @@ export default function InvoiceDetail() {
     custom_intro_text: (form as any).custom_intro_text || "",
     custom_closing_text: (form as any).custom_closing_text || "",
     lieferadresse: (form as any).lieferadresse || "",
+    // KingBill-Kopffelder für die Vorschau/PDF-Pipeline
+    referenz: (form as any).referenz || "",
+    zeige_faelligkeit: (form as any).zeige_faelligkeit !== false,
+    zahlungstext: (form as any).zahlungstext || "",
+    kunde_kontaktperson: (form as any).kunde_kontaktperson || "",
   } as any;
 
   const previewItems = items.map((item, idx) => ({
@@ -4653,74 +4687,172 @@ export default function InvoiceDetail() {
           {/* ===== Schritt 1: Allgemein — Betreff, Details, Angaben (KingBill-Wizard) ===== */}
           <StepSectionHeader num={1} label="Allgemein" id="step-allgemein" />
 
-          {/* Betreff */}
+          {/* ── KingBill-Kopf: zweispaltig wie im Original ──────────────────
+              links  Betreff · Leistungszeitraum · Referenz · Bearbeiter
+              rechts Datum · Fällig am/Gültig bis · Zeige Fälligkeit · Preise sind Brutto */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <fieldset disabled={isLocked} className="min-w-0">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base">Betreff</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Textarea
-                value={form.betreff}
-                onChange={(e) => updateField("betreff", e.target.value)}
-                placeholder="z.B. Badezimmer-Sanierung EG — Angebot gemäß Besprechung vom..."
-                rows={2}
-                className="resize-none"
-              />
-            </CardContent>
-            </fieldset>
-          </Card>
-
-          {/* Rechnungsdetails */}
-          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
-            <fieldset disabled={isLocked} className="min-w-0">
-            <CardHeader>
-              <CardTitle>Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <CardContent className="pt-4">
+              <div className="grid grid-cols-1 gap-x-6 gap-y-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+                {/* Zeile 1 */}
+                <div>
+                  <Label>Betreff</Label>
+                  <Input
+                    value={form.betreff}
+                    onChange={(e) => updateField("betreff", e.target.value)}
+                    placeholder={`z.B. ${typLabel} ${form.nummer || ""}`.trim()}
+                  />
+                </div>
                 <div>
                   <Label>Datum</Label>
                   <Input type="date" value={form.datum} onChange={(e) => updateField("datum", e.target.value)} />
                 </div>
-                {getDocConfig(form.typ).showLeistungsdatum && (
-                  <div className="md:col-span-2">
-                    <Label>Leistungszeitraum</Label>
-                    {/* Am Handy untereinander: zwei native Datumsfelder
-                        nebeneinander schneiden auf 390 px das Kalender-Icon ab. */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div>
-                        <span className="mb-0.5 block text-[10px] text-muted-foreground sm:hidden">von</span>
+
+                {/* Zeile 2 */}
+                <div>
+                  {getDocConfig(form.typ).showLeistungsdatum ? (
+                    <>
+                      <Label>Leistungszeitraum</Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         <Input
                           type="date"
                           value={form.leistungsdatum || form.datum}
                           onChange={(e) => updateField("leistungsdatum", e.target.value)}
-                          placeholder="von"
                         />
-                      </div>
-                      <div>
-                        <span className="mb-0.5 block text-[10px] text-muted-foreground sm:hidden">bis (optional)</span>
                         <Input
                           type="date"
                           value={(form as any).leistungsdatum_bis || ""}
                           onChange={(e) => updateField("leistungsdatum_bis" as any, e.target.value)}
-                          placeholder="bis (optional)"
                           min={form.leistungsdatum || form.datum || undefined}
+                          title="bis (optional)"
                         />
                       </div>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">
-                      Beginnt automatisch am Rechnungsdatum. Enddatum nur ausfüllen, wenn die Leistung über mehrere Tage erbracht wurde.
-                    </p>
-                  </div>
-                )}
-                {form.typ === "angebot" && (
-                  <div>
-                    <Label>Gültig bis</Label>
-                    <Input type="date" value={form.gueltig_bis} onChange={(e) => updateField("gueltig_bis", e.target.value)} />
-                  </div>
-                )}
+                      <p className="text-[10px] text-muted-foreground mt-0.5">
+                        Beginnt automatisch am Belegdatum; Enddatum nur bei mehrtägiger Leistung.
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <Label className="text-muted-foreground">Leistungszeitraum</Label>
+                      <div className="flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                        entfällt bei {typLabel}
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div>
+                  {form.typ === "angebot" ? (
+                    <>
+                      <Label>Gültig bis</Label>
+                      <Input type="date" value={form.gueltig_bis} onChange={(e) => updateField("gueltig_bis", e.target.value)} />
+                    </>
+                  ) : (
+                    <>
+                      <Label>Fällig am</Label>
+                      <Input
+                        type="date"
+                        value={form.faellig_am}
+                        onChange={(e) => updateField("faellig_am", e.target.value)}
+                        disabled={form.typ === "rechnung" && form.zahlungsbedingungen !== "individuell"}
+                      />
+                      {form.typ === "rechnung" && form.zahlungsbedingungen !== "individuell" && (
+                        <p className="text-[10px] text-muted-foreground mt-0.5">
+                          Automatisch aus Datum + Zahlungsfrist (Reiter Zahlungsbedingungen).
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
+
+                {/* Zeile 3 */}
+                <div>
+                  <Label>Referenz</Label>
+                  <Input
+                    value={(form as any).referenz || ""}
+                    onChange={(e) => updateField("referenz" as any, e.target.value)}
+                    placeholder="z.B. Bestell-/Auftragsnummer des Kunden"
+                  />
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-kb-blue-dark"
+                      checked={(form as any).zeige_faelligkeit !== false}
+                      onChange={(e) => updateField("zeige_faelligkeit" as any, e.target.checked)}
+                    />
+                    Zeige Fälligkeit
+                    <span className="text-xs text-muted-foreground">(Fälligkeitszeile im Dokument)</span>
+                  </label>
+                </div>
+
+                {/* Zeile 4 */}
+                <div>
+                  <Label>Bearbeiter</Label>
+                  <Select
+                    value={(form as any).ansprechpartner_employee_id || "__none__"}
+                    onValueChange={(val) => {
+                      if (val === "__none__") {
+                        setForm(prev => ({
+                          ...prev,
+                          ansprechpartner_employee_id: null,
+                          ansprechpartner_name: "",
+                          ansprechpartner_telefon: "",
+                          ansprechpartner_email: "",
+                        } as any));
+                        if (!loading) setIsDirty(true);
+                        return;
+                      }
+                      const emp = employees.find(e => e.id === val);
+                      if (!emp) return;
+                      setForm(prev => ({
+                        ...prev,
+                        ansprechpartner_employee_id: emp.id,
+                        ansprechpartner_name: `${emp.vorname} ${emp.nachname}`.trim(),
+                        ansprechpartner_telefon: emp.telefon || "",
+                        ansprechpartner_email: emp.email || "",
+                      } as any));
+                      if (!loading) setIsDirty(true);
+                    }}
+                  >
+                    <SelectTrigger><SelectValue placeholder="Mitarbeiter auswählen…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">
+                        <span className="text-muted-foreground">— Keiner</span>
+                      </SelectItem>
+                      {employees.map(emp => (
+                        <SelectItem key={emp.id} value={emp.id}>
+                          {emp.vorname} {emp.nachname}
+                          {emp.position ? <span className="text-muted-foreground ml-1">— {emp.position}</span> : null}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end pb-1">
+                  <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-kb-blue-dark"
+                      checked={!!(form as any).preise_brutto}
+                      onChange={(e) => updateField("preise_brutto" as any, e.target.checked)}
+                    />
+                    Preise sind Brutto
+                    <span className="text-xs text-muted-foreground">(Eingaben in der Artikelmaske inkl. MwSt)</span>
+                  </label>
+                </div>
               </div>
+            </CardContent>
+            </fieldset>
+          </Card>
+
+          {/* Rechnungsdetails (Steuer/Rabatt) */}
+          <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
+            <fieldset disabled={isLocked} className="min-w-0">
+            <CardHeader>
+              <CardTitle>Steuer &amp; Rabatt</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
               {form.typ === "rechnung" && (
                 <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
                   <input
@@ -4901,20 +5033,7 @@ export default function InvoiceDetail() {
                               </SelectContent>
                             </Select>
                           </div>
-                          <div>
-                            <Label>Fällig am</Label>
-                            <Input
-                              type="date"
-                              value={form.faellig_am}
-                              onChange={(e) => updateField("faellig_am", e.target.value)}
-                              disabled={form.zahlungsbedingungen !== "individuell"}
-                            />
-                            {form.zahlungsbedingungen !== "individuell" && (
-                              <p className="text-[11px] text-muted-foreground mt-0.5">
-                                Automatisch aus Rechnungsdatum + Zahlungsfrist berechnet.
-                              </p>
-                            )}
-                          </div>
+                          {/* „Fällig am" steht wie bei KingBill im Allgemein-Kopf. */}
                         </div>
                         <div className="grid grid-cols-2 gap-2 max-w-sm">
                           <div>
@@ -4966,10 +5085,26 @@ export default function InvoiceDetail() {
                     ) : (
                       <p className="text-sm text-muted-foreground">
                         {form.typ === "angebot"
-                          ? "Zahlungsfrist und Skonto werden bei der Umwandlung in eine Rechnung festgelegt. Das Gültig-bis-Datum des Angebots steht oben unter „Details“."
-                          : "Für diesen Belegtyp sind keine Zahlungsbedingungen zu setzen."}
+                          ? "Zahlungsfrist und Skonto werden bei der Umwandlung in eine Rechnung festgelegt. Das Gültig-bis-Datum des Angebots steht oben im Kopf."
+                          : "Für diesen Belegtyp sind keine Zahlungsfristen zu setzen."}
                       </p>
                     )}
+                    {/* Zahlungsbedingungen-TEXT (KingBill zeigt hier den Textbaustein).
+                        Beleg-eigener Text; leer = Standardtext des Dokumenttyps. */}
+                    <div className="space-y-1.5 border-t pt-3">
+                      <Label htmlFor="zahlungstext">Zahlungsbedingungen-Text (erscheint im Dokument)</Label>
+                      <Textarea
+                        id="zahlungstext"
+                        rows={4}
+                        value={(form as any).zahlungstext || ""}
+                        onChange={(e) => updateField("zahlungstext" as any, e.target.value)}
+                        placeholder={"z.B. Zahlbar prompt und ohne Abzug.\n\nBei Überweisung mittels Internet-Banking tragen Sie bitte im Feld \"Verwendungszweck\" die Rechnungsnummer ein."}
+                        className="resize-y"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Leer lassen = der hinterlegte Standardtext des Dokumenttyps wird verwendet.
+                      </p>
+                    </div>
                   </fieldset>
                 )}
 

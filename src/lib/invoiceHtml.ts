@@ -340,15 +340,22 @@ export function buildInvoiceHtml(
     metaParts.push(
       `<div><span class="meta-label">${leistungLabel}</span><span class="meta-value">${leistungFormatted}</span></div>`
     );
-  if (showFaelligAm && faelligFormatted)
+  // „Zeige Fälligkeit"-Häkchen (KingBill-Kopf): false blendet die Zeile aus.
+  const zeigeFaelligkeitHtml = (invoice as any).zeige_faelligkeit !== false;
+  if (showFaelligAm && zeigeFaelligkeitHtml && faelligFormatted)
     metaParts.push(
       `<div><span class="meta-label">Fällig am</span><span class="meta-value">${faelligFormatted}</span></div>`
+    );
+  // Referenz (KingBill-Kopffeld)
+  if (String((invoice as any).referenz || "").trim())
+    metaParts.push(
+      `<div><span class="meta-label">Referenz</span><span class="meta-value">${escapeHtml(String((invoice as any).referenz).trim())}</span></div>`
     );
   if (gueltigBisFormatted)
     metaParts.push(
       `<div><span class="meta-label">Gültig bis</span><span class="meta-value">${gueltigBisFormatted}</span></div>`
     );
-  if (showFaelligAm && invoice.zahlungsbedingungen) {
+  if (showFaelligAm && zeigeFaelligkeitHtml && invoice.zahlungsbedingungen) {
     // Interne Werte auf benutzerfreundliches Label mappen. "individuell"
     // blenden wir aus — das Fälligkeitsdatum steht eh schon oben.
     const zbRawMeta = invoice.zahlungsbedingungen.trim();
@@ -415,6 +422,10 @@ export function buildInvoiceHtml(
     ? new Date((invoice.faellig_am as string) + "T12:00:00").toLocaleDateString("de-AT")
     : "";
   const renderRechnungClosing = () => {
+    // Beleg-eigener Zahlungsbedingungen-Text (KingBill-Reiter) hat Vorrang.
+    const eigenerZahlungstext = String((invoice as any).zahlungstext || "").trim();
+    if (eigenerZahlungstext) return eigenerZahlungstext;
+    if ((invoice as any).zeige_faelligkeit === false) return "";
     if (isZahlungSofort) return "Zahlbar sofort ohne Abzug.";
     if (isIndividuell && faelligFmt) return `Zahlbar bis ${faelligFmt} ohne Abzug.`;
     return `Wir bedanken uns für Ihren Auftrag und bitten um Überweisung des Rechnungsbetrages innerhalb von ${zahlungsTage} Tagen.`;

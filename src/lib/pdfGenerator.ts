@@ -315,7 +315,12 @@ export async function generateInvoicePdf(
     }
   }
   if (kundennummer) metaRows.push(["Kundennr.", kundennummer]);
-  if (showFaelligAm && invoice.faellig_am) metaRows.push(["Fällig am", fmtDate(invoice.faellig_am!)]);
+  // Referenz (KingBill-Kopffeld, z. B. Bestellnummer des Kunden).
+  const referenzText = String((invoice as any).referenz || "").trim();
+  if (referenzText) metaRows.push(["Referenz", referenzText]);
+  // „Zeige Fälligkeit"-Häkchen: false blendet die Fälligkeitszeile aus.
+  const zeigeFaelligkeit = (invoice as any).zeige_faelligkeit !== false;
+  if (showFaelligAm && zeigeFaelligkeit && invoice.faellig_am) metaRows.push(["Fällig am", fmtDate(invoice.faellig_am!)]);
   if (invoice.gueltig_bis) metaRows.push(["Gültig bis", fmtDate(invoice.gueltig_bis!)]);
 
   metaRows.forEach(([label, value]) => {
@@ -963,7 +968,14 @@ export async function generateInvoicePdf(
   } else if (docCfg.isInvoiceLike) {
     let closingText: string;
     const isIndividuell = zahlungsbedingungen.toLowerCase() === "individuell";
-    if (isZahlungSofort) {
+    // Beleg-eigener Zahlungsbedingungen-Text (KingBill-Reiter) hat Vorrang.
+    const eigenerZahlungstext = String((invoice as any).zahlungstext || "").trim();
+    if (eigenerZahlungstext) {
+      closingText = eigenerZahlungstext;
+    } else if ((invoice as any).zeige_faelligkeit === false) {
+      // „Zeige Fälligkeit" abgehakt: keine Zahlbar-Zeile drucken.
+      closingText = "";
+    } else if (isZahlungSofort) {
       closingText = "Zahlbar sofort ohne Abzug.";
     } else if (isIndividuell && invoice.faellig_am) {
       // Dropdown-Auswahl "Individuelles Datum" — das Fälligkeitsdatum
@@ -977,7 +989,7 @@ export async function generateInvoicePdf(
     } else {
       closingText = L.closing_text_invoice.replace("{{tage}}", "14");
     }
-    renderMultilineText(closingText, 1);
+    if (closingText) renderMultilineText(closingText, 1);
     pdf.setFontSize(7.5);
     pdf.setTextColor(0, 0, 0);
     renderMultilineText(`Bei E-Banking bitte als Zahlungsreferenz ${docCfg.label}snummer ${invoice.nummer || ""} und Kundennummer ${kundennummer || ""} eingeben.`, 4);
