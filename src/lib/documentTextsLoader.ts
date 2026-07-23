@@ -69,8 +69,18 @@ export function applyDocumentTextsToInvoice<T extends object>(
     ...extraVars,
   };
   const merged: any = { ...invoice };
-  if (texts.intro) merged.custom_intro_text = interpolateText(texts.intro, vars);
-  if (texts.closing) merged.custom_closing_text = interpolateText(texts.closing, vars);
-  if (texts.anzahlung_hinweis) merged.custom_anzahlung_hinweis = interpolateText(texts.anzahlung_hinweis, vars);
+  // Beleg-eigene Texte (KingBill Vortext/Schlusstext) haben Vorrang: nur wenn
+  // der Beleg KEINEN eigenen Text trägt, wird der Standardtext des Typs
+  // eingesetzt. Sonst überschriebe die Vorlage die manuelle Bearbeitung.
+  const hatEigenen = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  if (texts.intro && !hatEigenen(merged.custom_intro_text)) {
+    merged.custom_intro_text = interpolateText(texts.intro, vars);
+  }
+  if (texts.closing && !hatEigenen(merged.custom_closing_text)) {
+    merged.custom_closing_text = interpolateText(texts.closing, vars);
+  }
+  if (texts.anzahlung_hinweis && !hatEigenen(merged.custom_anzahlung_hinweis)) {
+    merged.custom_anzahlung_hinweis = interpolateText(texts.anzahlung_hinweis, vars);
+  }
   return merged as T;
 }

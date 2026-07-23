@@ -318,6 +318,13 @@ interface InvoiceData {
   // Dokumentweiter Aufschlag-Override: überschreibt den Material-Aufschlag
   // ALLER kalkulierten Positionen (NULL = jede Position nutzt ihren eigenen).
   kalkulation_aufschlag_override?: number | null;
+  // Beleg-eigene Texte (KingBill-Unter-Tabs Vortext/Schlusstext) — leer = der
+  // Standardtext des Dokumenttyps aus document_texts greift. pdfGenerator /
+  // invoiceHtml lesen die Overrides bereits (custom_intro_text/-closing_text).
+  custom_intro_text?: string;
+  custom_closing_text?: string;
+  // Abweichende Lieferadresse (KingBill-Kundenschritt). Leer = Rechnungsadresse.
+  lieferadresse?: string;
 }
 
 interface TemplateItem {
@@ -466,27 +473,14 @@ export default function InvoiceDetail() {
     navigate("/invoices");
   };
 
-  // KingBill-Schrittleiste: aktiver Schritt folgt der Scroll-Position
-  // (leichter Scroll-Spy — der oberste Abschnitt über der Marke gewinnt).
+  // KingBill-Schrittleiste: echte Tabs — es ist immer NUR der aktive Schritt
+  // sichtbar (kein Scroll-Spy mehr). Der Klick auf einen Wizard-Tab setzt
+  // schlicht den aktiven Schritt; die linke Spalte rendert nur dessen Panel.
   const [activeStep, setActiveStep] = useState(1);
-  useEffect(() => {
-    if (loading) return;
-    const onScroll = () => {
-      let current = 1;
-      WIZARD_STEPS.forEach((s, i) => {
-        const el = document.getElementById(s.id);
-        if (el && el.getBoundingClientRect().top <= 140) current = i + 1;
-      });
-      setActiveStep(current);
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => window.removeEventListener("scroll", onScroll);
-  }, [loading]);
-
   const scrollToStep = (step: (typeof WIZARD_STEPS)[number]) => {
     setActiveStep(step.num);
-    document.getElementById(step.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    // Nach oben, falls der Nutzer im aktuellen Panel weit gescrollt war.
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   /**
@@ -693,6 +687,9 @@ export default function InvoiceDetail() {
     ansprechpartner_name: "",
     ansprechpartner_telefon: "",
     ansprechpartner_email: "",
+    custom_intro_text: "",
+    custom_closing_text: "",
+    lieferadresse: "",
   });
 
   // ── Zahleneingabe (deutsches Komma) ───────────────────────────────────────
@@ -1010,6 +1007,10 @@ export default function InvoiceDetail() {
         ansprechpartner_name: data.ansprechpartner_name || "",
         ansprechpartner_telefon: data.ansprechpartner_telefon || "",
         ansprechpartner_email: data.ansprechpartner_email || "",
+        // Beleg-eigene Texte + Lieferadresse mit in den Folgebeleg übernehmen.
+        custom_intro_text: (data as any).custom_intro_text || "",
+        custom_closing_text: (data as any).custom_closing_text || "",
+        lieferadresse: (data as any).lieferadresse || "",
         anzahlung_prozent: opts?.anzahlungProzent ?? null,
         anzahlung_betrag: opts?.anzahlungBetrag ?? null,
         parent_invoice_id: fromDocId,
@@ -1457,6 +1458,10 @@ export default function InvoiceDetail() {
       parent_invoice_id: (data as any).parent_invoice_id || null,
       anzahlung_prozent: (data as any).anzahlung_prozent != null ? Number((data as any).anzahlung_prozent) : null,
       anzahlung_betrag: (data as any).anzahlung_betrag != null ? Number((data as any).anzahlung_betrag) : null,
+      // Beleg-eigene Texte (leer = Standardtext des Typs greift) + Lieferadresse.
+      custom_intro_text: (data as any).custom_intro_text || "",
+      custom_closing_text: (data as any).custom_closing_text || "",
+      lieferadresse: (data as any).lieferadresse || "",
     } as any);
 
     const { data: itemsData } = await supabase
@@ -2365,6 +2370,12 @@ export default function InvoiceDetail() {
         ansprechpartner_name: (form as any).ansprechpartner_name?.trim() || null,
         ansprechpartner_telefon: (form as any).ansprechpartner_telefon?.trim() || null,
         ansprechpartner_email: (form as any).ansprechpartner_email?.trim() || null,
+        // Beleg-eigene Texte (KingBill Vortext/Schlusstext) + Lieferadresse.
+        // Toleranz-Spalten: fehlt die Migration noch, werden sie beim Speichern
+        // verworfen (stripTolerantCols) statt den ganzen Save zu sprengen.
+        custom_intro_text: (form as any).custom_intro_text?.trim() || null,
+        custom_closing_text: (form as any).custom_closing_text?.trim() || null,
+        lieferadresse: (form as any).lieferadresse?.trim() || null,
       };
 
       // leistungsdatum_bis nur mitschicken, wenn der User es befüllt hat —
@@ -2417,6 +2428,7 @@ export default function InvoiceDetail() {
       const allTolerantCols = [
         "leistungsdatum_bis", "allgemeine_angaben_aktiv",
         "verrechnet_mit_invoice_id", "verrechnet_am", "kalkulation_id",
+        "custom_intro_text", "custom_closing_text", "lieferadresse",
         ...aaFields,
       ];
       const isSchemaCacheMiss = (err: any) =>
@@ -3560,6 +3572,12 @@ export default function InvoiceDetail() {
     // _parent_nummer/_parent_datum).
     _parent_nummer: parentRefInfo?.nummer || "",
     _parent_datum: parentRefInfo?.datum || "",
+    // Beleg-eigene Texte (Vortext/Schlusstext) + Lieferadresse — leer lassen,
+    // wenn nicht gesetzt, damit applyDocumentTextsToInvoice den Standardtext
+    // des Dokumenttyps einsetzt (per-Beleg-Wert gewinnt, siehe Loader-Fix).
+    custom_intro_text: (form as any).custom_intro_text || "",
+    custom_closing_text: (form as any).custom_closing_text || "",
+    lieferadresse: (form as any).lieferadresse || "",
   } as any;
 
   const previewItems = items.map((item, idx) => ({
@@ -3718,6 +3736,11 @@ export default function InvoiceDetail() {
         {/* KingBill-Layout: Editor links, permanente Beleg-Live-Vorschau rechts (xl+) */}
         <div className="xl:flex xl:items-start xl:gap-6">
         <div className="space-y-6 min-w-0 xl:flex-1">
+          {/* ═══════════ SCHRITT 1 · ALLGEMEIN ═══════════
+              Belegweiter Lifecycle (Kette / Status / Zahlungen / Mahnungen —
+              bewusst NICHT im disabled-fieldset, damit Storno/Zahlung auch am
+              gesperrten Beleg funktionieren) + Grunddaten des Belegs. */}
+          {activeStep === 1 && (<>
           {/* Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente */}
           {!isNew && chainRoot && (chainRoot.id !== invoiceId || chainChildren.length > 0) && (
             <Card className="kb-panel border-blue-200 bg-blue-50/40">
@@ -4819,6 +4842,9 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
+          </>)}
+          {/* ═══════════ SCHRITT 2 · KUNDE ═══════════ */}
+          {activeStep === 2 && (<>
           {/* ===== Schritt 2: Kunde — Projekt-Übernahme, Kundensuche & -daten ===== */}
           <StepSectionHeader num={2} label="Kunde" id="step-kunde" />
 
@@ -5271,6 +5297,10 @@ export default function InvoiceDetail() {
             </fieldset>
           </Card>
 
+          </>)}
+          {/* ═══════════ SCHRITT 3 · ARTIKEL ═══════════
+              Positionen + interner Verdienst-Block (Marge/Warnschwelle). */}
+          {activeStep === 3 && (<>
           {/* ===== Schritt 3: Positionen — Artikel, Mengen, Summen ===== */}
           <StepSectionHeader num={3} label="Artikel" id="step-positionen" />
 
@@ -6140,6 +6170,10 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
+          </>)}
+          {/* Notizen + Archiv gehören zu Schritt 1 (Allgemein/Beleg-Meta) —
+              erscheinen dort unter den Grunddaten. */}
+          {activeStep === 1 && (<>
           {/* Notizen */}
           <Card className={`kb-panel ${isLocked ? "opacity-80" : ""}`}>
             <CardHeader>
@@ -6178,7 +6212,10 @@ export default function InvoiceDetail() {
             </Card>
           )}
 
-          {/* Actions */}
+          </>)}
+          {/* Actions — belegweit (auf allen Schritten sichtbar, am Fuß der
+              linken Spalte). Enthält u.a. die Mobile-Vorschau (<xl) + PDF/
+              Drucken/Storno-Beleg/Löschen. */}
           <div className="flex flex-wrap justify-end gap-3">
             <Button variant="outline" onClick={handleBackNav}>
               {isLocked ? "Zurück" : "Abbrechen"}

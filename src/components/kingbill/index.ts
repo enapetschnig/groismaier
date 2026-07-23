@@ -15,3 +15,4 @@ export { KBToolbarButton, type KBToolbarButtonProps } from "./KBToolbarButton";
 export { KBToolbar, type KBToolbarProps } from "./KBToolbar";
 export { KBSectionHeader, type KBSectionHeaderProps } from "./KBSectionHeader";
 export { KBSearchRow, type KBSearchRowProps } from "./KBSearchRow";
+export { KBSubTabs, type KBSubTabsProps, type KBSubTabItem } from "./KBSubTabs";
