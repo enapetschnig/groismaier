@@ -563,7 +563,6 @@ export default function InvoiceDetail() {
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [templates, setTemplates] = useState<TemplateItem[]>([]);
   // Aktive Mitarbeiter als Pool für den Ansprechpartner-Picker
-  const [employees, setEmployees] = useState<{ id: string; vorname: string; nachname: string; telefon: string | null; email: string | null; position: string | null }[]>([]);
   const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
   const [templateSearch, setTemplateSearch] = useState("");
   const [templateFilter, setTemplateFilter] = useState("alle");
@@ -1364,7 +1363,6 @@ export default function InvoiceDetail() {
   useEffect(() => {
     fetchProjects();
     fetchTemplates();
-    fetchEmployees();
     // Load invoice layout settings + default betreff
     supabase.from("app_settings").select("key, value").in("key", ["invoice_layout", "default_betreff_rechnung", "default_betreff_angebot", "kalk_warn_marge_prozent"]).then(({ data }) => {
       if (data) {
@@ -1557,25 +1555,6 @@ export default function InvoiceDetail() {
     return () => { cancelled = true; };
   }, [id]);
 
-
-  const fetchEmployees = async () => {
-    // Aktive Mitarbeiter laden für den Ansprechpartner-Dropdown. `aktiv`
-    // ist die kanonische Quelle (wird per Trigger aus profiles.is_active
-    // synchronisiert) — `austritt_datum` filtert nicht alle Fälle.
-    const { data } = await supabase
-      .from("employees")
-      .select("id, vorname, nachname, telefon, email, position")
-      .eq("aktiv", true)
-      .order("vorname");
-    setEmployees(((data as any[]) || []).map(e => ({
-      id: e.id,
-      vorname: e.vorname || "",
-      nachname: e.nachname || "",
-      telefon: e.telefon || null,
-      email: e.email || null,
-      position: e.position || null,
-    })));
-  };
 
   const fetchProjects = async () => {
     const { data } = await supabase.from("projects").select("id, name, customer_id").not("status", "eq", "Abgeschlossen").order("name");
@@ -4865,49 +4844,8 @@ export default function InvoiceDetail() {
                   </label>
                 </div>
 
-                {/* Zeile 4 */}
-                <div>
-                  <Label>Bearbeiter</Label>
-                  <Select
-                    value={(form as any).ansprechpartner_employee_id || "__none__"}
-                    onValueChange={(val) => {
-                      if (val === "__none__") {
-                        setForm(prev => ({
-                          ...prev,
-                          ansprechpartner_employee_id: null,
-                          ansprechpartner_name: "",
-                          ansprechpartner_telefon: "",
-                          ansprechpartner_email: "",
-                        } as any));
-                        if (!loading) setIsDirty(true);
-                        return;
-                      }
-                      const emp = employees.find(e => e.id === val);
-                      if (!emp) return;
-                      setForm(prev => ({
-                        ...prev,
-                        ansprechpartner_employee_id: emp.id,
-                        ansprechpartner_name: `${emp.vorname} ${emp.nachname}`.trim(),
-                        ansprechpartner_telefon: emp.telefon || "",
-                        ansprechpartner_email: emp.email || "",
-                      } as any));
-                      if (!loading) setIsDirty(true);
-                    }}
-                  >
-                    <SelectTrigger><SelectValue placeholder="Mitarbeiter auswählen…" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__none__">
-                        <span className="text-muted-foreground">— Keiner</span>
-                      </SelectItem>
-                      {employees.map(emp => (
-                        <SelectItem key={emp.id} value={emp.id}>
-                          {emp.vorname} {emp.nachname}
-                          {emp.position ? <span className="text-muted-foreground ml-1">— {emp.position}</span> : null}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
+                {/* Zeile 4 — Bearbeiter/Ansprechpartner auf Kundenwunsch
+                    komplett entfernt (2026-07-23). */}
                 <div className="flex items-end pb-1">
                   <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
                     <input
@@ -5744,8 +5682,8 @@ export default function InvoiceDetail() {
               {(form as any).kundennummer && (
                 <p className="text-xs text-muted-foreground">Kundennr.: {(form as any).kundennummer}</p>
               )}
-              {/* „Ihr Ansprechpartner" wurde entfernt — der Bearbeiter
-                  wird im Allgemein-Kopf gewählt (KingBill-Feld „Bearbeiter"). */}
+              {/* Ansprechpartner/Bearbeiter-Funktion wurde komplett entfernt
+                  (Kundenwunsch 2026-07-23) — weder Eingabe noch PDF-Block. */}
 
               {/* Zahlungseinstellungen (vom Kunden) */}
               {form.typ === "rechnung" && (form.skonto_prozent > 0 || form.skonto_tage > 0 || (form as any).zahlungsbedingungen) && (

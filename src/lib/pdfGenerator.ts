@@ -333,27 +333,10 @@ export async function generateInvoicePdf(
     metaY += 5;
   });
 
-  // "Ihr Ansprechpartner bei uns" unter der Meta-Box. Wird NUR gerendert
-  // wenn auf dem Dokument explizit ein Ansprechpartner gesetzt ist —
-  // entweder per Mitarbeiter-Dropdown oder manuell eingetippt. Kein
-  // stiller Firmen-Default-Fallback mehr: wenn leer, wird kein Block
-  // angezeigt.
-  const aspName  = ((invoice as any).ansprechpartner_name  || "").trim();
-  const aspPhone = ((invoice as any).ansprechpartner_telefon || "").trim();
-  const aspEmail = ((invoice as any).ansprechpartner_email  || "").trim();
-  if (aspName || aspPhone || aspEmail) {
-    metaY += 2;
-    pdf.setFont("helvetica", "normal");
-    pdf.setFontSize(8);
-    pdf.setTextColor(100, 100, 100);
-    pdf.text("Ihr Ansprechpartner:", metaX, metaY);
-    metaY += 4;
-    pdf.setTextColor(0, 0, 0);
-    pdf.setFontSize(9);
-    if (aspName)  { pdf.text(aspName,  metaX, metaY); metaY += 4; }
-    if (aspPhone) { pdf.text(aspPhone, metaX, metaY); metaY += 4; }
-    if (aspEmail) { pdf.text(aspEmail, metaX, metaY); metaY += 4; }
-  }
+  // „Ihr Ansprechpartner"-Block wurde auf Kundenwunsch komplett entfernt
+  // (2026-07-23) — kein Ansprechpartner mehr auf den Dokumenten. Die
+  // ansprechpartner_*-Spalten bleiben in der DB (Altbelege), werden aber
+  // nicht mehr gerendert.
 
   // Etwas mehr Luft zwischen Empfänger und Dokumententitel als früher
   // (+10 statt +4), damit "Angebot – Betreff" nicht direkt am letzten

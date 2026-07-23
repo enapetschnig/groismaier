@@ -489,7 +489,7 @@ export default function Customers() {
                 )}
                 {(selectedCustomer as any).firmenname && <div><span className="text-muted-foreground">Firma:</span> {(selectedCustomer as any).firmenname}</div>}
                 {(selectedCustomer as any).branche && <div><span className="text-muted-foreground">Branche:</span> {(selectedCustomer as any).branche}</div>}
-                {selectedCustomer.ansprechpartner && <div><span className="text-muted-foreground">Ansprechpartner:</span> {selectedCustomer.ansprechpartner}</div>}
+                {selectedCustomer.ansprechpartner && <div><span className="text-muted-foreground">Kontaktperson:</span> {selectedCustomer.ansprechpartner}</div>}
                 {selectedCustomer.email && <div><span className="text-muted-foreground">E-Mail:</span> {selectedCustomer.email}</div>}
                 {selectedCustomer.telefon && <div><span className="text-muted-foreground">Telefon:</span> {selectedCustomer.telefon}</div>}
                 {(selectedCustomer as any).website && <div><span className="text-muted-foreground">Website:</span> {(selectedCustomer as any).website}</div>}
