@@ -46,6 +46,13 @@ interface InvoiceLivePreviewProps {
   /** Netto/Brutto-Anzeige im Panel-Kopf (KingBill-Stil); weglassen bei preislosen Belegen (Lieferschein). */
   netto?: number;
   brutto?: number;
+  /**
+   * Interner Deckungsbeitrag/„Gewinn" für den KingBill-Kopf (Netto|Brutto|Gewinn).
+   * NUR für Administratoren setzen — dieser Wert wird bewusst getrennt von
+   * formData/items geführt und gelangt NIE in generate()/PDF. Weglassen = kein
+   * Gewinn-Feld anzeigen.
+   */
+  internProfit?: { gewinn: number; marge: number; farbe: "gruen" | "gelb" | "rot" };
   /** Dateiname (ohne .pdf) für den PDF-Export-Button. */
   fileName?: string;
 }
@@ -53,7 +60,7 @@ interface InvoiceLivePreviewProps {
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function InvoiceLivePreview({ formData, items, netto, brutto, fileName }: InvoiceLivePreviewProps) {
+export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName }: InvoiceLivePreviewProps) {
   const [open, setOpen] = useState<boolean>(() => {
     try {
       return localStorage.getItem(STORAGE_KEY) !== "0";
@@ -263,6 +270,24 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, fileName }:
                 Netto <span className="font-bold text-white">€ {eur(netto)}</span>
                 <span className="mx-1.5 text-white/60">|</span>
                 Brutto <span className="font-bold text-white">€ {eur(brutto)}</span>
+                {internProfit && (
+                  <>
+                    <span className="mx-1.5 text-white/60">|</span>
+                    Gewinn{" "}
+                    <span
+                      className={`font-bold ${
+                        internProfit.farbe === "rot"
+                          ? "text-red-200"
+                          : internProfit.farbe === "gelb"
+                            ? "text-amber-200"
+                            : "text-emerald-200"
+                      }`}
+                      title="Interner Deckungsbeitrag (nur Admin, nicht im Kundendokument)"
+                    >
+                      € {eur(internProfit.gewinn)}
+                    </span>
+                  </>
+                )}
               </span>
             )}
             <button

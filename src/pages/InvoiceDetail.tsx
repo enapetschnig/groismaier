@@ -6423,6 +6423,9 @@ export default function InvoiceDetail() {
           items={previewItems}
           netto={hidePrices ? undefined : nettoSumme}
           brutto={hidePrices ? undefined : bruttoSumme}
+          /* „Gewinn" im KingBill-Kopf — NUR für Admins (zeigeVerdienst), getrennt
+             von formData/items, gelangt nie ins Kunden-PDF. */
+          internProfit={zeigeVerdienst ? { gewinn: deckungsbeitrag, marge: margeProzent, farbe: margeFarbe } : undefined}
           fileName={form.nummer || typLabel}
         />
         </div>
