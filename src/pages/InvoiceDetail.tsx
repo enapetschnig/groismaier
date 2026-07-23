@@ -11,8 +11,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search } from "lucide-react";
-import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw } from "lucide-react";
+import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -482,6 +482,19 @@ export default function InvoiceDetail() {
     // Nach oben, falls der Nutzer im aktuellen Panel weit gescrollt war.
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
+  // KingBill-Unter-Reiter je Schritt (Ordner-Tabs, KBSubTabs).
+  const [allgemeinSubTab, setAllgemeinSubTab] = useState<
+    "zahlung" | "projekt" | "vortext" | "schluss" | "aa" | "notiz"
+  >("zahlung");
+  const [artikelSubTab, setArtikelSubTab] = useState<"liste" | "dokument">("dokument");
+  // Standard-Vor-/Schlusstext des Dokumenttyps (aus document_texts) — dient als
+  // Platzhalter/Default in den Vortext/Schlusstext-Reitern. Der Beleg-eigene
+  // Wert (form.custom_intro_text/-closing) gewinnt; ist er leer, greift der Default.
+  // (Der Lade-Effect steht weiter unten, direkt nach dem form-State.)
+  const [textDefaults, setTextDefaults] = useState<{ intro: string; closing: string }>({
+    intro: "",
+    closing: "",
+  });
 
   /**
    * Positionen: Tabelle oder Karten?
@@ -692,6 +705,22 @@ export default function InvoiceDetail() {
     lieferadresse: "",
   });
 
+  // Standard-Vor-/Schlusstext des aktuellen Dokumenttyps laden (für die
+  // Vortext/Schlusstext-Reiter). Muss NACH dem form-State stehen (nutzt form.typ).
+  useEffect(() => {
+    let abbruch = false;
+    (async () => {
+      try {
+        const { loadDocumentTexts } = await import("@/lib/documentTextsLoader");
+        const t = await loadDocumentTexts(form.typ);
+        if (!abbruch) setTextDefaults({ intro: t.intro || "", closing: t.closing || "" });
+      } catch {
+        /* Ohne Vorlagen bleiben die Felder leer — Nutzer tippt selbst. */
+      }
+    })();
+    return () => { abbruch = true; };
+  }, [form.typ]);
+
   // ── Zahleneingabe (deutsches Komma) ───────────────────────────────────────
   // Während des Tippens muss der ROHTEXT im Feld stehen bleiben ("12," oder
   // "12,5"), sonst kann man kein Komma eingeben. Erst beim Verlassen des
@@ -836,6 +865,53 @@ export default function InvoiceDetail() {
       title: "Mit Kalkulation verknüpft",
       description: `„${k.name}“ — jetzt „Positionen neu übernehmen“, um die Aufbauten ins Angebot zu holen. Danach speichern.`,
     });
+  };
+
+  /**
+   * Projekt wählen (Allgemein-Unter-Tab „Projekt"). Übernimmt — wie zuvor die
+   * Projekt-Card im Kunde-Schritt — bei bekanntem Projektkunden dessen
+   * Stammdaten (Adresse, UID, Skonto, Zahlungsfrist) in den Beleg.
+   */
+  const waehleProjekt = async (v: string) => {
+    const projectId = v === "none" ? null : v;
+    updateField("project_id", projectId);
+    if (!projectId) return;
+    const { data: projFull } = await (supabase.from("projects" as never) as any)
+      .select("customer_id").eq("id", projectId).maybeSingle();
+    const custId = projFull?.customer_id || (projects.find((p) => p.id === projectId) as any)?.customer_id;
+    if (!custId) return;
+    const { data: cust } = await supabase
+      .from("customers")
+      .select("id, name, anrede, titel, uid_nummer, adresse, plz, ort, land, email, telefon, kundennummer, ansprechpartner, skonto_prozent, skonto_tage, nettofrist")
+      .eq("id", custId).single();
+    if (!cust) return;
+    if (!loading) setIsDirty(true);
+    setForm((prev) => ({
+      ...prev,
+      customer_id: cust.id,
+      kunde_name: cust.name,
+      kunde_adresse: cust.adresse || "",
+      kunde_plz: cust.plz || "",
+      kunde_ort: cust.ort || "",
+      kunde_land: cust.land || "Österreich",
+      kunde_email: cust.email || "",
+      kunde_telefon: cust.telefon || "",
+      kunde_uid: cust.uid_nummer || "",
+      kunde_anrede: cust.anrede || "",
+      kunde_titel: cust.titel || "",
+      kundennummer: cust.kundennummer || "",
+      skonto_prozent: Number(cust.skonto_prozent) || 0,
+      skonto_tage: Number(cust.skonto_tage) || 0,
+    } as any));
+    const custNettofrist = Number(cust.nettofrist) || 0;
+    const zb = nettofristToDropdown(custNettofrist);
+    updateField("zahlungsbedingungen", zb);
+    if (zb === "individuell" && custNettofrist > 0 && form.datum) {
+      const due = new Date(form.datum + "T12:00:00");
+      due.setDate(due.getDate() + custNettofrist);
+      updateField("faellig_am", due.toISOString().split("T")[0]);
+    }
+    toast({ title: "Projektdaten übernommen", description: cust.name });
   };
 
   /**
@@ -4424,104 +4500,12 @@ export default function InvoiceDetail() {
                     </p>
                   </div>
                 )}
-                {form.typ === "rechnung" && (
-                  <div>
-                    <Label>Fällig am</Label>
-                    <Input
-                      type="date"
-                      value={form.faellig_am}
-                      onChange={(e) => updateField("faellig_am", e.target.value)}
-                      disabled={form.zahlungsbedingungen !== "individuell"}
-                    />
-                    {form.zahlungsbedingungen !== "individuell" && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5">
-                        Automatisch aus Rechnungsdatum + Zahlungsfrist berechnet.
-                      </p>
-                    )}
-                  </div>
-                )}
                 {form.typ === "angebot" && (
                   <div>
                     <Label>Gültig bis</Label>
                     <Input type="date" value={form.gueltig_bis} onChange={(e) => updateField("gueltig_bis", e.target.value)} />
                   </div>
                 )}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {form.typ === "rechnung" && (
-                  <div>
-                    <Label>Zahlungsfrist</Label>
-                    <Select
-                      value={form.zahlungsbedingungen || "14 Tage"}
-                      onValueChange={(v) => {
-                        // Dropdown ist Single Source of Truth. "individuell"
-                        // schaltet das faellig_am-Feld frei; alle anderen Werte
-                        // rechnen faellig_am automatisch über den useEffect-
-                        // Sync weiter unten aus.
-                        updateField("zahlungsbedingungen", v);
-                      }}
-                    >
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="sofort">Sofort fällig</SelectItem>
-                        <SelectItem value="7 Tage">7 Tage</SelectItem>
-                        <SelectItem value="14 Tage">14 Tage</SelectItem>
-                        <SelectItem value="30 Tage">30 Tage</SelectItem>
-                        <SelectItem value="60 Tage">60 Tage</SelectItem>
-                        <SelectItem value="individuell">Individuelles Datum…</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                {form.typ === "rechnung" && (
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <Label>Skonto %</Label>
-                      <Input
-                        type="text"
-                        inputMode="decimal"
-                        value={rohOderZahl("form:skonto_prozent", form.skonto_prozent, { leerBeiNull: true })}
-                        onChange={(e) => {
-                          setRoh("form:skonto_prozent", e.target.value);
-                          const n = parseDecimal(e.target.value);
-                          updateField("skonto_prozent", n === null ? 0 : clamp(n, 0, 100));
-                        }}
-                        onBlur={() => {
-                          const n = clamp(toNumber(rohTexte["form:skonto_prozent"], 0), 0, 100);
-                          updateField("skonto_prozent", n);
-                          clearRoh("form:skonto_prozent");
-                        }}
-                        placeholder="z.B. 2"
-                      />
-                    </div>
-                    <div>
-                      <Label>Skonto Tage</Label>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={rohOderZahl("form:skonto_tage", form.skonto_tage, { leerBeiNull: true })}
-                        onChange={(e) => {
-                          setRoh("form:skonto_tage", e.target.value);
-                          const n = parseDecimal(e.target.value);
-                          updateField("skonto_tage", n === null ? 0 : Math.round(clamp(n, 0)));
-                        }}
-                        onBlur={() => {
-                          const n = Math.round(clamp(toNumber(rohTexte["form:skonto_tage"], 0), 0));
-                          updateField("skonto_tage", n);
-                          clearRoh("form:skonto_tage");
-                        }}
-                        placeholder="z.B. 10"
-                      />
-                    </div>
-                    {form.skonto_prozent > 0 && form.skonto_tage > 0 && (
-                      <p className="col-span-2 text-xs text-muted-foreground">
-                        Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
-                        {" "}€ {eur((bruttoSumme * (1 - form.skonto_prozent / 100)))} ({form.skonto_prozent}% Skonto)
-                      </p>
-                    )}
-                  </div>
-                )}
-                {/* Projekt-Auswahl ist jetzt oben als eigene Card */}
               </div>
               {form.typ === "rechnung" && (
                 <div className="flex items-center gap-3 p-3 rounded-lg border bg-muted/30">
@@ -4661,6 +4645,233 @@ export default function InvoiceDetail() {
             </CardContent>
             </fieldset>
           </Card>
+
+          {/* ── KingBill-Unter-Reiter des Allgemein-Schritts ──────────────────
+              „Zahlungsbedingungen | Projekt | Vortext | Schlusstext" wie im
+              Original. Die Reiterleiste bleibt bedienbar (Ansehen), die
+              Eingaben respektieren isLocked je Panel. */}
+          <div>
+            <KBSubTabs
+              className="px-1"
+              activeId={allgemeinSubTab}
+              onSelect={(id) => setAllgemeinSubTab(id as typeof allgemeinSubTab)}
+              items={[
+                { id: "zahlung", label: "Zahlungsbedingungen" },
+                { id: "projekt", label: "Projekt" },
+                { id: "vortext", label: "Vortext" },
+                { id: "schluss", label: "Schlusstext" },
+              ]}
+            />
+            <Card className="kb-panel rounded-tl-none">
+              <CardContent className="pt-4">
+                {/* Zahlungsbedingungen — Frist / Fälligkeit / Skonto */}
+                {allgemeinSubTab === "zahlung" && (
+                  <fieldset disabled={isLocked} className="min-w-0 space-y-4" data-subtab="zahlung">
+                    {form.typ === "rechnung" ? (
+                      <>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                          <div>
+                            <Label>Zahlungsfrist</Label>
+                            <Select
+                              value={form.zahlungsbedingungen || "14 Tage"}
+                              onValueChange={(v) => updateField("zahlungsbedingungen", v)}
+                            >
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="sofort">Sofort fällig</SelectItem>
+                                <SelectItem value="7 Tage">7 Tage</SelectItem>
+                                <SelectItem value="14 Tage">14 Tage</SelectItem>
+                                <SelectItem value="30 Tage">30 Tage</SelectItem>
+                                <SelectItem value="60 Tage">60 Tage</SelectItem>
+                                <SelectItem value="individuell">Individuelles Datum…</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div>
+                            <Label>Fällig am</Label>
+                            <Input
+                              type="date"
+                              value={form.faellig_am}
+                              onChange={(e) => updateField("faellig_am", e.target.value)}
+                              disabled={form.zahlungsbedingungen !== "individuell"}
+                            />
+                            {form.zahlungsbedingungen !== "individuell" && (
+                              <p className="text-[11px] text-muted-foreground mt-0.5">
+                                Automatisch aus Rechnungsdatum + Zahlungsfrist berechnet.
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 max-w-sm">
+                          <div>
+                            <Label>Skonto %</Label>
+                            <Input
+                              type="text"
+                              inputMode="decimal"
+                              value={rohOderZahl("form:skonto_prozent", form.skonto_prozent, { leerBeiNull: true })}
+                              onChange={(e) => {
+                                setRoh("form:skonto_prozent", e.target.value);
+                                const n = parseDecimal(e.target.value);
+                                updateField("skonto_prozent", n === null ? 0 : clamp(n, 0, 100));
+                              }}
+                              onBlur={() => {
+                                const n = clamp(toNumber(rohTexte["form:skonto_prozent"], 0), 0, 100);
+                                updateField("skonto_prozent", n);
+                                clearRoh("form:skonto_prozent");
+                              }}
+                              placeholder="z.B. 2"
+                            />
+                          </div>
+                          <div>
+                            <Label>Skonto Tage</Label>
+                            <Input
+                              type="text"
+                              inputMode="numeric"
+                              value={rohOderZahl("form:skonto_tage", form.skonto_tage, { leerBeiNull: true })}
+                              onChange={(e) => {
+                                setRoh("form:skonto_tage", e.target.value);
+                                const n = parseDecimal(e.target.value);
+                                updateField("skonto_tage", n === null ? 0 : Math.round(clamp(n, 0)));
+                              }}
+                              onBlur={() => {
+                                const n = Math.round(clamp(toNumber(rohTexte["form:skonto_tage"], 0), 0));
+                                updateField("skonto_tage", n);
+                                clearRoh("form:skonto_tage");
+                              }}
+                              placeholder="z.B. 10"
+                            />
+                          </div>
+                          {form.skonto_prozent > 0 && form.skonto_tage > 0 && (
+                            <p className="col-span-2 text-xs text-muted-foreground">
+                              Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
+                              {" "}€ {eur((bruttoSumme * (1 - form.skonto_prozent / 100)))} ({form.skonto_prozent}% Skonto)
+                            </p>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <p className="text-sm text-muted-foreground">
+                        {form.typ === "angebot"
+                          ? "Zahlungsfrist und Skonto werden bei der Umwandlung in eine Rechnung festgelegt. Das Gültig-bis-Datum des Angebots steht oben unter „Details“."
+                          : "Für diesen Belegtyp sind keine Zahlungsbedingungen zu setzen."}
+                      </p>
+                    )}
+                  </fieldset>
+                )}
+
+                {/* Projekt — bestehendes wählen oder neu anlegen */}
+                {allgemeinSubTab === "projekt" && (
+                  <div className="space-y-3" data-subtab="projekt">
+                    {(isLocked || isKundeLocked) && form.project_id ? (
+                      <div className="flex items-center gap-2 rounded-md border bg-blue-50 p-2.5 text-sm">
+                        <FileText className="h-4 w-4 shrink-0 text-blue-600" />
+                        <span className="text-muted-foreground">Projekt:</span>
+                        <span className="font-medium">{projects.find((p) => p.id === form.project_id)?.name || "—"}</span>
+                      </div>
+                    ) : (
+                      <>
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                          <div className="min-w-0 flex-1">
+                            <Label>Projekt zuordnen (optional)</Label>
+                            <Select value={form.project_id || "none"} onValueChange={waehleProjekt} disabled={isLocked}>
+                              <SelectTrigger><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">Kein Projekt</SelectItem>
+                                {projects.map((p) => (
+                                  <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            className="gap-1 shrink-0"
+                            disabled={isLocked}
+                            onClick={() => { setNewProjectName(form.kunde_name || ""); setCreateProjectDialogOpen(true); }}
+                          >
+                            <Plus className="h-4 w-4" /> Neues Projekt
+                          </Button>
+                        </div>
+                        {form.project_id && form.customer_id && (
+                          <p className="text-xs text-green-600">Kundendaten wurden automatisch vom Projekt übernommen.</p>
+                        )}
+                        <div className="flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50/60 p-2.5 text-xs text-blue-900">
+                          <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            Optional. Wird ein Angebot angenommen, entsteht ohnehin automatisch ein Projekt —
+                            hier nur nötig, wenn du dem Beleg vorab ein bestehendes Projekt zuordnen willst.
+                          </span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+
+                {/* Vortext — pro Beleg editierbar, mit Standardtext des Typs */}
+                {allgemeinSubTab === "vortext" && (
+                  <fieldset disabled={isLocked} className="min-w-0 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="vortext">Vortext (erscheint über den Positionen)</Label>
+                      {textDefaults.intro && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => updateField("custom_intro_text" as any, textDefaults.intro)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Standardtext einfügen
+                        </Button>
+                      )}
+                    </div>
+                    <Textarea
+                      id="vortext"
+                      rows={5}
+                      value={(form as any).custom_intro_text || ""}
+                      placeholder={textDefaults.intro || "z.B. Herzlichen Dank für Ihr Interesse …"}
+                      onChange={(e) => updateField("custom_intro_text" as any, e.target.value)}
+                      className="resize-y"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Leer lassen = der hinterlegte Standardtext des Dokumenttyps wird verwendet.
+                    </p>
+                  </fieldset>
+                )}
+
+                {/* Schlusstext — pro Beleg editierbar, mit Standardtext des Typs */}
+                {allgemeinSubTab === "schluss" && (
+                  <fieldset disabled={isLocked} className="min-w-0 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <Label htmlFor="schlusstext">Schlusstext (erscheint unter den Positionen)</Label>
+                      {textDefaults.closing && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => updateField("custom_closing_text" as any, textDefaults.closing)}
+                        >
+                          <RotateCcw className="h-3.5 w-3.5" /> Standardtext einfügen
+                        </Button>
+                      )}
+                    </div>
+                    <Textarea
+                      id="schlusstext"
+                      rows={5}
+                      value={(form as any).custom_closing_text || ""}
+                      placeholder={textDefaults.closing || "z.B. Dieses Angebot ist 14 Tage gültig …"}
+                      onChange={(e) => updateField("custom_closing_text" as any, e.target.value)}
+                      className="resize-y"
+                    />
+                    <p className="text-[11px] text-muted-foreground">
+                      Leer lassen = der hinterlegte Standardtext des Dokumenttyps wird verwendet.
+                    </p>
+                  </fieldset>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Allgemeine Angaben — nur bei Angebot + Auftragsbestätigung.
               Toggle steuert, ob die Tabelle im PDF/HTML überhaupt
@@ -4848,97 +5059,8 @@ export default function InvoiceDetail() {
           {/* ===== Schritt 2: Kunde — Projekt-Übernahme, Kundensuche & -daten ===== */}
           <StepSectionHeader num={2} label="Kunde" id="step-kunde" />
 
-          {/* Projekt-Auswahl: bei Rechnung + Angebot/AB + Lieferschein, vor den
-              Kundendaten. Bei Angebot/AB nötig, damit der "Aus Projekt
-              übernehmen"-Button in den Allgemeinen Angaben den Ausführungsort
-              ziehen kann. Beim Lieferschein für die Projekt-Spalte der Liste. */}
-          {!isLocked && (form.typ === "rechnung" || form.typ === "lieferschein" || getDocConfig(form.typ).isAngebotLike) && (
-            <Card className="kb-panel">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base">Projekt (optional)</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <Select value={form.project_id || "none"} onValueChange={async (v) => {
-                  const projectId = v === "none" ? null : v;
-                  updateField("project_id", projectId);
-                  if (projectId) {
-                    // Projekt-Details laden (nur für customer_id).
-                    const { data: projFull } = await (supabase.from("projects" as never) as any)
-                      .select("customer_id")
-                      .eq("id", projectId)
-                      .maybeSingle();
-                    const custId = projFull?.customer_id || (projects.find(p => p.id === projectId) as any)?.customer_id;
-                    if (custId) {
-                      const { data: cust } = await supabase
-                        .from("customers")
-                        .select("id, name, anrede, titel, uid_nummer, adresse, plz, ort, land, email, telefon, kundennummer, ansprechpartner, skonto_prozent, skonto_tage, nettofrist")
-                        .eq("id", custId)
-                        .single();
-                      if (cust) {
-                        if (!loading) setIsDirty(true);
-                        setForm(prev => ({
-                          ...prev,
-                          customer_id: cust.id,
-                          kunde_name: cust.name,
-                          kunde_adresse: cust.adresse || "",
-                          kunde_plz: cust.plz || "",
-                          kunde_ort: cust.ort || "",
-                          kunde_land: cust.land || "Österreich",
-                          kunde_email: cust.email || "",
-                          kunde_telefon: cust.telefon || "",
-                          kunde_uid: cust.uid_nummer || "",
-                          kunde_anrede: cust.anrede || "",
-                          kunde_titel: cust.titel || "",
-                          kundennummer: cust.kundennummer || "",
-                          // Ansprechpartner wird beim Kunden-Wechsel NICHT
-                          // übernommen — er ist der Sachbearbeiter und
-                          // wird separat im Formular gewählt.
-                          skonto_prozent: Number(cust.skonto_prozent) || 0,
-                          skonto_tage: Number(cust.skonto_tage) || 0,
-                        } as any));
-                        const custNettofrist = Number(cust.nettofrist) || 0;
-                        const zb = nettofristToDropdown(custNettofrist);
-                        updateField("zahlungsbedingungen", zb);
-                        // Bei "individuell" muss faellig_am explizit gesetzt
-                        // werden (der Sync-useEffect rührt "individuell" nicht
-                        // an). Für Standard-Dropdown-Werte übernimmt der
-                        // useEffect die Berechnung automatisch.
-                        if (zb === "individuell" && custNettofrist > 0 && form.datum) {
-                          const due = new Date(form.datum + "T12:00:00");
-                          due.setDate(due.getDate() + custNettofrist);
-                          updateField("faellig_am", due.toISOString().split("T")[0]);
-                        }
-                        toast({ title: "Projektdaten übernommen", description: cust.name });
-                      }
-                    }
-                  }
-                }}>
-                  <SelectTrigger><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Kein Projekt</SelectItem>
-                    {projects.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                {form.project_id && form.customer_id && (
-                  <p className="text-xs text-green-600 mt-2">Kundendaten wurden automatisch vom Projekt übernommen</p>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Projekt-Anzeige bei gespeicherten Dokumenten */}
-          {form.project_id && (isLocked || isKundeLocked) && (() => {
-            const proj = projects.find(p => p.id === form.project_id);
-            return proj ? (
-              <div className="flex items-center gap-2 text-sm bg-blue-50 border border-blue-200 rounded-md p-2.5">
-                <FileText className="h-4 w-4 text-blue-600 shrink-0" />
-                <span className="text-muted-foreground">Projekt:</span>
-                <span className="font-medium">{proj.name}</span>
-              </div>
-            ) : null;
-          })()}
+          {/* Projekt-Zuordnung wanderte in den Allgemein-Schritt,
+              Unter-Tab „Projekt" (waehleProjekt). */}
 
           {/* Gutschrift: optionaler Bezug auf bestehende Rechnung — nur bei
               neuer Standalone-Gutschrift sichtbar. Bei Convert-Pfad
