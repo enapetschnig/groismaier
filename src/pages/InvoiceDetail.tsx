@@ -379,8 +379,9 @@ const statusLabels: Record<string, string> = {
  */
 function nettofristToDropdown(nettofrist: number): string {
   if (nettofrist <= 0) return "sofort";
-  if ([7, 14, 30, 60].includes(nettofrist)) return `${nettofrist} Tage`;
-  return "individuell";
+  // JEDE Tagesanzahl ist gültig ("21 Tage" etc.) — individuelle Fristen
+  // dürfen nicht auf "individuell" zurückfallen (Kundenwunsch).
+  return `${Math.round(nettofrist)} Tage`;
 }
 
 /**
@@ -484,6 +485,9 @@ export default function InvoiceDetail() {
   // schlicht den aktiven Schritt; die linke Spalte rendert nur dessen Panel.
   const [activeStep, setActiveStep] = useState(1);
   const scrollToStep = (step: (typeof WIZARD_STEPS)[number]) => {
+    // Beim WEITERGEHEN vom Kunde-Schritt: ergänzte Kundendaten sofort in die
+    // Stammdaten übernehmen (Kundenwunsch) — fire-and-forget.
+    if (activeStep === 2 && step.num !== 2) void syncKundeStammdaten();
     setActiveStep(step.num);
     // Nach oben, falls der Nutzer im aktuellen Panel weit gescrollt war.
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1042,6 +1046,40 @@ export default function InvoiceDetail() {
         description: `${customer.name} ist ein Geschäftskunde, hat aber keine UID-Nummer hinterlegt. Bitte im Kunden-Datensatz ergänzen — sie erscheint sonst nicht im Rechnungs-Adressfeld.`,
         duration: 8000,
       });
+    }
+  };
+
+  /**
+   * Ergänzte Kundendaten SOFORT in die Stammdaten zurückschreiben
+   * (Kundenwunsch): Ist der Beleg mit einem Kunden verknüpft und der Nutzer
+   * hat im Kunde-Schritt Felder ergänzt/geändert, werden die Stammdaten beim
+   * Verlassen des Kunde-Schritts und beim Beleg-Speichern aktualisiert.
+   * Fire-and-forget mit stiller Fehlerbehandlung — das Beleg-Speichern darf
+   * daran nie scheitern.
+   */
+  const syncKundeStammdaten = async () => {
+    const custId = form.customer_id;
+    if (!custId || !form.kunde_name.trim()) return;
+    try {
+      const { error } = await supabase
+        .from("customers")
+        .update({
+          name: form.kunde_name.trim(),
+          anrede: (form as any).kunde_anrede || null,
+          titel: (form as any).kunde_titel || null,
+          adresse: form.kunde_adresse || null,
+          plz: form.kunde_plz || null,
+          ort: form.kunde_ort || null,
+          land: form.kunde_land || null,
+          email: form.kunde_email || null,
+          telefon: form.kunde_telefon || null,
+          uid_nummer: form.kunde_uid || null,
+          ansprechpartner: (form as any).kunde_kontaktperson || null,
+        })
+        .eq("id", custId);
+      if (!error) void ladeKundenListe();
+    } catch {
+      /* still — Stammdaten-Sync ist Komfort, kein Muss */
     }
   };
 
@@ -1728,17 +1766,16 @@ export default function InvoiceDetail() {
       ausfuehrungs_kw: (data as any).ausfuehrungs_kw || "",
       ausfuehrende_firma: (data as any).ausfuehrende_firma || "",
       ausfuehrende_firma_freitext: (data as any).ausfuehrende_firma_freitext || "",
-      // Altdaten auf die neuen Dropdown-Werte mappen. Sofort/prompt und
-      // die Standard-Tage bleiben erhalten; alles andere (Freitext,
-      // ungültige Werte, krumme Tage wie "20 Tage") landet auf
-      // "individuell", damit der User die Altrechnung nicht aus
-      // Versehen verfälscht.
+      // Zahlungsfrist normalisieren: sofort/prompt → "sofort", JEDE
+      // Tagesanzahl ("7 Tage", "21 Tage", …) bleibt ERHALTEN (individuelle
+      // Fristen sind ausdrücklich erlaubt); nur echter Freitext ohne
+      // Tageszahl landet auf "individuell".
       zahlungsbedingungen: (() => {
         const raw = (data.zahlungsbedingungen || "").trim();
         if (!raw) return "";
         if (/sofort|umgehend|prompt/i.test(raw)) return "sofort";
-        const standard = ["7 Tage", "14 Tage", "30 Tage", "60 Tage"];
-        if (standard.includes(raw)) return raw;
+        const tage = raw.match(/^(\d+)\s*Tage?$/i);
+        if (tage) return `${tage[1]} Tage`;
         return "individuell";
       })(),
       notizen: data.notizen || "",
@@ -1930,10 +1967,9 @@ export default function InvoiceDetail() {
     }]);
   };
 
-  // KingBill-Eingabemaske („3. Artikel"): Kapitel/Unterkapitel + Name +
-  // Preis/Rabatt/Menge/Einheit + optional-Häkchen, dann „Hinzufügen".
-  const [maskKapitel, setMaskKapitel] = useState("");
-  const [maskUnterkapitel, setMaskUnterkapitel] = useState("");
+  // KingBill-Eingabemaske („3. Artikel"): Name + Preis/Rabatt/Menge/Einheit
+  // + optional-Häkchen, dann „Hinzufügen". (Kapitel/Unterkapitel wurden auf
+  // Kundenwunsch entfernt — Aufbau-Kapitel kommen aus der Kalkulation.)
   const [maskName, setMaskName] = useState("");
   const [maskMenge, setMaskMenge] = useState("1");
   const [maskEinheit, setMaskEinheit] = useState("Stk.");
@@ -1944,17 +1980,11 @@ export default function InvoiceDetail() {
   const maskReset = () => {
     setMaskName(""); setMaskMenge("1"); setMaskEinheit("Stk."); setMaskPreis(""); setMaskRabatt("");
     setMaskOptional(false); setMaskAcOpen(false);
-    // Kapitel/Unterkapitel bewusst NICHT leeren — man erfasst meist mehrere
-    // Positionen desselben Kapitels hintereinander.
   };
   // Maskenpreise sind IMMER netto („Preise sind Brutto" wurde entfernt).
   const maskPreisNetto = toNumber(maskPreis, 0);
   const maskSummeNetto = round2(
     (toNumber(maskMenge, 0)) * round2(maskPreisNetto) * (1 - clamp(toNumber(maskRabatt, 0), 0, 100) / 100),
-  );
-  // Vorhandene Kapitel (Gruppen) im Beleg — für das Kapitel-Dropdown.
-  const vorhandeneKapitel = Array.from(
-    new Set(items.map((it) => gruppeVon(it)).filter(Boolean)),
   );
   const addItemFromMask = () => {
     const name = maskName.trim();
@@ -1962,11 +1992,6 @@ export default function InvoiceDetail() {
     const menge = toNumber(maskMenge, 1) || 1;
     const preis = round2(maskPreisNetto);
     const rabatt = clamp(toNumber(maskRabatt, 0), 0, 100);
-    // Kapitel + Unterkapitel → Gruppe des Belegs (rendert im PDF als
-    // Kapitelüberschrift; Positionen mit Betrag bleiben voll summenwirksam).
-    const kapitel = maskKapitel.trim();
-    const unterkapitel = maskUnterkapitel.trim();
-    const gruppe = kapitel ? (unterkapitel ? `${kapitel} — ${unterkapitel}` : kapitel) : "";
     const neu: InvoiceItem = {
       position: 0, // wird in mergeItems neu vergeben
       // Optionale Position: Kennzeichnung im Text (wie optionale Aufbauten der
@@ -1979,7 +2004,6 @@ export default function InvoiceDetail() {
       einzelpreis: preis,
       rabatt_prozent: rabatt,
       gesamtpreis: round2(menge * preis * (1 - rabatt / 100)),
-      ...(gruppe ? { gruppe, auf_pdf: true, ist_gruppensumme: false } : {}),
     } as InvoiceItem;
     setItemsDirty((prev) => mergeItems(prev, [neu]));
     maskReset();
@@ -2697,10 +2721,12 @@ export default function InvoiceDetail() {
       let savedId = invoiceId;
       let customerId = form.customer_id;
 
-      // Auto-create customer if no customer_id is set (never overwrite existing customer master data)
+      // Auto-create customer if no customer_id is set. Bei VERKNÜPFTEM Kunden
+      // werden ergänzte/aktualisierte Kundendaten in die Stammdaten
+      // zurückgeschrieben (Kundenwunsch: „gleich gespeichert").
       if (form.kunde_name.trim()) {
         if (customerId) {
-          // Customer already linked – keep as-is, invoice stores its own snapshot
+          void syncKundeStammdaten();
         } else {
           // Check for existing customer with same name + PLZ (duplicate protection)
           let custQuery = supabase.from("customers").select("id").ilike("name", form.kunde_name.trim());
@@ -5171,24 +5197,61 @@ export default function InvoiceDetail() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           <div>
                             <Label>Zahlungsfrist</Label>
-                            {/* Frei editierbar (z.B. „21 Tage", „sofort", „individuell") —
-                                die Fälligkeit rechnet aus der Tageszahl automatisch mit;
-                                „individuell" gibt das Fällig-am-Feld im Kopf frei. */}
-                            <Input
-                              list="zahlungsfrist-liste"
-                              value={form.zahlungsbedingungen || ""}
-                              onChange={(e) => updateField("zahlungsbedingungen", e.target.value)}
-                              placeholder="z.B. 14 Tage"
-                            />
-                            <datalist id="zahlungsfrist-liste">
-                              <option value="sofort" />
-                              <option value="7 Tage" />
-                              <option value="14 Tage" />
-                              <option value="21 Tage" />
-                              <option value="30 Tage" />
-                              <option value="60 Tage" />
-                              <option value="individuell" />
-                            </datalist>
+                            {/* Standard-Fristen als Dropdown + Feld für eine EIGENE
+                                Tagesanzahl. Jede Tageszahl ist gültig und bleibt beim
+                                Speichern/Laden erhalten; „individuell" gibt das
+                                Fällig-am-Feld im Kopf frei. */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Select
+                                value={(() => {
+                                  const v = (form.zahlungsbedingungen || "").trim();
+                                  if (!v) return "14 Tage";
+                                  if (["sofort", "7 Tage", "14 Tage", "21 Tage", "30 Tage", "60 Tage", "individuell"].includes(v)) return v;
+                                  return "__eigene__";
+                                })()}
+                                onValueChange={(v) => {
+                                  if (v === "__eigene__") return; // nur Anzeige-Wert
+                                  updateField("zahlungsbedingungen", v);
+                                }}
+                              >
+                                <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="sofort">Sofort fällig</SelectItem>
+                                  <SelectItem value="7 Tage">7 Tage</SelectItem>
+                                  <SelectItem value="14 Tage">14 Tage</SelectItem>
+                                  <SelectItem value="21 Tage">21 Tage</SelectItem>
+                                  <SelectItem value="30 Tage">30 Tage</SelectItem>
+                                  <SelectItem value="60 Tage">60 Tage</SelectItem>
+                                  <SelectItem value="individuell">Individuelles Datum…</SelectItem>
+                                  <SelectItem value="__eigene__" disabled>
+                                    {(() => {
+                                      const v = (form.zahlungsbedingungen || "").trim();
+                                      const m = v.match(/^(\d+)\s*Tage$/);
+                                      return m && !["7", "14", "21", "30", "60"].includes(m[1]) ? `${m[1]} Tage (eigene)` : "Eigene Tage …";
+                                    })()}
+                                  </SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm text-muted-foreground">oder eigene:</span>
+                                <Input
+                                  type="text"
+                                  inputMode="numeric"
+                                  className="h-9 w-16 text-right"
+                                  placeholder="z.B. 21"
+                                  value={(() => {
+                                    const m = (form.zahlungsbedingungen || "").match(/^(\d+)\s*Tage$/);
+                                    return m && !["7", "14", "21", "30", "60"].includes(m[1]) ? m[1] : "";
+                                  })()}
+                                  onChange={(e) => {
+                                    const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
+                                    if (isFinite(n) && n > 0) updateField("zahlungsbedingungen", `${n} Tage`);
+                                    else if (e.target.value.trim() === "") updateField("zahlungsbedingungen", "14 Tage");
+                                  }}
+                                />
+                                <span className="text-sm text-muted-foreground">Tage</span>
+                              </div>
+                            </div>
                             {form.typ !== "rechnung" && (
                               <p className="text-[11px] text-muted-foreground mt-0.5">
                                 Wird bei der Umwandlung in die Rechnung übernommen.
@@ -5979,31 +6042,9 @@ export default function InvoiceDetail() {
           <Card className="kb-panel">
             <CardContent className="pt-4">
               <fieldset disabled={isLocked} className="min-w-0 space-y-3">
-                {/* Zeile 1 wie KingBill: Kapitel | Unterkapitel */}
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <Label className="text-xs">Kapitel</Label>
-                    <Input
-                      list="mask-kapitel-liste"
-                      value={maskKapitel}
-                      onChange={(e) => setMaskKapitel(e.target.value)}
-                      placeholder="Aus Liste wählen …"
-                      className="h-9"
-                    />
-                    <datalist id="mask-kapitel-liste">
-                      {vorhandeneKapitel.map((g) => <option key={g} value={g} />)}
-                    </datalist>
-                  </div>
-                  <div>
-                    <Label className="text-xs">Unterkapitel</Label>
-                    <Input
-                      value={maskUnterkapitel}
-                      onChange={(e) => setMaskUnterkapitel(e.target.value)}
-                      className="h-9"
-                    />
-                  </div>
-                </div>
-                {/* Zeile 2: Name (fett wie im Original) | Preis | Rabatt */}
+                {/* Kapitel/Unterkapitel auf Kundenwunsch entfernt (2026-07-24) —
+                    Aufbau-Kapitel entstehen über die Kalkulation. */}
+                {/* Zeile 1: Name (fett wie im Original) | Preis | Rabatt */}
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-12">
                   <div className="relative sm:col-span-6">
                     <Label className="text-xs font-bold">Name</Label>
@@ -6185,14 +6226,37 @@ export default function InvoiceDetail() {
                       </Button>
                     </>
                   )}
-                  <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1">
-                    <FileText className="w-4 h-4" />
-                    Arbeitszeiten
-                  </Button>
-                  <Button onClick={() => setTemplateDialogOpen(true)} variant="outline" size="sm" className="gap-1">
-                    <Package className="w-4 h-4" />
-                    Materialien
-                  </Button>
+                  {/* Arbeitszeiten erst auf RECHNUNGEN buchbar (Kundenwunsch) —
+                      bei Angeboten gibt es noch nichts Gebuchtes. */}
+                  {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && (
+                    <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1">
+                      <FileText className="w-4 h-4" />
+                      Arbeitszeiten
+                    </Button>
+                  )}
+                  {/* Bei ANGEBOTEN statt „Materialien" der Kalkulations-Knopf
+                      (Kundenwunsch): ohne Verknüpfung → Kalkulation wählen und
+                      verknüpfen; mit Verknüpfung → Positionen neu übernehmen. */}
+                  {getDocConfig(form.typ).isAngebotLike ? (
+                    <Button
+                      onClick={() => {
+                        if (kalkulationId) setKalkErsetzenOpen(true);
+                        else { setKalkSuche(""); setKalkVerknuepfenOpen(true); void ladeVerfuegbareKalks(); }
+                      }}
+                      variant="outline" size="sm" className="gap-1"
+                      title={kalkulationId
+                        ? "Positionen aus der verknüpften Kalkulation neu übernehmen"
+                        : "Eine Auftragskalkulation auswählen und mit diesem Angebot verknüpfen"}
+                    >
+                      <Calculator className="w-4 h-4" />
+                      {kalkulationId ? "Aus Kalkulation" : "Kalkulation verknüpfen"}
+                    </Button>
+                  ) : (
+                    <Button onClick={() => setTemplateDialogOpen(true)} variant="outline" size="sm" className="gap-1">
+                      <Package className="w-4 h-4" />
+                      Materialien
+                    </Button>
+                  )}
                   {items.some(it => it.ist_kalkuliert && it.kalkulation_template_id) && (
                     <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
                       className={`gap-1 ${staleKalkCount > 0 ? "border-amber-400 text-amber-700" : ""}`}
