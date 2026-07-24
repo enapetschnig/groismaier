@@ -329,24 +329,6 @@
     outline-offset: -1px;
   }
 
-  /* Hauptmenü-Kachel (KingBill-Startseite): großer Knopf, Icon OBEN,
-     Label darunter — auf jeden KBButton per className="kb-tile" anwendbar. */
-  .kb-tile {
-    flex-direction: column;
-    justify-content: center;
-    text-align: center;
-    gap: 0.375rem;
-    min-height: 5.25rem;
-    padding: 0.625rem 0.5rem;
-  }
-  .kb-tile > svg {
-    height: 1.875rem;
-    width: 1.875rem;
-  }
-  .kb-tile > span.truncate {
-    white-space: normal;
-    line-height: 1.15;
-  }
 
   .kb-badge {
     display: inline-flex;
