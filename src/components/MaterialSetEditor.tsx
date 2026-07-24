@@ -35,6 +35,8 @@ interface MaterialOption {
   netto_preis: number;  // VK
   ek_netto: number;
   produktgruppe: string | null;
+  /** false = im Katalog ist gar KEIN Preis erfasst (nicht dasselbe wie 0 €). */
+  hatPreis: boolean;
 }
 
 interface MaterialSetEditorProps {
@@ -94,12 +96,14 @@ export function MaterialSetEditor({
   const loadOptions = async () => {
     const { data } = await supabase
       .from("invoice_templates")
-      .select("id, name, kurzbezeichnung, einheit, einzelpreis, kategorie, ist_set, ek_netto, vk_netto")
+      .select("id, name, kurzbezeichnung, einheit, einzelpreis, kategorie, ist_set, ist_aktiv, ek_netto, vk_netto")
       .eq("ist_set", false)
       .order("kategorie")
       .order("name")
       .limit(5000);
-    setOptions(((data as any[]) || []).map(d => {
+    // Weich gelöschte Artikel (ist_aktiv=false) nicht als neue Komponenten
+    // anbieten — bestehende Set-Komponenten bleiben unberührt.
+    setOptions(((data as any[]) || []).filter(d => d.ist_aktiv !== false).map(d => {
       const vk = Number(d.vk_netto ?? d.einzelpreis) || 0;
       return {
         id: d.id,
@@ -109,6 +113,7 @@ export function MaterialSetEditor({
         netto_preis: vk,
         ek_netto: Number(d.ek_netto ?? vk) || 0,
         produktgruppe: d.kategorie || "Allgemein",
+        hatPreis: d.ek_netto !== null || d.vk_netto !== null || d.einzelpreis !== null,
       };
     }));
   };
@@ -163,10 +168,11 @@ export function MaterialSetEditor({
       // Duplikat-Check auf Kurzbezeichnung (case-insensitive)
       const { data: existing } = await supabase
         .from("invoice_templates")
-        .select("id, name, kurzbezeichnung, einheit, einzelpreis, kategorie, ist_set, ek_netto, vk_netto")
+        .select("id, name, kurzbezeichnung, einheit, einzelpreis, kategorie, ist_set, ist_aktiv, ek_netto, vk_netto")
         .or(`kurzbezeichnung.ilike.${kurz},name.ilike.${kurz}`)
-        .limit(1);
-      const dup = ((existing as any[]) || [])[0];
+        .limit(5);
+      // Weich gelöschte Namensvetter zählen nicht als Dublette.
+      const dup = (((existing as any[]) || []).filter(e => e.ist_aktiv !== false))[0];
       if (dup) {
         const useExisting = window.confirm(
           `Ein Material "${dup.kurzbezeichnung || dup.name}" existiert bereits. Möchtest du das bestehende verwenden?\n\n` +
@@ -195,6 +201,7 @@ export function MaterialSetEditor({
             netto_preis: dupVk,
             ek_netto: Number(dup.ek_netto ?? dupVk) || 0,
             produktgruppe: dup.kategorie || "Allgemein",
+            hatPreis: dup.ek_netto !== null || dup.vk_netto !== null || dup.einzelpreis !== null,
           });
           setPickerOpen(false);
           setQuickSaving(false);
@@ -218,6 +225,8 @@ export function MaterialSetEditor({
           brutto_preis: brutto,
           ust_satz: ust,
           kategorie: "Allgemein",
+          produktgruppe: "Allgemein",
+          ist_aktiv: true,
           ist_set: false,
           ek_netto: netto,
           vk_netto: netto,
@@ -235,6 +244,7 @@ export function MaterialSetEditor({
         netto_preis: insVk,
         ek_netto: Number((inserted as any).ek_netto ?? insVk) || netto,
         produktgruppe: (inserted as any).kategorie || "Allgemein",
+        hatPreis: true,
       });
       toast({ title: "Material angelegt", description: `${kurz} wurde erstellt und als Komponente übernommen.` });
       setPickerOpen(false);
@@ -553,7 +563,11 @@ export function MaterialSetEditor({
                             <span className="text-xs text-muted-foreground ml-1">· {o.produktgruppe}</span>
                           </div>
                           <span className="text-xs text-muted-foreground">{o.einheit}</span>
-                          <span className="text-xs font-mono text-right w-16" title="EK">€ {o.ek_netto.toFixed(2)}</span>
+                          {o.hatPreis ? (
+                            <span className="text-xs font-mono text-right w-16" title="EK">€ {o.ek_netto.toFixed(2)}</span>
+                          ) : (
+                            <span className="text-xs text-right w-16 text-amber-600" title="Im Katalog ist kein Preis erfasst — geht mit 0 € in die Set-Kalkulation ein">kein Preis</span>
+                          )}
                         </button>
                       );
                     })}

@@ -107,7 +107,11 @@ export function useKalkKatalog(): KalkKatalog {
     );
     let extraSort = Math.max(0, ...kats.map((k) => Number(k.sort) || 0));
     for (const t of ((tplRes.data as any[]) || [])) {
-      if (t.ist_aktiv === false || t.ist_set) continue;
+      // ist_kalkuliert-Artikel haben einen BERECHNETEN VK (Verschnitt/
+      // Aufschlag/Lohn in der Artikelmaske) — ein Direkt-Edit hier würde
+      // beim nächsten Masken-Speichern überschrieben. Sie bleiben in der
+      // Artikelmaske zuhause, wie Sets.
+      if (t.ist_aktiv === false || t.ist_set || t.ist_kalkuliert) continue;
       const gName = String(t.produktgruppe || "Sonstige").trim() || "Sonstige";
       let kat = materialByName.get(norm(gName));
       if (!kat) {
@@ -126,8 +130,11 @@ export function useKalkKatalog(): KalkKatalog {
       }
       const artikelName = String(t.kurzbezeichnung || t.name || "").trim();
       if (!artikelName) continue;
-      // Dedup: gleichnamigen Alt-Artikel der Gruppe verdrängen (Template gewinnt).
-      const altIdx = kat.artikel.findIndex((x) => norm(x.name) === norm(artikelName));
+      // Dedup: gleichnamigen ALT-Artikel der Gruppe verdrängen (Template
+      // gewinnt). Bewusst NUR quelle "kalk": zwei gleichnamige Templates
+      // (z.B. zweimal „Neuer Artikel") müssen beide sichtbar bleiben, sonst
+      // ist eines in den Einstellungen unerreichbar.
+      const altIdx = kat.artikel.findIndex((x) => x.quelle !== "template" && norm(x.name) === norm(artikelName));
       const vk = t.vk_netto ?? t.netto_preis ?? t.einzelpreis;
       const neu: KatalogArtikel = {
         id: t.id,

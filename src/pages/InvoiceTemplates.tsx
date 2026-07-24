@@ -129,7 +129,10 @@ export default function InvoiceTemplates() {
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: "Artikel konnten nicht geladen werden" });
     } else {
-      const rows = (data || []).map(t => {
+      // Weich gelöschte Artikel (ist_aktiv=false — z.B. aus den Kalkulations-
+      // Einstellungen oder hier per Löschen) NICHT anzeigen: Löschen muss
+      // überall dasselbe bedeuten (Ein-Katalog-Einheitlichkeit).
+      const rows = (data || []).filter(t => (t as any).ist_aktiv !== false).map(t => {
         const nettoPreis = Number((t as any).netto_preis) || Number(t.einzelpreis);
         return {
           ...t,
@@ -148,7 +151,10 @@ export default function InvoiceTemplates() {
           ist_favorit: (t as any).ist_favorit || false,
           foto_path: (t as any).foto_path || null,
           ist_set: !!(t as any).ist_set,
-          ek_netto: Number((t as any).ek_netto ?? nettoPreis) || 0,
+          // EK NICHT aus dem VK spiegeln: leerer EK bleibt 0/leer — sonst
+          // würde die Maske beim nächsten Speichern einen erfundenen EK
+          // festschreiben (und die Kalkulation zeigte falsche Spannen).
+          ek_netto: (t as any).ek_netto === null || (t as any).ek_netto === undefined ? 0 : Number((t as any).ek_netto),
           vk_netto: Number((t as any).vk_netto ?? nettoPreis) || 0,
           bezugseinheit: (t as any).bezugseinheit || null,
           aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
@@ -340,29 +346,36 @@ export default function InvoiceTemplates() {
       stundensatz: Number(form.stundensatz) || 52,
     });
     const vkEffective = form.ist_kalkuliert ? kalkVk : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
-    const ekEffective = Number(form.ek_netto) || vkEffective;
+    // Kein stilles EK:=VK mehr — ein leerer EK bleibt leer (null). Sonst
+    // bekämen z.B. die preislosen Dämmstoffe beim bloßen Foto-Anhängen
+    // plötzlich Preise, und die Kalkulation verlöre ihr "Preis manuell".
+    const ekEffective = Number(form.ek_netto) || 0;
     const bruttoEffective = Math.round(vkEffective * (1 + Number(form.ust_satz) / 100) * 100) / 100;
+    // 0 = "kein Preis erfasst" → als NULL speichern (gleiche Sprache wie der
+    // Kalkulations-Katalog: leer heißt kein Preis, nicht gratis).
+    const vkOderNull = vkEffective === 0 ? null : vkEffective;
+    const ekOderNull = ekEffective === 0 ? null : ekEffective;
 
     const payload: any = {
       name: form.kurzbezeichnung || form.name,
       beschreibung: form.langbezeichnung || form.beschreibung || form.kurzbezeichnung || form.name,
       einheit: form.ist_set && form.bezugseinheit ? form.bezugseinheit : form.einheit,
-      einzelpreis: vkEffective,
+      einzelpreis: vkOderNull,
       kategorie: form.produktgruppe || form.kategorie,
       artikelnummer: form.produktnummer || form.artikelnummer || null,
       produktnummer: form.produktnummer || null,
       produktgruppe: form.produktgruppe || null,
       kurzbezeichnung: form.kurzbezeichnung || form.name,
       langbezeichnung: form.langbezeichnung || null,
-      netto_preis: vkEffective,
-      brutto_preis: bruttoEffective,
+      netto_preis: vkOderNull,
+      brutto_preis: vkOderNull === null ? null : bruttoEffective,
       ust_satz: form.ust_satz,
       ist_lagerartikel: form.ist_lagerartikel,
       lieferant: form.lieferant || null,
       foto_path: form.foto_path,
       ist_set: form.ist_set,
-      ek_netto: ekEffective,
-      vk_netto: vkEffective,
+      ek_netto: ekOderNull,
+      vk_netto: vkOderNull,
       bezugseinheit: form.ist_set ? (form.bezugseinheit || null) : null,
       aufschlag_prozent: (form.ist_set || form.ist_kalkuliert) ? Number(form.aufschlag_prozent) || 0 : 0,
       vk_preis_manuell: form.ist_set ? form.vk_preis_manuell : false,
@@ -424,14 +437,22 @@ export default function InvoiceTemplates() {
   };
 
   const handleInlinePrice = async (id: string, newPrice: number) => {
-    const { error } = await supabase.from("invoice_templates").update({ einzelpreis: newPrice }).eq("id", id);
+    // Alle drei VK-Spiegel gemeinsam — die Kalkulation liest vk_netto zuerst;
+    // wer nur einzelpreis ändert, sieht dort weiter den alten Preis.
+    const { error } = await supabase.from("invoice_templates")
+      .update({ einzelpreis: newPrice, netto_preis: newPrice, vk_netto: newPrice })
+      .eq("id", id);
     if (!error) {
-      setTemplates(prev => prev.map(t => t.id === id ? { ...t, einzelpreis: newPrice } : t));
+      setTemplates(prev => prev.map(t => t.id === id ? { ...t, einzelpreis: newPrice, netto_preis: newPrice, vk_netto: newPrice } : t));
     }
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from("invoice_templates").delete().eq("id", id);
+    // Weiches Löschen (ist_aktiv=false) statt DELETE: auf Artikel können
+    // Belege/Sets verweisen, und die Kalkulations-Einstellungen löschen
+    // genauso — Löschen bedeutet überall dasselbe.
+    const { error } = await supabase.from("invoice_templates")
+      .update({ ist_aktiv: false }).eq("id", id);
     if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
     if (selectedId === id) setSelectedId(null);
     toast({ title: "Gelöscht" });
@@ -886,6 +907,13 @@ export default function InvoiceTemplates() {
                   <Select value={form.einheit} onValueChange={(v) => setForm(f => ({ ...f, einheit: v }))}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
+                      {/* Gespeicherte Einheit immer anbieten, auch wenn sie
+                          nicht in der Standardliste steht (z.B. "m³" aus der
+                          Kalkulation) — sonst zeigt das Select leer und die
+                          Einheit ginge beim Speichern verloren. */}
+                      {form.einheit && !einheiten.includes(form.einheit) && (
+                        <SelectItem value={form.einheit}>{form.einheit}</SelectItem>
+                      )}
                       {einheiten.map(e => (
                         <SelectItem key={e} value={e}>{e}</SelectItem>
                       ))}

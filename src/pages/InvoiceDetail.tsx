@@ -1712,7 +1712,10 @@ export default function InvoiceDetail() {
   };
 
   const fetchTemplates = async () => {
-    const { data } = await supabase.from("invoice_templates").select("*").order("kategorie, name").limit(5000);
+    const { data: tplData } = await supabase.from("invoice_templates").select("*").order("kategorie, name").limit(5000);
+    // Weich gelöschte Artikel (ist_aktiv=false) nirgends mehr anbieten —
+    // gleiche Regel wie Kalkulation und Artikelliste (Ein-Katalog).
+    const data = (tplData || []).filter((t: any) => t.ist_aktiv !== false);
     if (data) setTemplates(data.map(t => ({ ...t, einzelpreis: Number(t.einzelpreis), ist_favorit: (t as any).ist_favorit || false })));
   };
 

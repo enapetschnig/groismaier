@@ -204,27 +204,42 @@ export function MaterialFileImport({ open, onClose, onImported }: MaterialFileIm
       const userId = auth?.user?.id;
       if (!userId) throw new Error("Nicht angemeldet — bitte neu einloggen.");
 
-      // Duplikat-Check: bestehende Materialien laden und nach Name (case-insensitive, trimmed) vergleichen
+      // Duplikat-Check: bestehende Materialien laden und nach Name (case-insensitive, trimmed) vergleichen.
+      // ist_aktiv wird mitgeladen: ein weich gelöschter Namensvetter darf den
+      // Import nicht dauerhaft blockieren — er wird stattdessen mit den neuen
+      // Daten REAKTIVIERT.
       const { data: existing } = await supabase
         .from("invoice_templates")
-        .select("id, name");
-      const existingNames = new Set(
-        (existing || []).map((e: any) => (e.name || "").trim().toLowerCase())
-      );
+        .select("id, name, ist_aktiv");
+      const aktiveNamen = new Set<string>();
+      const inaktiveNachName = new Map<string, string>();
+      for (const e of (existing || []) as any[]) {
+        const key = (e.name || "").trim().toLowerCase();
+        if (!key) continue;
+        if (e.ist_aktiv === false) {
+          if (!inaktiveNachName.has(key)) inaktiveNachName.set(key, e.id);
+        } else {
+          aktiveNamen.add(key);
+        }
+      }
 
       const toInsert: typeof selected = [];
+      const toReactivate: { id: string; m: (typeof selected)[number] }[] = [];
       const skipped: string[] = [];
       for (const m of selected) {
         const key = m.name.trim().toLowerCase();
-        if (existingNames.has(key)) {
+        if (aktiveNamen.has(key)) {
           skipped.push(m.name.trim());
+        } else if (inaktiveNachName.has(key)) {
+          aktiveNamen.add(key);
+          toReactivate.push({ id: inaktiveNachName.get(key)!, m });
         } else {
-          existingNames.add(key); // auch Duplikate innerhalb des Imports filtern
+          aktiveNamen.add(key); // auch Duplikate innerhalb des Imports filtern
           toInsert.push(m);
         }
       }
 
-      if (toInsert.length === 0) {
+      if (toInsert.length === 0 && toReactivate.length === 0) {
         toast({
           variant: "destructive",
           title: "Nichts zu importieren",
@@ -237,46 +252,56 @@ export function MaterialFileImport({ open, onClose, onImported }: MaterialFileIm
       // netto_preis/brutto_preis + aktuell ek_netto/vk_netto). Wer nur
       // einzelpreis schreibt, sieht in der Artikelmaske überall 0,00 €.
       const aufschlag = Math.max(0, toNumber(aufschlagInput, 0));
-      const { error } = await supabase.from("invoice_templates").insert(
-        toInsert.map(m => {
-          const preis = Math.max(0, m.einzelpreis || 0);
-          const ek = preisArt === "ek" ? preis : preis;
-          const vk = preisArt === "ek"
-            ? Math.round(preis * (1 + aufschlag / 100) * 100) / 100
-            : preis;
-          const name = m.name.trim();
-          return {
-            user_id: userId,
-            name,
-            // beschreibung ist NOT NULL → niemals null einfügen
-            beschreibung: m.beschreibung?.trim() || name,
-            kurzbezeichnung: name,
-            langbezeichnung: m.beschreibung?.trim() || null,
-            // Einheitlichkeit (Kundenwunsch): kategorie und produktgruppe sind
-            // ÜBERALL dasselbe — Beleg-Editor gruppiert nach kategorie, die
-            // Kalkulation und die KingBill-Artikelmaske nach produktgruppe.
-            kategorie: kategorie.trim() || null,
-            produktgruppe: kategorie.trim() || null,
-            einheit: m.einheit || "Stk.",
-            einzelpreis: vk,
-            netto_preis: vk,
-            brutto_preis: Math.round(vk * 1.2 * 100) / 100,
-            ust_satz: 20,
-            ek_netto: ek,
-            vk_netto: vk,
-            aufschlag_prozent: preisArt === "ek" ? aufschlag : 0,
-            ist_aktiv: true,
-          };
-        })
-      );
-      if (error) throw error;
+      const zeilenDaten = (m: (typeof selected)[number]) => {
+        const preis = Math.max(0, m.einzelpreis || 0);
+        const ek = preisArt === "ek" ? preis : preis;
+        const vk = preisArt === "ek"
+          ? Math.round(preis * (1 + aufschlag / 100) * 100) / 100
+          : preis;
+        const name = m.name.trim();
+        return {
+          name,
+          // beschreibung ist NOT NULL → niemals null einfügen
+          beschreibung: m.beschreibung?.trim() || name,
+          kurzbezeichnung: name,
+          langbezeichnung: m.beschreibung?.trim() || null,
+          // Einheitlichkeit (Kundenwunsch): kategorie und produktgruppe sind
+          // ÜBERALL dasselbe — Beleg-Editor gruppiert nach kategorie, die
+          // Kalkulation und die KingBill-Artikelmaske nach produktgruppe.
+          kategorie: kategorie.trim() || null,
+          produktgruppe: kategorie.trim() || null,
+          einheit: m.einheit || "Stk.",
+          einzelpreis: vk,
+          netto_preis: vk,
+          brutto_preis: Math.round(vk * 1.2 * 100) / 100,
+          ust_satz: 20,
+          ek_netto: ek,
+          vk_netto: vk,
+          aufschlag_prozent: preisArt === "ek" ? aufschlag : 0,
+          ist_aktiv: true,
+        };
+      };
+      if (toInsert.length > 0) {
+        const { error } = await supabase.from("invoice_templates").insert(
+          toInsert.map(m => ({ user_id: userId, ...zeilenDaten(m) }))
+        );
+        if (error) throw error;
+      }
+      for (const r of toReactivate) {
+        const { error } = await supabase.from("invoice_templates")
+          .update(zeilenDaten(r.m)).eq("id", r.id);
+        if (error) throw error;
+      }
 
       const skipMsg = skipped.length > 0
         ? ` (${skipped.length} bereits vorhanden, übersprungen)`
         : "";
+      const reaktiviertMsg = toReactivate.length > 0
+        ? `, ${toReactivate.length} gelöschte reaktiviert`
+        : "";
       toast({
         title: "Materialien importiert",
-        description: `${toInsert.length} Materialien angelegt${skipMsg}`,
+        description: `${toInsert.length} Materialien angelegt${reaktiviertMsg}${skipMsg}`,
       });
       onImported();
     } catch (err: any) {

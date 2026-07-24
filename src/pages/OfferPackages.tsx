@@ -103,7 +103,9 @@ export default function OfferPackages() {
       supabase.from("invoice_templates").select("*").order("kategorie, name").limit(5000),
     ]);
 
-    if (tmpls) setTemplates(tmpls.map((t: any) => ({ ...t, einzelpreis: Number(t.einzelpreis) })));
+    // Weich gelöschte Artikel (ist_aktiv=false) nicht mehr anbieten —
+    // Paket-Positionen selbst sind Snapshots und bleiben unberührt.
+    if (tmpls) setTemplates(tmpls.filter((t: any) => t.ist_aktiv !== false).map((t: any) => ({ ...t, einzelpreis: Number(t.einzelpreis) })));
 
     if (pkgs) {
       // Load items for each package

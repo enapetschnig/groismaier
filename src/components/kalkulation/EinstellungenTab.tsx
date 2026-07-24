@@ -155,13 +155,19 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       if (error) { fehler(error.message); return; }
     }
     // … und bei Material auch die produktgruppe im Artikelstamm mitziehen
-    // (EIN Katalog: die Gruppe der Templates IST die Kategorie).
+    // (EIN Katalog: die Gruppe der Templates IST die Kategorie). Über die
+    // KONKRETEN Artikel-IDs statt eq(produktgruppe): so treffen wir auch
+    // Case-Varianten ("dämmstoffe" vs "Dämmstoffe") und die "Sonstige"-
+    // Gruppe (produktgruppe NULL/leer), die ein exakter Match verfehlt.
     if (kat.typ === "material") {
-      const { error } = await supabase
-        .from("invoice_templates")
-        .update({ produktgruppe: name.trim(), kategorie: name.trim() })
-        .eq("produktgruppe", kat.name);
-      if (error) { fehler(error.message); return; }
+      const ids = kat.artikel.filter((a) => a.quelle === "template").map((a) => a.id);
+      if (ids.length > 0) {
+        const { error } = await supabase
+          .from("invoice_templates")
+          .update({ produktgruppe: name.trim(), kategorie: name.trim() })
+          .in("id", ids);
+        if (error) { fehler(error.message); return; }
+      }
     }
     katalog.reload();
   };
@@ -208,14 +214,24 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     katalog.reload();
   };
 
-  /** kalk-Patch (name/ek/vk/einheit) in Artikelstamm-Spalten übersetzen. */
+  /**
+   * kalk-Patch (name/ek/vk/einheit) in Artikelstamm-Spalten übersetzen.
+   * Preise auf 2 NK gerundet: vk_netto/ek_netto sind numeric(12,2) — die
+   * Spiegelfelder (netto_preis/einzelpreis) nicht. Ungerundet liefe der
+   * Preis in der Kalkulation (liest vk_netto) und in Belegen auseinander.
+   */
+  const rund2 = (v: unknown): number | null =>
+    v === null || v === undefined ? null : Math.round(Number(v) * 100) / 100;
   const templatePatch = (patch: Record<string, unknown>): Record<string, unknown> => {
     const t: Record<string, unknown> = {};
     if ("name" in patch) {
       t.name = patch.name; t.kurzbezeichnung = patch.name; t.beschreibung = patch.name;
     }
-    if ("ek" in patch) t.ek_netto = patch.ek;
-    if ("vk" in patch) { t.vk_netto = patch.vk; t.netto_preis = patch.vk; t.einzelpreis = patch.vk; }
+    if ("ek" in patch) t.ek_netto = rund2(patch.ek);
+    if ("vk" in patch) {
+      const vk = rund2(patch.vk);
+      t.vk_netto = vk; t.netto_preis = vk; t.einzelpreis = vk;
+    }
     if ("einheit" in patch) t.einheit = patch.einheit;
     return t;
   };

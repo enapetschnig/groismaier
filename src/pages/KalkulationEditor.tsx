@@ -522,10 +522,12 @@ export default function KalkulationEditor() {
         // Mengeneinheit („m³"), nicht Preis-Einheit („€ / m³") — die Einheit
         // landet 1:1 in Angebots-/Rechnungszeilen.
         einheit: mengenEinheit(z.einheit) || "m²",
-        ek_netto: z.ek,
-        vk_netto: z.vk,
-        netto_preis: z.vk,
-        einzelpreis: z.vk,
+        // 2 NK: vk_netto/ek_netto sind numeric(12,2) — ungerundet liefen
+        // die Spiegelfelder (netto_preis/einzelpreis) auseinander.
+        ek_netto: z.ek === null ? null : Math.round(z.ek * 100) / 100,
+        vk_netto: z.vk === null ? null : Math.round(z.vk * 100) / 100,
+        netto_preis: z.vk === null ? null : Math.round(z.vk * 100) / 100,
+        einzelpreis: z.vk === null ? null : Math.round(z.vk * 100) / 100,
         ist_aktiv: true,
       });
     }
@@ -920,7 +922,15 @@ export default function KalkulationEditor() {
                     <span className="mb-0.5 block text-muted-foreground">Ziel-Kategorie</span>
                     <select className="kb-input h-11 min-h-0 w-full px-2 py-1 text-sm sm:h-9"
                       value={z.ziel} aria-label={`Ziel-Kategorie für ${z.name}`}
-                      onChange={(e) => patchUebernahme(i, { ziel: e.target.value })}>
+                      onChange={(e) => {
+                        const ziel = e.target.value;
+                        // Einheit aus der Zielgruppe vorbelegen, solange der
+                        // Anwender selbst noch keine eingetragen hat.
+                        const zielKat = findeKategorie(katalog.materialKategorien, ziel === NEUE_KATEGORIE ? z.kategorie : ziel);
+                        patchUebernahme(i, z.einheit.trim()
+                          ? { ziel }
+                          : { ziel, einheit: mengenEinheit(zielKat?.einheit) });
+                      }}>
                       <option value="">— bitte wählen —</option>
                       {z.kategorieFrei && <option value={NEUE_KATEGORIE}>Neu anlegen: „{z.kategorie}“</option>}
                       {katalog.materialKategorien.map((k) => <option key={k.id} value={k.name}>{k.name}</option>)}
@@ -937,7 +947,7 @@ export default function KalkulationEditor() {
                   <label className="col-span-2 block text-xs">
                     <span className="mb-0.5 block text-muted-foreground">Einheit</span>
                     <input className="kb-input h-11 min-h-0 px-2 py-1 text-sm sm:h-9" value={z.einheit}
-                      placeholder="z.B. € / m³" aria-label={`Einheit für ${z.name}`}
+                      placeholder="z.B. m³" aria-label={`Einheit für ${z.name}`}
                       onChange={(e) => patchUebernahme(i, { einheit: e.target.value })} />
                   </label>
                 </div>
