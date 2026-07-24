@@ -496,32 +496,35 @@ export default function KalkulationEditor() {
       neueKategorien.push(name);
     }
 
-    // 2. Artikel anlegen — bereits vorhandene Namen werden übersprungen, sonst
-    //    entstehen Dubletten, sobald jemand den Dialog zweimal bestätigt.
-    const artSort = new Map<string, number>();
-    for (const k of katalog.materialKategorien) {
-      artSort.set(normName(k.name), Math.max(0, ...k.artikel.map((a) => Number(a.sort) || 0)));
-    }
+    // 2. Artikel anlegen — in den ARTIKELSTAMM (invoice_templates), die EINE
+    //    Quelle für Produkte (EIN-Katalog-Umbau, Kundenwunsch 2026-07-24).
+    //    Die Position steht damit sofort unter „Produkte" der Aufbau-
+    //    Kalkulation UND in der Artikelliste der App. Bereits vorhandene
+    //    Namen werden übersprungen (keine Dubletten bei Doppel-Bestätigung).
+    const { data: { user: aktuellerUser } } = await supabase.auth.getUser();
     const rows: Record<string, unknown>[] = [];
     const uebersprungen: string[] = [];
     for (const z of gewaehlt) {
-      const name = zielName(z);
-      const doppelt = findeArtikel(katalog.materialKategorien, name, z.name)
-        || rows.some((r) => r.kategorie_id === katIds.get(normName(name)) && normName(String(r.name)) === normName(z.name));
+      const gruppe = zielName(z);
+      const doppelt = findeArtikel(katalog.materialKategorien, gruppe, z.name)
+        || rows.some((r) => normName(String(r.produktgruppe)) === normName(gruppe) && normName(String(r.kurzbezeichnung)) === normName(z.name));
       if (doppelt) { uebersprungen.push(z.name); continue; }
-      const sort = (artSort.get(normName(name)) ?? 0) + 10;
-      artSort.set(normName(name), sort);
       rows.push({
-        kategorie_id: katIds.get(normName(name)),
+        user_id: aktuellerUser?.id,
         name: z.name.trim(),
-        ek: z.ek,
-        vk: z.vk,
-        einheit: z.einheit || "",
-        sort,
+        beschreibung: z.name.trim(),
+        kurzbezeichnung: z.name.trim(),
+        produktgruppe: gruppe.trim(),
+        einheit: z.einheit || "m²",
+        ek_netto: z.ek,
+        vk_netto: z.vk,
+        netto_preis: z.vk,
+        einzelpreis: z.vk,
+        ist_aktiv: true,
       });
     }
     if (rows.length > 0) {
-      const { error } = await artTable().insert(rows);
+      const { error } = await supabase.from("invoice_templates").insert(rows as any);
       if (error) { katalogFehler(error.message); setUebernahmeSaving(false); return; }
     }
 

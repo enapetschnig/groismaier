@@ -18,7 +18,11 @@ export const istStundenEinheit = (einheit: string | null | undefined) =>
  * oder „Zellulose Helfer" (Fremdleistungen, keine eigenen Arbeitsstunden).
  */
 export const istStundensatzName = (name: string | null | undefined) =>
-  /(stunden?\b|facharbeiter|lehrling|baumeister|kranfahrer|hiab)/i.test(String(name || ""));
+  // "arbeitszeit": die Aufbau-Kalkulation schreibt die angebotenen Stunden
+  // als Zeile „Arbeitszeit: X Tage × Y Arbeiter" (Einheit h, Menge =
+  // Gesamtstunden) ins Angebot — ohne dieses Muster war das Stunden-Soll
+  // bei allen Kalkulations-Angeboten 0 (Kundenwunsch Stundenabgleich).
+  /(stunden?\b|arbeitszeit|facharbeiter|lehrling|baumeister|kranfahrer|hiab)/i.test(String(name || ""));
 
 /**
  * Angebots-/Rechnungszeile = explizit angebotene eigene Arbeitszeit?

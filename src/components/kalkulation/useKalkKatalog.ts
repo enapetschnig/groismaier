@@ -21,6 +21,16 @@ export interface KatalogArtikel {
   einheit: string | null;
   sort: number;
   aktiv: boolean;
+  /**
+   * Herkunft des Artikels (EIN-Katalog-Umbau, Kundenwunsch 2026-07-24):
+   *  "template" = Artikelstamm invoice_templates (die EINE Quelle; id ist
+   *               die Template-ID, Kategorie = produktgruppe)
+   *  "kalk"     = Alt-Bestand kalkulation_artikel (nur solange er nicht in
+   *               den Artikelstamm migriert ist; wird bei Namensgleichheit
+   *               vom Template verdrängt)
+   * lack/aufpreis-Artikel tragen weiterhin "kalk".
+   */
+  quelle?: "template" | "kalk";
 }
 
 export interface KatalogKategorie {
@@ -54,9 +64,22 @@ export function useKalkKatalog(): KalkKatalog {
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
-    const [katRes, artRes, setRes] = await Promise.all([
+    // EIN Katalog (Kundenwunsch 2026-07-24): Die MATERIAL-Artikel („Produkte"
+    // der Aufbau-Kalkulation) leben im Artikelstamm invoice_templates
+    // (Kategorie = produktgruppe) — dieselbe Quelle wie die Artikelliste der
+    // App. Die Gruppen-REGISTRY (Reihenfolge, Standard-Einheit, Anlegen
+    // leerer Gruppen) bleibt kalkulation_kategorien. Alt-Artikel aus
+    // kalkulation_artikel werden weiter angezeigt, bis sie migriert sind —
+    // bei Namensgleichheit gewinnt der Artikelstamm. lack/aufpreis bleiben
+    // unverändert im Spezial-Katalog (Oberflächenbeschichtung).
+    const [katRes, artRes, tplRes, setRes] = await Promise.all([
       katTable().select("id, name, typ, einheit, sort, aktiv").order("sort"),
       artTable().select("id, kategorie_id, name, ek, vk, einheit, sort, aktiv").order("sort"),
+      supabase
+        .from("invoice_templates")
+        .select("id, name, kurzbezeichnung, produktgruppe, einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv, ist_set")
+        .order("produktgruppe")
+        .order("kurzbezeichnung"),
       supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
     ]);
     const kats: KatalogKategorie[] = ((katRes.data as any[]) || [])
@@ -66,8 +89,61 @@ export function useKalkKatalog(): KalkKatalog {
     for (const a of ((artRes.data as any[]) || [])) {
       if (a.aktiv === false) continue;
       const kat = byId.get(a.kategorie_id);
-      if (kat) kat.artikel.push({ ...a, ek: a.ek === null ? null : Number(a.ek), vk: a.vk === null ? null : Number(a.vk) });
+      if (kat) {
+        kat.artikel.push({
+          ...a,
+          ek: a.ek === null ? null : Number(a.ek),
+          vk: a.vk === null ? null : Number(a.vk),
+          quelle: "kalk",
+        });
+      }
     }
+
+    // Artikelstamm einmischen: Material-Gruppen über produktgruppe zuordnen;
+    // unbekannte Gruppen entstehen implizit am Ende der Material-Liste.
+    const norm = (s: string) => (s || "").trim().toLowerCase();
+    const materialByName = new Map<string, KatalogKategorie>(
+      kats.filter((k) => k.typ === "material").map((k) => [norm(k.name), k]),
+    );
+    let extraSort = Math.max(0, ...kats.map((k) => Number(k.sort) || 0));
+    for (const t of ((tplRes.data as any[]) || [])) {
+      if (t.ist_aktiv === false || t.ist_set) continue;
+      const gName = String(t.produktgruppe || "Sonstige").trim() || "Sonstige";
+      let kat = materialByName.get(norm(gName));
+      if (!kat) {
+        extraSort += 10;
+        kat = {
+          id: `pg:${norm(gName)}`,
+          name: gName,
+          typ: "material",
+          einheit: null,
+          sort: extraSort,
+          aktiv: true,
+          artikel: [],
+        };
+        materialByName.set(norm(gName), kat);
+        kats.push(kat);
+      }
+      const artikelName = String(t.kurzbezeichnung || t.name || "").trim();
+      if (!artikelName) continue;
+      // Dedup: gleichnamigen Alt-Artikel der Gruppe verdrängen (Template gewinnt).
+      const altIdx = kat.artikel.findIndex((x) => norm(x.name) === norm(artikelName));
+      const vk = t.vk_netto ?? t.netto_preis ?? t.einzelpreis;
+      const neu: KatalogArtikel = {
+        id: t.id,
+        kategorie_id: kat.id,
+        name: artikelName,
+        ek: t.ek_netto === null || t.ek_netto === undefined ? null : Number(t.ek_netto),
+        vk: vk === null || vk === undefined ? null : Number(vk),
+        einheit: t.einheit || null,
+        sort: altIdx >= 0 ? kat.artikel[altIdx].sort : (kat.artikel.length + 1) * 10,
+        aktiv: true,
+        quelle: "template",
+      };
+      if (altIdx >= 0) kat.artikel[altIdx] = neu;
+      else kat.artikel.push(neu);
+    }
+
     const s: Record<string, string> = {};
     for (const row of setRes.data || []) s[row.key] = row.value;
     setKategorien(kats);

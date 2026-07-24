@@ -149,19 +149,56 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
 
   const renameKategorie = async (kat: KatalogKategorie, name: string) => {
     if (!name.trim()) return;
-    const { error } = await katTable().update({ name: name.trim() }).eq("id", kat.id);
-    if (error) { fehler(error.message); return; }
+    // Registry-Eintrag (falls vorhanden) umbenennen …
+    if (!kat.id.startsWith("pg:")) {
+      const { error } = await katTable().update({ name: name.trim() }).eq("id", kat.id);
+      if (error) { fehler(error.message); return; }
+    }
+    // … und bei Material auch die produktgruppe im Artikelstamm mitziehen
+    // (EIN Katalog: die Gruppe der Templates IST die Kategorie).
+    if (kat.typ === "material") {
+      const { error } = await supabase
+        .from("invoice_templates")
+        .update({ produktgruppe: name.trim() })
+        .eq("produktgruppe", kat.name);
+      if (error) { fehler(error.message); return; }
+    }
     katalog.reload();
   };
 
   const deleteKategorie = async (kat: KatalogKategorie) => {
+    const templateArtikel = kat.artikel.filter((a) => a.quelle === "template");
+    if (kat.typ === "material" && templateArtikel.length > 0) {
+      fehler(`Kategorie „${kat.name}“ enthält ${templateArtikel.length} Artikel aus dem Artikelstamm — bitte zuerst die Artikel löschen oder in eine andere Gruppe verschieben.`);
+      return;
+    }
     if (!window.confirm(`Kategorie „${kat.name}“ samt ${kat.artikel.length} Artikel(n) löschen?\nBestehende Kalkulationen behalten ihre kopierten Preise.`)) return;
-    const { error } = await katTable().delete().eq("id", kat.id);
-    if (error) { fehler(error.message); return; }
+    if (!kat.id.startsWith("pg:")) {
+      const { error } = await katTable().delete().eq("id", kat.id);
+      if (error) { fehler(error.message); return; }
+    }
     katalog.reload();
   };
 
   const addArtikel = async (kat: KatalogKategorie) => {
+    // EIN Katalog: neue MATERIAL-Artikel entstehen im Artikelstamm
+    // (invoice_templates, Gruppe = produktgruppe) — lack/aufpreis wie bisher
+    // im Spezial-Katalog.
+    if (kat.typ === "material") {
+      const { data: { user } } = await supabase.auth.getUser();
+      const { error } = await supabase.from("invoice_templates").insert({
+        user_id: user?.id,
+        name: "Neuer Artikel",
+        beschreibung: "Neuer Artikel",
+        kurzbezeichnung: "Neuer Artikel",
+        produktgruppe: kat.name,
+        einheit: kat.einheit || "m²",
+        ist_aktiv: true,
+      } as any);
+      if (error) { fehler(error.message); return; }
+      katalog.reload();
+      return;
+    }
     const maxSort = Math.max(0, ...kat.artikel.map((a) => a.sort));
     const { error } = await artTable().insert({
       kategorie_id: kat.id, name: "Neuer Artikel", einheit: kat.einheit || "", sort: maxSort + 10,
@@ -170,15 +207,33 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     katalog.reload();
   };
 
-  const updateArtikel = async (id: string, patch: Record<string, unknown>) => {
-    const { error } = await artTable().update(patch).eq("id", id);
+  /** kalk-Patch (name/ek/vk/einheit) in Artikelstamm-Spalten übersetzen. */
+  const templatePatch = (patch: Record<string, unknown>): Record<string, unknown> => {
+    const t: Record<string, unknown> = {};
+    if ("name" in patch) {
+      t.name = patch.name; t.kurzbezeichnung = patch.name; t.beschreibung = patch.name;
+    }
+    if ("ek" in patch) t.ek_netto = patch.ek;
+    if ("vk" in patch) { t.vk_netto = patch.vk; t.netto_preis = patch.vk; t.einzelpreis = patch.vk; }
+    if ("einheit" in patch) t.einheit = patch.einheit;
+    return t;
+  };
+
+  const updateArtikel = async (id: string, patch: Record<string, unknown>, quelle?: "template" | "kalk") => {
+    const { error } = quelle === "template"
+      ? await supabase.from("invoice_templates").update(templatePatch(patch) as any).eq("id", id)
+      : await artTable().update(patch).eq("id", id);
     if (error) { fehler(error.message); return; }
     katalog.reload();
   };
 
   const deleteArtikel = async (a: KatalogArtikel) => {
     if (!window.confirm(`Artikel „${a.name}“ löschen?`)) return;
-    const { error } = await artTable().delete().eq("id", a.id);
+    // Artikelstamm: weich deaktivieren — auf Templates können Belege/Sets
+    // verweisen; ist_aktiv=false blendet sie überall aus.
+    const { error } = a.quelle === "template"
+      ? await supabase.from("invoice_templates").update({ ist_aktiv: false } as any).eq("id", a.id)
+      : await artTable().delete().eq("id", a.id);
     if (error) { fehler(error.message); return; }
     katalog.reload();
   };
@@ -210,13 +265,13 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     if (ek !== null && (a.vk === null || a.vk === 0)) {
       patch.vk = round4(ek * (typ === "lack" ? lackFaktor : vkFaktor));
     }
-    updateArtikel(a.id, patch);
+    updateArtikel(a.id, patch, a.quelle);
   };
 
   const commitVk = (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
     const vk = preisEingabe(text, typ);
     if (vk === undefined) return;
-    updateArtikel(a.id, { vk });
+    updateArtikel(a.id, { vk }, a.quelle);
   };
 
   return (
@@ -289,7 +344,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                       {kat.artikel.map((a) => (
                         <tr key={a.id} className="border-b last:border-b-0">
                           <td className="px-2 py-1">
-                            <BlurInput value={a.name} onCommit={(v) => v.trim() && updateArtikel(a.id, { name: v.trim() })}
+                            <BlurInput value={a.name} onCommit={(v) => v.trim() && updateArtikel(a.id, { name: v.trim() }, a.quelle)}
                               className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
                           </td>
                           {block.typ !== "aufpreis" && (
@@ -305,7 +360,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                               className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
-                            <BlurInput value={a.einheit || ""} onCommit={(v) => updateArtikel(a.id, { einheit: v })}
+                            <BlurInput value={a.einheit || ""} onCommit={(v) => updateArtikel(a.id, { einheit: v }, a.quelle)}
                               className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
