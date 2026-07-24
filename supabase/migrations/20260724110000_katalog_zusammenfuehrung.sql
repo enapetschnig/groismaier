@@ -11,14 +11,16 @@
 -- vorhandene Artikel werden uebersprungen.
 -- ============================================================================
 INSERT INTO public.invoice_templates
-  (user_id, name, beschreibung, kurzbezeichnung, produktgruppe, einheit,
-   ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv)
+  (user_id, name, beschreibung, kurzbezeichnung, produktgruppe, kategorie,
+   einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv)
 SELECT
   -- Stammdaten gehoeren dem (ersten) Administrator. Hinweis: user_roles hat
   -- KEINE created_at-Spalte — daher ohne ORDER BY.
   (SELECT ur.user_id FROM public.user_roles ur
     WHERE ur.role = 'administrator'::public.app_role LIMIT 1),
-  a.name, a.name, a.name, k.name,
+  -- kategorie = produktgruppe (Einheitlichkeit: Beleg-Editor gruppiert nach
+  -- kategorie, Kalkulation/Artikelmaske nach produktgruppe).
+  a.name, a.name, a.name, k.name, k.name,
   -- Preis-Einheit des Alt-Katalogs („€ / m³") → MENGENeinheit („m³"):
   -- die Einheit landet 1:1 in Angebots-/Rechnungszeilen.
   COALESCE(

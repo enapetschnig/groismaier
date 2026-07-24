@@ -252,7 +252,11 @@ export function MaterialFileImport({ open, onClose, onImported }: MaterialFileIm
             beschreibung: m.beschreibung?.trim() || name,
             kurzbezeichnung: name,
             langbezeichnung: m.beschreibung?.trim() || null,
+            // Einheitlichkeit (Kundenwunsch): kategorie und produktgruppe sind
+            // ÜBERALL dasselbe — Beleg-Editor gruppiert nach kategorie, die
+            // Kalkulation und die KingBill-Artikelmaske nach produktgruppe.
             kategorie: kategorie.trim() || null,
+            produktgruppe: kategorie.trim() || null,
             einheit: m.einheit || "Stk.",
             einzelpreis: vk,
             netto_preis: vk,

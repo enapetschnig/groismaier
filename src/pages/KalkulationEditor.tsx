@@ -515,6 +515,10 @@ export default function KalkulationEditor() {
         beschreibung: z.name.trim(),
         kurzbezeichnung: z.name.trim(),
         produktgruppe: gruppe.trim(),
+        // kategorie = produktgruppe: der Artikel-Auswahldialog im Beleg-Editor
+        // gruppiert nach kategorie — ohne diese Spiegelung landete alles
+        // unter dem DB-Default „Allgemein".
+        kategorie: gruppe.trim(),
         // Mengeneinheit („m³"), nicht Preis-Einheit („€ / m³") — die Einheit
         // landet 1:1 in Angebots-/Rechnungszeilen.
         einheit: mengenEinheit(z.einheit) || "m²",

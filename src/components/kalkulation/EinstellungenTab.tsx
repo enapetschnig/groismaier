@@ -159,7 +159,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     if (kat.typ === "material") {
       const { error } = await supabase
         .from("invoice_templates")
-        .update({ produktgruppe: name.trim() })
+        .update({ produktgruppe: name.trim(), kategorie: name.trim() })
         .eq("produktgruppe", kat.name);
       if (error) { fehler(error.message); return; }
     }
@@ -192,6 +192,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
         beschreibung: "Neuer Artikel",
         kurzbezeichnung: "Neuer Artikel",
         produktgruppe: kat.name,
+        kategorie: kat.name,
         einheit: mengenEinheit(kat.einheit) || "m²",
         ist_aktiv: true,
       } as any);
