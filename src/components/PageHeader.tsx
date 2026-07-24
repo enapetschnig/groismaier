@@ -35,12 +35,13 @@ export function PageHeader({
 }: PageHeaderProps) {
   const navigate = useNavigate();
 
+  // App-weite Regel (Kundenwunsch): Zurück führt IMMER auf die zuvor
+  // besuchte Seite (Browser-Verlauf). backPath ist nur noch der FALLBACK
+  // für den Direkteinstieg per URL (kein In-App-Verlauf vorhanden).
   const handleBack = () => {
-    if (backPath) {
-      navigate(backPath);
-    } else {
-      navigate(-1);
-    }
+    const idx = (typeof window !== "undefined" && (window.history.state as any)?.idx) ?? 0;
+    if (idx > 0) navigate(-1);
+    else navigate(backPath || "/");
   };
 
   return (
