@@ -32,7 +32,6 @@ import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings"
 import { ConfigOptionsManager } from "@/components/admin/ConfigOptionsManager";
 import { VehicleManager } from "@/components/admin/VehicleManager";
 import { PermissionMatrix } from "@/components/admin/PermissionMatrix";
-import { CreateUserDialog } from "@/components/admin/CreateUserDialog";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { useConfigOptions } from "@/hooks/useConfigOptions";
 import { Cloud, AlertTriangle, Truck, Briefcase, HardHat } from "lucide-react";
@@ -172,7 +171,6 @@ export default function Admin() {
   const [pendingRoles, setPendingRoles] = useState<Record<string, AppRole>>({});
 
   // Dialog „Neuen Benutzer anlegen" (Edge Function create-user)
-  const [showCreateUser, setShowCreateUser] = useState(false);
 
   // Delete user dialog states
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -667,13 +665,8 @@ export default function Admin() {
           dass die Toolbar-Buttons nicht mehr umbrechen können und die Seite
           horizontal scrollt. */}
       <KBToolbar onBack={() => navigate("/")} title="Admin">
-        <KBToolbarButton
-          icon={UserPlus}
-          iconClassName="text-kb-green"
-          label="Benutzer anlegen"
-          title="Zugang mit Benutzername und Passwort anlegen (inkl. Mitarbeiterdatensatz)"
-          onClick={() => setShowCreateUser(true)}
-        />
+        {/* „Benutzer anlegen" auf Kundenwunsch entfernt (2026-07-24) —
+            Mitarbeiter registrieren sich selbst über die Login-Seite. */}
         <KBToolbarButton
           icon={Users}
           label="Mitarbeiter"
@@ -1914,15 +1907,6 @@ export default function Admin() {
         </DialogContent>
       </Dialog>
 
-      {/* Neuen Benutzer anlegen (create-user Edge Function) */}
-      <CreateUserDialog
-        open={showCreateUser}
-        onOpenChange={setShowCreateUser}
-        onCreated={() => {
-          fetchUsers({ silent: true });
-          fetchEmployees();
-        }}
-      />
 
       {/* Delete User Dialog - Step 1: Deaktivieren oder Löschen? */}
       <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>

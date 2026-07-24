@@ -158,6 +158,32 @@ export default function Invoices() {
   // „Kopieren in …": erst der KingBill-Dialog „Was soll kopiert werden?",
   // dann Navigation in den from_doc-Kopierfluss mit den gewählten Optionen.
   const [kopierenZielTyp, setKopierenZielTyp] = useState<string | null>(null);
+  // Anzahlungsrechnung aus der Liste: Prozent/Betrag VOR der Navigation
+  // abfragen (der from_doc-Mount braucht anzahlung_prozent/-betrag).
+  const [anzKopierenOpen, setAnzKopierenOpen] = useState(false);
+  const [anzProzentInput, setAnzProzentInput] = useState("30");
+  const [anzBetragInput, setAnzBetragInput] = useState("");
+
+  /** Schlussrechnung aus der Liste: alle Anzahlungsrechnungen der Kette
+      automatisch als Abzüge mitgeben (abzug_ids), wie im Editor-Fluss. */
+  const kopiereInSchlussrechnung = async (sel: Invoice) => {
+    // Positionsträger der Kette: Angebot/AB selbst, sonst dessen Parent.
+    let parentKey = sel.id;
+    if (!["angebot", "auftragsbestaetigung"].includes(sel.typ)) {
+      const { data } = await supabase.from("invoices").select("parent_invoice_id").eq("id", sel.id).maybeSingle();
+      parentKey = (data as any)?.parent_invoice_id || sel.id;
+    }
+    const { data: ars } = await supabase
+      .from("invoices")
+      .select("id")
+      .eq("parent_invoice_id", parentKey)
+      .eq("typ", "anzahlungsrechnung")
+      .neq("status", "storniert");
+    const ids = ((ars as any[]) || []).map((a) => a.id);
+    const params = new URLSearchParams({ typ: "schlussrechnung", from_doc: parentKey });
+    if (ids.length > 0) params.set("abzug_ids", ids.join(","));
+    navigate(`/invoices/new?${params.toString()}`);
+  };
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
   const [bankBic, setBankBic] = useState("");
@@ -743,20 +769,53 @@ export default function Invoices() {
                     <KBToolbarButton icon={CopyIcon} label="Kopieren in …" title="Markierten Beleg in einen neuen Beleg kopieren" />
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-64">
-                    {([
-                      ["angebot", "ein neues Angebot"],
-                      ["auftragsbestaetigung", "einen neuen Auftrag"],
-                      ["lieferschein", "einen neuen Lieferschein"],
-                      ["rechnung", "eine neue Rechnung"],
-                      ["gutschrift", "eine neue Gutschrift"],
-                    ] as const).map(([typ, label]) => (
-                      <DropdownMenuItem
-                        key={typ}
-                        onClick={() => (sel ? setKopierenZielTyp(typ) : brauchtAuswahl())}
-                      >
-                        <FileText className="w-4 h-4 mr-2" /> {label}
-                      </DropdownMenuItem>
-                    ))}
+                    {(() => {
+                      // Ziele je Quelltyp (Kundenwunsch):
+                      //  Angebot → AB, Rechnung, Anzahlungs-, Schlussrechnung
+                      //  AB      → Rechnung, Anzahlungs-, Schlussrechnung
+                      //  Rechnung/AR/SR → Anzahlungs-, Schlussrechnung
+                      //  Lieferschein → Rechnung
+                      const quellTyp = sel?.typ || (filterTyp === "angebot" ? "angebot" : filterTyp);
+                      const ziele: Array<[string, string]> =
+                        quellTyp === "angebot"
+                          ? [
+                              ["auftragsbestaetigung", "eine neue Auftragsbestätigung"],
+                              ["rechnung", "eine neue Rechnung"],
+                              ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
+                              ["schlussrechnung", "eine neue Schlussrechnung"],
+                            ]
+                          : quellTyp === "auftragsbestaetigung"
+                            ? [
+                                ["rechnung", "eine neue Rechnung"],
+                                ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
+                                ["schlussrechnung", "eine neue Schlussrechnung"],
+                              ]
+                            : quellTyp === "lieferschein"
+                              ? [["rechnung", "eine neue Rechnung"]]
+                              : [
+                                  ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
+                                  ["schlussrechnung", "eine neue Schlussrechnung"],
+                                ];
+                      return ziele.map(([typ, label]) => (
+                        <DropdownMenuItem
+                          key={typ}
+                          onClick={() => {
+                            if (!sel) return brauchtAuswahl();
+                            if (typ === "anzahlungsrechnung") {
+                              setAnzProzentInput("30");
+                              setAnzBetragInput("");
+                              setAnzKopierenOpen(true);
+                            } else if (typ === "schlussrechnung") {
+                              void kopiereInSchlussrechnung(sel);
+                            } else {
+                              setKopierenZielTyp(typ);
+                            }
+                          }}
+                        >
+                          <FileText className="w-4 h-4 mr-2" /> {label}
+                        </DropdownMenuItem>
+                      ));
+                    })()}
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <DropdownMenu>
@@ -1366,6 +1425,64 @@ export default function Invoices() {
           onClose={() => setExportDialogOpen(false)}
           bankData={{ kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic }}
         />
+
+        {/* Anzahlungsrechnung aus der Liste: Prozent ODER Betrag abfragen */}
+        <Dialog open={anzKopierenOpen} onOpenChange={(o) => !o && setAnzKopierenOpen(false)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Anzahlungsrechnung erstellen</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium">Anzahlung in Prozent</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text" inputMode="decimal"
+                    className="kb-input w-24 text-right"
+                    value={anzProzentInput}
+                    onChange={(e) => { setAnzProzentInput(e.target.value); setAnzBetragInput(""); }}
+                    placeholder="30"
+                  />
+                  <span className="text-sm text-muted-foreground">%</span>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium">oder fester Betrag (netto)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text" inputMode="decimal"
+                    className="kb-input w-32 text-right"
+                    value={anzBetragInput}
+                    onChange={(e) => { setAnzBetragInput(e.target.value); setAnzProzentInput(""); }}
+                    placeholder="z.B. 10000"
+                  />
+                  <span className="text-sm text-muted-foreground">€</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setAnzKopierenOpen(false)}>Abbrechen</Button>
+              <Button
+                onClick={() => {
+                  if (!selectedId) return;
+                  const p = parseFloat(anzProzentInput.replace(",", "."));
+                  const b = parseFloat(anzBetragInput.replace(",", "."));
+                  const params = new URLSearchParams({ typ: "anzahlungsrechnung", from_doc: selectedId });
+                  if (isFinite(b) && b > 0) params.set("anzahlung_betrag", String(Math.round(b * 100) / 100));
+                  else if (isFinite(p) && p > 0) params.set("anzahlung_prozent", String(p));
+                  else {
+                    toast({ variant: "destructive", title: "Angabe fehlt", description: "Bitte Prozent oder Betrag eingeben." });
+                    return;
+                  }
+                  setAnzKopierenOpen(false);
+                  navigate(`/invoices/new?${params.toString()}`);
+                }}
+              >
+                Anzahlungsrechnung erstellen
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* „Dokument kopieren — Was soll kopiert werden?" (KingBill 1:1) */}
         <DokumentKopierenDialog

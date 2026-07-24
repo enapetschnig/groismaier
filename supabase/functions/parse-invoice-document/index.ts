@@ -50,10 +50,13 @@ GIB NUR JSON ZURÜCK (kein Markdown, keine Erklärung), genau in diesem Schema:
   "ust_satz": 0 | 10 | 13 | 20,
   "kategorie": ${kategorieEnum},
   "notizen": string | null,
-  "positionen": [                   // einzelne Rechnungspositionen (Zeilen), max. 40
+  "positionen": [                   // ALLE Rechnungspositionen (Zeilen) — Vollständigkeit ist oberstes Ziel
     {
-      "beschreibung": string,       // kurze Positionsbezeichnung (z.B. "KVH 60x120 Fichte")
-      "betrag_netto": number | null, // Zeilensumme NETTO (Menge × Einzelpreis)
+      "beschreibung": string,       // reine Positionsbezeichnung (max. 100 Zeichen, OHNE Rabatt-Vermerk)
+      "menge": number | null,        // physische Menge (z.B. 500, 1.5) — NIEMALS die laufende Positionsnummer
+      "einheit": string | null,      // z.B. "Stk", "kg", "m", "m²", "lfm", "h", "Pkg"
+      "einzelpreis_netto": number | null, // gedruckter Zeilenbetrag ÷ Menge (Rabatt damit automatisch enthalten)
+      "betrag_netto": number | null, // gedruckte Zeilensumme NETTO (bereits rabattiert)
       "betrag_brutto": number | null // Zeilensumme BRUTTO, falls nur brutto ausgewiesen
     }
   ] | null
@@ -96,15 +99,35 @@ PLAUSIBILITÄT:
   * 13% = ermäßigt (Blumen, Kultur)
   * 0% = steuerfrei (Reverse Charge, innergem. Lieferung)
 
-POSITIONEN (Rechnungszeilen):
-- Extrahiere die einzelnen Rechnungspositionen mit ihrer ZEILENSUMME
-  (Menge × Einzelpreis), bevorzugt netto. Wenn nur Brutto-Zeilenpreise
-  ausgewiesen sind, fülle betrag_brutto und lasse betrag_netto null.
-- KEINE Zwischensummen, USt-Zeilen, Rabatt-/Skonto-Zeilen oder die
+POSITIONEN (Rechnungszeilen) — VOLLSTÄNDIGKEIT ist das oberste Ziel:
+- Extrahiere JEDE einzelne Position mit Menge, Einheit, Einzelpreis und
+  ZEILENSUMME, bevorzugt netto. Wenn nur Brutto-Zeilenpreise ausgewiesen
+  sind, fülle betrag_brutto und lasse betrag_netto null.
+- Auch Arbeits-/Dienstleistungspositionen ("Monteur", "Regiestunden",
+  "Zustellung") zählen als Position.
+- POSITIONSNUMMERN IGNORIEREN: laufende Nummern am Zeilenanfang ("1.",
+  "Pos. 3", "#7") sind KEINE Mengen. Lesereihenfolge je Zeile:
+  Pos-Nr. (ignorieren) → Bezeichnung → Menge → Einheit → Einzelpreis → Betrag.
+- RABATTE: "betrag_netto" ist der GEDRUCKTE Zeilenbetrag (bereits
+  rabattiert). "einzelpreis_netto" = gedruckter Betrag ÷ Menge — NICHT der
+  Listen-/Katalogpreis. Beispiel: "Leiter | 1 ST | 87,49 | −15% | 74,37"
+  → menge 1, einzelpreis_netto 74.37, betrag_netto 74.37. Rabatt-Prozente
+  NIE in die Beschreibung schreiben.
+- GUTSCHRIFTEN/KORREKTUREN: negative Mengen ("−1,000 ST") und negative
+  Beträge ("−19,69") sind ERLAUBT und wichtig — Vorzeichen exakt
+  übernehmen, niemals positiv umrechnen.
+- MEHRERE LIEFERSCHEIN-BLÖCKE: eine Rechnung kann mehrere Blöcke mit je
+  eigener Positionsliste enthalten ("Lieferschein 12345 vom …"). Extrahiere
+  ALLE Positionen aus ALLEN Blöcken über ALLE SEITEN in EINER Liste — auch
+  die Blöcke im hinteren Teil.
+- KEINE Zwischensummen, USt-Zeilen, Rabatt-/Skonto-SUMMENzeilen oder die
   Gesamtsumme als Position aufnehmen. Versand-/Zustellkosten sind eine
   eigene Position, wenn ausgewiesen.
-- Maximal 40 Positionen. Wenn die Positionen nicht sicher lesbar sind
-  (z.B. Kassabon ohne klare Zeilen), setze "positionen": null.
+- VOLLSTÄNDIGKEITS-CHECK: Die Summe aller betrag_netto (inkl. negativer
+  Zeilen) muss ungefähr dem Netto-Gesamtbetrag entsprechen. Weicht sie
+  deutlich ab, hast du Positionen übersehen — prüfe alle Blöcke erneut,
+  besonders auf den hinteren Seiten. Wenn gar keine Zeilen sicher lesbar
+  sind (z.B. Kassabon), setze "positionen": null.
 
 DATUMSFORMAT:
 - Deutsches Format erkennen: "24.03.2026" → "2026-03-24"
@@ -274,36 +297,48 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const body = await req.json();
-    // Akzeptiere sowohl einzelnes Bild als auch Array (mehrseitige PDFs)
+    // BEVORZUGT: extrahierter PDF-Textlayer ALLER Seiten (deutlich präziser
+    // als OCR auf gerenderten Bildern — Zahlen/Rabatte kommen 1:1 aus dem PDF).
+    const pdfText: string = typeof body?.pdfText === "string" ? body.pdfText.trim() : "";
+    // Fallback: einzelnes Bild oder Array (mehrseitige gescannte PDFs/Fotos)
     const rawImages: string[] = Array.isArray(body?.imagesBase64)
       ? body.imagesBase64.filter((x: any) => typeof x === "string" && x.length > 0)
       : typeof body?.imageBase64 === "string" && body.imageBase64.length > 0
         ? [body.imageBase64]
         : [];
 
-    if (rawImages.length === 0) {
-      return new Response(JSON.stringify({ error: "imageBase64 oder imagesBase64 erforderlich" }), {
+    if (!pdfText && rawImages.length === 0) {
+      return new Response(JSON.stringify({ error: "pdfText, imageBase64 oder imagesBase64 erforderlich" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const dataUrls = rawImages.map((s) =>
-      s.startsWith("data:") ? s : `data:image/jpeg;base64,${s}`
-    );
-
     const kategorieValues = await loadKategorieValues();
     const systemPrompt = buildSystemPrompt(kategorieValues);
 
-    const userContent: any[] = [
-      {
-        type: "text",
-        text: dataUrls.length > 1
-          ? `Extrahiere die Rechnungsdaten aus den folgenden ${dataUrls.length} Rechnungs-Seiten. Der Brutto-Gesamtbetrag steht meist auf der LETZTEN Seite (als "Gesamtbetrag", "Rechnungsbetrag" oder "Zu zahlen") – schau dir ALLE Seiten an und nimm den finalen Endbetrag.`
-          : "Extrahiere die Rechnungsdaten aus diesem Bild. Achte besonders auf den Brutto-Gesamtbetrag (den zu zahlenden Endbetrag) – dieser ist am wichtigsten und muss exakt stimmen.",
-      },
-      ...dataUrls.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } })),
-    ];
+    let userContent: any;
+    if (pdfText) {
+      // Text-Pfad: kompletter Textlayer (alle Seiten, mit Seitenmarkern vom
+      // Client). 200k-Zeichen-Deckel gegen Token-Explosion.
+      userContent = `Extrahiere die Rechnungsdaten aus dem folgenden PDF-TEXT (Textlayer aller Seiten, Seitenumbrüche sind mit "--- Seite N ---" markiert). Der Brutto-Gesamtbetrag steht meist am ENDE. Extrahiere ALLE Positionen aus ALLEN Seiten/Blöcken.
+
+--- PDF-TEXT ---
+${pdfText.slice(0, 200000)}`;
+    } else {
+      const dataUrls = rawImages.map((s) =>
+        s.startsWith("data:") ? s : `data:image/jpeg;base64,${s}`
+      );
+      userContent = [
+        {
+          type: "text",
+          text: dataUrls.length > 1
+            ? `Extrahiere die Rechnungsdaten aus den folgenden ${dataUrls.length} Rechnungs-Seiten. Der Brutto-Gesamtbetrag steht meist auf der LETZTEN Seite (als "Gesamtbetrag", "Rechnungsbetrag" oder "Zu zahlen") – schau dir ALLE Seiten an und nimm den finalen Endbetrag. Extrahiere ALLE Positionen aus ALLEN Seiten.`
+            : "Extrahiere die Rechnungsdaten aus diesem Bild. Achte besonders auf den Brutto-Gesamtbetrag (den zu zahlenden Endbetrag) – dieser ist am wichtigsten und muss exakt stimmen.",
+        },
+        ...dataUrls.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } })),
+      ];
+    }
 
     const openaiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -320,8 +355,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
           { role: "user", content: userContent },
         ],
         temperature: 0,
-        // Positionslisten können lang sein (bis 40 Zeilen) → mehr Tokens.
-        max_tokens: 4000,
+        // Positionslisten können SEHR lang sein (alle Seiten/Blöcke) → viel Platz.
+        max_tokens: 8000,
         response_format: { type: "json_object" },
       }),
     });

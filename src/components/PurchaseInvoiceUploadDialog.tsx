@@ -42,6 +42,11 @@ type ParsedPosition = {
   beschreibung: string;
   betrag_netto: number | null;
   betrag_brutto: number | null;
+  // Neu (präzise Extraktion): Menge, Einheit und rabattierter Einzelpreis
+  // je Zeile — für die Anzeige und spätere Projektzuordnung.
+  menge?: number | null;
+  einheit?: string | null;
+  einzelpreis_netto?: number | null;
 };
 
 const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -289,12 +294,40 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
     setScanning(true);
     setScanInfo(null);
     try {
-      // Für mehrseitige PDFs: ALLE Seiten rendern → an GPT schicken.
-      // Bei Rechnungen steht der Brutto-/Gesamtbetrag oft auf der letzten Seite,
-      // deshalb ist die Gesamtsicht entscheidend für korrekte Extraktion.
+      // BEVORZUGT: der TEXTLAYER aller PDF-Seiten (pdfjs getTextContent) —
+      // Zahlen, Rabatte und Mengen kommen damit 1:1 aus dem PDF statt über
+      // fehleranfälliges OCR gerenderter Bilder. Nur Scans ohne Textlayer
+      // fallen auf den Bild-Pfad zurück.
+      let pdfText = "";
       let imagesBase64: string[] = [];
 
       if (file.type === "application/pdf") {
+        try {
+          const data = new Uint8Array(await file.arrayBuffer());
+          const pdfjs = await import("pdfjs-dist");
+          const workerUrl = (await import("pdfjs-dist/build/pdf.worker.mjs?url")).default;
+          pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+          const pdf = await pdfjs.getDocument({ data }).promise;
+          const teile: string[] = [];
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const tc = await page.getTextContent();
+            const seitentext = (tc.items as any[])
+              .map((it) => (typeof it?.str === "string" ? it.str : ""))
+              .join(" ");
+            teile.push(`--- Seite ${i} ---\n${seitentext}`);
+          }
+          const voll = teile.join("\n\n").trim();
+          // Scans haben (fast) keinen Textlayer — dann lieber Bilder schicken.
+          if (voll.replace(/--- Seite \d+ ---/g, "").trim().length > 200) {
+            pdfText = voll;
+          }
+        } catch (e) {
+          console.warn("PDF-Textlayer-Extraktion fehlgeschlagen — Bild-Fallback:", e);
+        }
+      }
+
+      if (!pdfText && file.type === "application/pdf") {
         const { pdfAllPagesToJpegDataUrls } = await import("@/lib/pdfToImage");
         imagesBase64 = await pdfAllPagesToJpegDataUrls(file);
         // Mehrseitige Scans sprengen sonst das 6-MB-Body-Limit der Function.
@@ -322,16 +355,20 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           }
           imagesBase64 = [raw];
         }
-      } else {
+      } else if (!pdfText) {
+        // Weder PDF (mit oder ohne Textlayer) noch Bild → nichts zu scannen.
         setScanning(false);
         return;
       }
 
       const { data, error } = await supabase.functions.invoke("parse-invoice-document", {
-        // imagesBase64 (Array, mehrere Seiten) wird bevorzugt; fallback imageBase64
-        body: imagesBase64.length > 1
-          ? { imagesBase64 }
-          : { imageBase64: imagesBase64[0] },
+        // pdfText (Textlayer aller Seiten) bevorzugt — präziseste Extraktion;
+        // sonst imagesBase64 (mehrere Seiten) bzw. imageBase64 (Einzelbild).
+        body: pdfText
+          ? { pdfText }
+          : imagesBase64.length > 1
+            ? { imagesBase64 }
+            : { imageBase64: imagesBase64[0] },
       });
       // Supabase-Funktionsfehler zeigt im .message nur "non-2xx status".
       // Den echten Fehler liefert .context als Response — Body auslesen.
@@ -902,12 +939,23 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                           {posSelected.has(idx) && <Check className="h-4 w-4" />}
                         </span>
                       </button>
-                      <Input
-                        value={p.beschreibung || ""}
-                        onChange={e => updatePosition(idx, { beschreibung: e.target.value })}
-                        placeholder={`Position ${idx + 1}`}
-                        className="flex-1 min-w-[7rem] h-11 text-xs"
-                      />
+                      <div className="min-w-[7rem] flex-1">
+                        <Input
+                          value={p.beschreibung || ""}
+                          onChange={e => updatePosition(idx, { beschreibung: e.target.value })}
+                          placeholder={`Position ${idx + 1}`}
+                          className="h-11 text-xs"
+                        />
+                        {/* Menge × Einheit à Einzelpreis (rabattiert) — aus der
+                            präzisen Extraktion; nur anzeigen, wenn vorhanden. */}
+                        {(p.menge != null || p.einzelpreis_netto != null) && (
+                          <p className="mt-0.5 text-[10px] text-muted-foreground tabular-nums">
+                            {p.menge != null ? `${p.menge.toLocaleString("de-AT")} ${p.einheit || ""}`.trim() : ""}
+                            {p.menge != null && p.einzelpreis_netto != null ? " à " : ""}
+                            {p.einzelpreis_netto != null ? `€ ${p.einzelpreis_netto.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : ""}
+                          </p>
+                        )}
+                      </div>
                       <Input
                         type="text" inputMode="decimal"
                         // Rohtext während des Tippens stehen lassen, damit
