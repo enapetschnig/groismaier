@@ -187,7 +187,14 @@ function validateInvoice(raw: any): {
   ust_satz: number;
   kategorie: string;
   notizen: string | null;
-  positionen: Array<{ beschreibung: string; betrag_netto: number | null; betrag_brutto: number | null }>;
+  positionen: Array<{
+    beschreibung: string;
+    menge: number | null;
+    einheit: string | null;
+    einzelpreis_netto: number | null;
+    betrag_netto: number | null;
+    betrag_brutto: number | null;
+  }>;
   warnings: string[];
 } {
   const warnings: string[] = [];
@@ -246,19 +253,27 @@ function validateInvoice(raw: any): {
     : null;
 
   // Positionen: lenient validieren — ungültige Zeilen still verwerfen.
+  // WICHTIG: Beträge NICHT auf abs() zwingen — negative Zeilen sind echte
+  // Gutschriften/Korrekturen innerhalb der Rechnung. KEIN Zeilen-Deckel —
+  // Vollständigkeit ist das Ziel (das Ausgabelimit regelt max_tokens).
   const positionen = (Array.isArray(raw?.positionen) ? raw.positionen : [])
     .map((p: any) => {
       const beschreibung = typeof p?.beschreibung === "string" ? p.beschreibung.trim() : "";
+      const menge = parseEuroAmount(p?.menge);
+      const einheit = typeof p?.einheit === "string" && p.einheit.trim() ? p.einheit.trim().slice(0, 20) : null;
+      const einzelpreis = parseEuroAmount(p?.einzelpreis_netto);
       const pNetto = parseEuroAmount(p?.betrag_netto);
       const pBrutto = parseEuroAmount(p?.betrag_brutto);
       return {
         beschreibung,
-        betrag_netto: pNetto != null ? Math.abs(pNetto) : null,
-        betrag_brutto: pBrutto != null ? Math.abs(pBrutto) : null,
+        menge,
+        einheit,
+        einzelpreis_netto: einzelpreis,
+        betrag_netto: pNetto,
+        betrag_brutto: pBrutto,
       };
     })
-    .filter((p: any) => p.beschreibung || p.betrag_netto != null || p.betrag_brutto != null)
-    .slice(0, 40);
+    .filter((p: any) => p.beschreibung || p.betrag_netto != null || p.betrag_brutto != null);
 
   return {
     lieferant,
@@ -273,6 +288,40 @@ function validateInvoice(raw: any): {
     positionen,
     warnings,
   };
+}
+
+/**
+ * Abgeschnittenes JSON reparieren (Antwort am Token-Limit gekappt):
+ * bis zum letzten abgeschlossenen Objekt/Array zurückschneiden, offene
+ * Klammern (außerhalb von Strings gezählt) schließen. null = irreparabel.
+ */
+function repairTruncatedJson(text: string): string | null {
+  const cut = Math.max(text.lastIndexOf("}"), text.lastIndexOf("]"));
+  if (cut < 0) return null;
+  const t = text.slice(0, cut + 1);
+  const stack: string[] = [];
+  let inStr = false;
+  let esc = false;
+  for (const ch of t) {
+    if (esc) { esc = false; continue; }
+    if (inStr) {
+      if (ch === "\\") esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  if (inStr) return null;
+  let out = t;
+  while (stack.length) out += stack.pop() === "{" ? "}" : "]";
+  try {
+    JSON.parse(out);
+    return out;
+  } catch {
+    return null;
+  }
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -355,8 +404,10 @@ ${pdfText.slice(0, 200000)}`;
           { role: "user", content: userContent },
         ],
         temperature: 0,
-        // Positionslisten können SEHR lang sein (alle Seiten/Blöcke) → viel Platz.
-        max_tokens: 8000,
+        // Positionslisten können SEHR lang sein (alle Seiten/Blöcke) → maximal
+        // möglicher Ausgabe-Platz (gpt-4o: 16384); Kappung wird zusätzlich
+        // per repairTruncatedJson abgefangen.
+        max_tokens: 16000,
         response_format: { type: "json_object" },
       }),
     });
@@ -385,10 +436,24 @@ ${pdfText.slice(0, 200000)}`;
     const jsonMatch = jsonText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (jsonMatch) jsonText = jsonMatch[1];
 
+    // Wurde die Antwort am Token-Limit gekappt? (finish_reason "length")
+    const wurdeGekappt = openaiData.choices?.[0]?.finish_reason === "length";
+
     let parsedRaw: any;
+    let jsonRepariert = false;
     try {
       parsedRaw = JSON.parse(jsonText);
     } catch {
+      // Abgeschnittenes JSON reparieren statt hart zu scheitern — bei sehr
+      // langen Positionslisten kappt das Modell sonst mitten in der Liste
+      // und der Nutzer bekam IMMER "Antwort konnte nicht geparst werden".
+      const repariert = repairTruncatedJson(jsonText);
+      if (repariert) {
+        parsedRaw = JSON.parse(repariert);
+        jsonRepariert = true;
+      }
+    }
+    if (parsedRaw === undefined) {
       return new Response(JSON.stringify({ error: "Antwort konnte nicht geparst werden", raw: content.slice(0, 500) }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -403,6 +468,11 @@ ${pdfText.slice(0, 200000)}`;
     }
 
     let validated = validateInvoice(parsedRaw);
+    if (jsonRepariert || wurdeGekappt) {
+      validated.warnings.push(
+        "Die Positionsliste war sehr lang und wurde möglicherweise abgeschnitten — bitte Positionen auf Vollständigkeit prüfen.",
+      );
+    }
 
     // Zweiter Durchgang, wenn das erste Ergebnis verdächtig ist:
     //   - kein Brutto-Betrag erkannt, oder
@@ -432,10 +502,17 @@ ${pdfText.slice(0, 200000)}`;
               { role: "assistant", content: JSON.stringify(parsedRaw) },
               {
                 role: "user",
-                content: [
-                  { type: "text", text: followUpPrompt },
-                  ...dataUrls.map((url) => ({ type: "image_url", image_url: { url, detail: "high" } })),
-                ] as any,
+                // Im pdfText-Pfad gibt es keine Bilder — der Text steckt schon
+                // in der ersten User-Message; sonst Bilder erneut mitgeben.
+                content: pdfText
+                  ? followUpPrompt
+                  : ([
+                      { type: "text", text: followUpPrompt },
+                      ...rawImages.map((s) => ({
+                        type: "image_url",
+                        image_url: { url: s.startsWith("data:") ? s : `data:image/jpeg;base64,${s}`, detail: "high" },
+                      })),
+                    ] as any),
               },
             ],
             temperature: 0,
