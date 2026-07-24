@@ -57,8 +57,8 @@ import {
 import { usePermissions } from "@/hooks/usePermissions";
 import { getDocConfig } from "@/lib/documentTypes";
 import {
-  FreiePosition, artTable, findeArtikel, findeKategorie, katTable, normName,
-  sammleFreiePositionen, useKalkKatalog,
+  FreiePosition, artTable, findeArtikel, findeKategorie, katTable, mengenEinheit,
+  normName, sammleFreiePositionen, useKalkKatalog,
 } from "@/components/kalkulation/useKalkKatalog";
 import { NumInput } from "@/components/kalkulation/NumInput";
 import { ProjektUebersicht } from "@/components/kalkulation/ProjektUebersicht";
@@ -515,7 +515,9 @@ export default function KalkulationEditor() {
         beschreibung: z.name.trim(),
         kurzbezeichnung: z.name.trim(),
         produktgruppe: gruppe.trim(),
-        einheit: z.einheit || "m²",
+        // Mengeneinheit („m³"), nicht Preis-Einheit („€ / m³") — die Einheit
+        // landet 1:1 in Angebots-/Rechnungszeilen.
+        einheit: mengenEinheit(z.einheit) || "m²",
         ek_netto: z.ek,
         vk_netto: z.vk,
         netto_preis: z.vk,

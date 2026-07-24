@@ -175,6 +175,14 @@ export function useKalkKatalog(): KalkKatalog {
 /** Namensvergleich im Katalog: ohne Randleerzeichen und Groß-/Kleinschreibung. */
 export const normName = (s: string | null | undefined): string => (s || "").trim().toLowerCase();
 
+/**
+ * Preis-Einheit des Alt-Katalogs („€ / m³") → Mengeneinheit für Belege („m³").
+ * Im Artikelstamm (und damit in Angebots-/Rechnungszeilen) steht die
+ * MENGENeinheit — „5 m³", nicht „5 € / m³".
+ */
+export const mengenEinheit = (s: string | null | undefined): string =>
+  String(s || "").replace(/^\s*€\s*\/\s*/, "").trim();
+
 export const findeKategorie = (kategorien: KatalogKategorie[], name: string): KatalogKategorie | undefined =>
   normName(name) ? kategorien.find((k) => normName(k.name) === normName(name)) : undefined;
 

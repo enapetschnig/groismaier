@@ -15,7 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { round4 } from "@/lib/kalkulationEngine";
 import { formatForInput, parseDecimal } from "@/lib/num";
-import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable } from "./useKalkKatalog";
+import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable, mengenEinheit } from "./useKalkKatalog";
 
 const BETRIEBSDATEN_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
@@ -192,7 +192,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
         beschreibung: "Neuer Artikel",
         kurzbezeichnung: "Neuer Artikel",
         produktgruppe: kat.name,
-        einheit: kat.einheit || "m²",
+        einheit: mengenEinheit(kat.einheit) || "m²",
         ist_aktiv: true,
       } as any);
       if (error) { fehler(error.message); return; }
