@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
@@ -204,6 +205,7 @@ export default function Invoices() {
   const [existingPayments, setExistingPayments] = useState<{ betrag: number; datum: string; notizen: string | null; created_at: string }[]>([]);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
 
   useEffect(() => {
     fetchInvoices();
@@ -668,7 +670,7 @@ export default function Invoices() {
 
       {/* KingBill-Toolbar: [Zurück] links, neue Belege + Liste drucken Mitte, Export rechts */}
       <KBToolbar
-        onBack={() => navigate("/")}
+        onBack={zurueck}
         title="Dokumente"
         rightActions={
           <>

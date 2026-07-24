@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { Clock, Home, Pencil, Trash2, Wallet } from "lucide-react";
 import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
 import { KBToolbar } from "@/components/kingbill";
@@ -32,6 +33,7 @@ type TimeEntry = {
 
 const MyHours = () => {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -198,7 +200,7 @@ const MyHours = () => {
           optisch aus der App heraus. Zurück + Home = kein Sackgassen-Risiko. */}
       <KBToolbar
         title="Meine Stunden"
-        onBack={() => navigate("/")}
+        onBack={zurueck}
         backLabel="Zurück zur Startmaske"
         rightActions={
           <button

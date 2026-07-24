@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -105,6 +106,7 @@ export default function InvoiceTemplates() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const einheiten = useEinheiten();
 
   useEffect(() => { fetchTemplates(); }, []);
@@ -460,7 +462,7 @@ export default function InvoiceTemplates() {
       `}</style>
 
       {/* KingBill-Toolbar: [Zurück] [+ Neuer Artikel] [Bearbeiten] [Löschen] [Import] [Preise] [Liste drucken] */}
-      <KBToolbar onBack={() => navigate("/")} title="Artikel">
+      <KBToolbar onBack={zurueck} title="Artikel">
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neuer Artikel" onClick={openNew} />
         {/*
           Zeilenabhängige + Büro-Aktionen am Handy ausgeblendet — dort wird über

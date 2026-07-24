@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -111,6 +112,7 @@ const monthNames = [
 
 export default function HoursReport() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const [searchParams] = useSearchParams();
   const [month, setMonth] = useState(new Date().getMonth() + 1);
   const [year, setYear] = useState(new Date().getFullYear());
@@ -887,7 +889,7 @@ export default function HoursReport() {
     <div className="kb-page min-h-screen">
       {/* Kopfleiste wie in allen anderen Masken — vorher war /hours-report
           ohne Toolbar eine Sackgasse (kein Weg zurück zum Start). */}
-      <KBToolbar onBack={() => navigate("/")} title="Stundenauswertung" />
+      <KBToolbar onBack={zurueck} title="Stundenauswertung" />
 
       <div className="container mx-auto p-4 space-y-6">
       <Tabs defaultValue="mitarbeiter" className="w-full">

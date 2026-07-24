@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,6 +40,7 @@ type Disturbance = {
 
 const Disturbances = () => {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
@@ -197,7 +199,7 @@ const Disturbances = () => {
 
   return (
     <div className="kb-page min-h-screen">
-      <KBToolbar onBack={() => navigate("/")} title="Regieberichte">
+      <KBToolbar onBack={zurueck} title="Regieberichte">
         {/* kurzes Label — „Neuer Regiebericht" sprengt am Handy die Leiste */}
         <KBToolbarButton
           icon={Plus}

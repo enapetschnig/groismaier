@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,6 +77,7 @@ const NO_USER = "__nouser__";
 
 export default function Employees() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -318,7 +320,7 @@ export default function Employees() {
     <div className="kb-page min-h-screen">
       {/* KingBill-Werkzeugleiste statt eigenem Kopf — „Zurück" ist Pflicht,
           weil die App keine Sidebar hat. */}
-      <KBToolbar onBack={() => navigate("/")} title="Mitarbeiter">
+      <KBToolbar onBack={zurueck} title="Mitarbeiter">
         <KBToolbarButton
           icon={Plus}
           iconClassName="text-kb-green"

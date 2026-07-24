@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import {
   Zap, Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Plus, PenLine,
   Users, Receipt, Lock, Unlock, CheckCircle2, FileDown, FolderOpen, Loader2, Briefcase,
@@ -62,6 +63,7 @@ const DisturbanceDetail = () => {
   const { id } = useParams<{ id: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/disturbances");
   const { toast } = useToast();
   const [disturbance, setDisturbance] = useState<Disturbance | null>(null);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -566,7 +568,7 @@ const DisturbanceDetail = () => {
   if (!disturbance) {
     return (
       <div className="kb-page min-h-screen">
-        <KBToolbar onBack={() => navigate("/disturbances")} title="Regiebericht nicht gefunden" />
+        <KBToolbar onBack={zurueck} title="Regiebericht nicht gefunden" />
         <main className="container mx-auto px-4 py-6 text-center">
           <p>Der angeforderte Regiebericht konnte nicht gefunden werden.</p>
           <Button onClick={() => navigate("/disturbances")} className="mt-4">
@@ -579,7 +581,7 @@ const DisturbanceDetail = () => {
 
   return (
     <div className="kb-page min-h-screen">
-      <KBToolbar onBack={() => navigate("/disturbances")} title="Regiebericht">
+      <KBToolbar onBack={zurueck} title="Regiebericht">
         {canEdit && (
           <KBToolbarButton icon={Edit} label="Bearbeiten" onClick={() => setShowEditForm(true)} />
         )}

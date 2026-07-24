@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
@@ -454,6 +455,7 @@ export default function InvoiceDetail() {
   const [searchParams] = useSearchParams();
   const isNew = id === "new" || !id;
   const navigate = useNavigate();
+  const zurueck = useZurueck("/invoices");
   const { toast } = useToast();
   const einheiten = useEinheiten();
 
@@ -477,7 +479,7 @@ export default function InvoiceDetail() {
       setLeaveDialogOpen(true);
       return;
     }
-    navigate("/invoices");
+    zurueck();
   };
 
   // KingBill-Schrittleiste: echte Tabs — es ist immer NUR der aktive Schritt
@@ -4098,7 +4100,7 @@ export default function InvoiceDetail() {
   if (form.status === "storniert" && !isNew && invoiceId) {
     return (
       <div className="kb-page min-h-screen">
-        <KBToolbar onBack={() => navigate("/invoices")} title={`Storno: ${form.nummer}`} />
+        <KBToolbar onBack={zurueck} title={`Storno: ${form.nummer}`} />
         <div className="container mx-auto px-4 py-6 max-w-[800px]">
           <div className="space-y-6">
             <Card className="kb-panel">
@@ -4116,7 +4118,7 @@ export default function InvoiceDetail() {
                   {form.storno_grund && <p>Grund: <strong>{form.storno_grund}</strong></p>}
                 </div>
                 <div className="flex justify-center gap-3 pt-4">
-                  <Button variant="outline" onClick={() => navigate("/invoices")}>Zurück</Button>
+                  <Button variant="outline" onClick={zurueck}>Zurück</Button>
                   <Button variant="default" className="gap-2" onClick={async () => {
                     try {
                       // Always load fresh from DB to ensure data is available
@@ -4216,7 +4218,7 @@ export default function InvoiceDetail() {
                 icon={CheckCircle2}
                 variant="green"
                 label={saving ? "Speichert..." : "Speichern & Schließen"}
-                onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); navigate("/invoices"); } }}
+                onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); zurueck(); } }}
                 disabled={saving}
               />
             </>
@@ -7432,7 +7434,7 @@ export default function InvoiceDetail() {
               <KBButton label="Zurück" onClick={() => setLeaveDialogOpen(false)} />
               <KBButton
                 label="Nein"
-                onClick={() => { setLeaveDialogOpen(false); navigate("/invoices"); }}
+                onClick={() => { setLeaveDialogOpen(false); zurueck(); }}
               />
               <KBButton
                 icon={CheckCircle2}
@@ -7444,7 +7446,7 @@ export default function InvoiceDetail() {
                   if (ok) {
                     setLeaveDialogOpen(false);
                     toast({ title: "Gespeichert" });
-                    navigate("/invoices");
+                    zurueck();
                   }
                 }}
               />
@@ -7576,7 +7578,7 @@ export default function InvoiceDetail() {
           open={previewOpen}
           onClose={() => setPreviewOpen(false)}
           onSave={handleSaveFromPreview}
-          onSavedClose={() => navigate("/invoices")}
+          onSavedClose={zurueck}
           saving={saving}
           saved={previewSaved}
           fileName={form.nummer || typLabel}

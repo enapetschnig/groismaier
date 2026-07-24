@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { buildProjectFilePath, countProjectFiles } from "@/lib/projectFiles";
@@ -33,6 +34,7 @@ type Project = {
 
 const Projects = () => {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
@@ -334,7 +336,7 @@ const Projects = () => {
   return (
     <div className="min-h-screen">
       {/* KingBill-Werkzeugleiste — gleiche Optik wie Kunden-/Artikel-/Belegmaske. */}
-      <KBToolbar onBack={() => navigate("/")} title="Projekte">
+      <KBToolbar onBack={zurueck} title="Projekte">
         <KBToolbarButton
           icon={Plus}
           iconClassName="text-kb-green"

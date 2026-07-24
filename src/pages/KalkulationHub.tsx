@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import {
   Calculator, Plus, FileText, Trash2, User, Clock, MoreVertical,
   Copy, LayoutTemplate, Pencil, FilePlus2,
@@ -54,6 +55,7 @@ const fmtDate = (iso: string) => {
 
 export default function KalkulationHub() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
   const [rows, setRows] = useState<KalkRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -334,7 +336,7 @@ export default function KalkulationHub() {
       {/* KingBill-Toolbar: Zurück führt IMMER zur Startmaske (kein navigate(-1)-
           Ping-Pong zwischen Hub und Editor) */}
       <KBToolbar
-        onBack={() => navigate("/")}
+        onBack={zurueck}
         title="Kalkulation"
         rightActions={
           <KBToolbarButton

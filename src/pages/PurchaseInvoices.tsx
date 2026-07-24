@@ -1,5 +1,6 @@
 import { useEffect, useState, useMemo, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -60,6 +61,7 @@ const FALLBACK_LABELS: Record<string, string> = {
 
 export default function PurchaseInvoices() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
   const { isAdmin } = usePermissions();
   const [searchParams] = useSearchParams();
@@ -222,7 +224,7 @@ export default function PurchaseInvoices() {
 
   return (
     <div className="min-h-screen kb-page">
-      <KBToolbar onBack={() => navigate("/")} title="Eingangsrechnungen & Belege">
+      <KBToolbar onBack={zurueck} title="Eingangsrechnungen & Belege">
         {/* Am Handy stehen die beiden Aktionen als große Buttons im Inhalt
             (sonst sprengen sie die schmale Toolbar). */}
         <KBToolbarButton

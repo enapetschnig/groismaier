@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { CalendarOff, CalendarPlus, FolderPlus, Users } from "lucide-react";
 import {
   AlertDialog,
@@ -44,6 +45,7 @@ const ICON_ONLY_ON_MOBILE = "[&>span]:hidden sm:[&>span]:inline";
 
 export default function ScheduleBoard() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
 
   // URL-Param ?view=week|month|year — /schedule?view=year öffnet direkt
@@ -490,7 +492,7 @@ export default function ScheduleBoard() {
       {/* KingBill-Toolbar: [Zurück] Plantafel [+ Einsatz] [+ Projekt] [Team] [Betriebsurlaub]
           Am Handy tragen die Nebenaktionen nur ihr Icon (Beschriftung per
           aria-label/title) — sonst wäre die Leiste 225 px hoch. */}
-      <KBToolbar onBack={() => navigate("/")} title="Plantafel">
+      <KBToolbar onBack={zurueck} title="Plantafel">
         {canEdit && (
           <KBToolbarButton
             icon={CalendarPlus}

@@ -35,6 +35,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { AlertTriangle, FileCheck2, FileText, Home, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,7 @@ interface UebernahmeZeile extends FreiePosition {
 export default function KalkulationEditor() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/auftragskalkulation");
   const { toast } = useToast();
   const katalog = useKalkKatalog();
   // Schreibrechte auf den Katalog hat laut RLS nur der Administrator. Solange
@@ -626,7 +628,7 @@ export default function KalkulationEditor() {
   return (
     <div className="kb-page min-h-screen pb-10">
       <KBToolbar
-        onBack={() => { persist({ silent: true }); navigate("/auftragskalkulation"); }}
+        onBack={() => { persist({ silent: true }); zurueck(); }}
         title={name || "Kalkulation"}
         rightActions={
           <div className="flex items-center gap-2">

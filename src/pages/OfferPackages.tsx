@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -90,6 +91,7 @@ export default function OfferPackages() {
   const [quickOfferOpen, setQuickOfferOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/invoices");
 
   useEffect(() => {
     fetchAll();
@@ -278,7 +280,7 @@ export default function OfferPackages() {
       */}
       <KBToolbar
         title="Angebotspakete"
-        onBack={() => navigate("/invoices")}
+        onBack={zurueck}
         backLabel="Zurück zu Dokumenten"
         rightActions={
           <button

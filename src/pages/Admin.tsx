@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -96,6 +97,7 @@ interface Employee {
 
 export default function Admin() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const [searchParams] = useSearchParams();
   const initialTab = searchParams.get("tab") || "benutzer";
 
@@ -664,7 +666,7 @@ export default function Admin() {
       {/* Titel bewusst kurz: auf 390 px frisst „Admin-Bereich" so viel Breite,
           dass die Toolbar-Buttons nicht mehr umbrechen können und die Seite
           horizontal scrollt. */}
-      <KBToolbar onBack={() => navigate("/")} title="Admin">
+      <KBToolbar onBack={zurueck} title="Admin">
         {/* „Benutzer anlegen" auf Kundenwunsch entfernt (2026-07-24) —
             Mitarbeiter registrieren sich selbst über die Login-Seite. */}
         <KBToolbarButton

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
@@ -54,6 +55,7 @@ const ZAHLBARE_TYPEN = ["rechnung", "anzahlungsrechnung", "schlussrechnung"];
 
 export default function OffenePosten() {
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const { toast } = useToast();
 
   const [rows, setRows] = useState<OpRow[]>([]);
@@ -240,7 +242,7 @@ export default function OffenePosten() {
   return (
     <div className="kb-page min-h-screen">
       <KBToolbar
-        onBack={() => navigate("/")}
+        onBack={zurueck}
         title="Offene Posten"
       >
         <KBToolbarButton

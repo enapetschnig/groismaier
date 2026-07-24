@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
@@ -39,6 +40,7 @@ const eur = (n: number) =>
 const ProjectOverview = () => {
   const { projectId } = useParams<{ projectId: string }>();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/projects");
   const { toast } = useToast();
   const [projectName, setProjectName] = useState("");
   const [editingName, setEditingName] = useState(false);
@@ -496,7 +498,7 @@ const ProjectOverview = () => {
   return (
     <div className="min-h-screen">
       {/* KingBill-Werkzeugleiste statt weißer shadcn-Kopfzeile. */}
-      <KBToolbar onBack={() => navigate("/projects")} title="Projekt">
+      <KBToolbar onBack={zurueck} title="Projekt">
         <KBToolbarButton icon={Settings} label="Bearbeiten" onClick={openEditDialog} />
       </KBToolbar>
 

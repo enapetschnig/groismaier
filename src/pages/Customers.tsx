@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { Plus, Pencil, Trash2, Users, Receipt, Printer, Filter, ChevronDown, ChevronUp, Check, IdCard, Phone, Mail } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { CustomerForm, EMPTY_CUSTOMER_FORM, composeCustomerName, type CustomerFormData } from "@/components/CustomerForm";
@@ -108,6 +109,7 @@ export default function Customers() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const { toast } = useToast();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
   const [searchParams] = useSearchParams();
 
   useEffect(() => {
@@ -579,7 +581,7 @@ export default function Customers() {
         Tabellenzeile, sondern Karten mit eigenen Aktionen. Sonst würde die
         Toolbar am Handy 5 Zeilen hoch werden und den halben Bildschirm fressen.
       */}
-      <KBToolbar onBack={() => navigate("/")} title="Kunden">
+      <KBToolbar onBack={zurueck} title="Kunden">
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neu" onClick={openNew} />
         <KBToolbarButton
           className="hidden md:inline-flex"

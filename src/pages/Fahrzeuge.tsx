@@ -18,6 +18,7 @@
  */
 import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { matchesSearch } from "@/lib/searchUtils";
 import { parseDecimal } from "@/lib/num";
@@ -136,6 +137,7 @@ const EMPTY_FORM = {
 export default function Fahrzeuge() {
   const { toast } = useToast();
   const navigate = useNavigate();
+  const zurueck = useZurueck("/");
 
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [stats, setStats] = useState<Record<string, VehicleStats>>({});
@@ -847,7 +849,7 @@ export default function Fahrzeuge() {
         }
       `}</style>
 
-      <KBToolbar onBack={() => navigate("/")} title="Fahrzeuge">
+      <KBToolbar onBack={zurueck} title="Fahrzeuge">
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neu" onClick={openNew} />
         <KBToolbarButton
           icon={Pencil}
