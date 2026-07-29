@@ -64,7 +64,15 @@ export default function Index() {
       .eq("user_id", userId)
       .maybeSingle();
 
-    const [{ data: profileData }, { data: roleData }] = await Promise.all([profileReq, roleReq]);
+    const [{ data: profileData, error: profileError }, { data: roleData }] = await Promise.all([profileReq, roleReq]);
+
+    // Scheitert die Abfrage (Funkloch), ist der Benutzer NICHT plötzlich
+    // unfreigeschaltet — sonst begrüßt die Startseite einen langjährigen
+    // Mitarbeiter mit „wartet auf Freischaltung".
+    if (profileError) {
+      setLoading(false);
+      return;
+    }
 
     // Check activation status
     setIsActivated(profileData?.is_active === true);

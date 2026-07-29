@@ -607,14 +607,19 @@ const ProjectOverview = () => {
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                 <span className="text-muted-foreground">Kunde:</span>
                 {customerData ? (
-                  // min-h-11: am Handy ein sauber treffbares Ziel, ohne die
-                  // Zeile optisch zu einem Button zu machen.
-                  <button
-                    className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-2"
-                    onClick={() => navigate(`/customers?q=${encodeURIComponent(customerData.name)}`)}
-                  >
-                    {customerData.name}
-                  </button>
+                  // Verlinkt nur für Administratoren: Die Kundenverwaltung ist
+                  // gesperrt, ein Mitarbeiter landete hier sonst auf
+                  // „Kein Zugriff". min-h-11 = am Handy sauber treffbar.
+                  isAdmin ? (
+                    <button
+                      className="inline-flex min-h-11 items-center font-medium text-primary underline underline-offset-2"
+                      onClick={() => navigate(`/customers?q=${encodeURIComponent(customerData.name)}`)}
+                    >
+                      {customerData.name}
+                    </button>
+                  ) : (
+                    <span className="font-medium">{customerData.name}</span>
+                  )
                 ) : (
                   <span className="text-muted-foreground italic">
                     kein Kunde verknüpft — über „Bearbeiten" zuordnen

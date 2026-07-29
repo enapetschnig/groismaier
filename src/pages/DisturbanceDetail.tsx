@@ -508,14 +508,25 @@ const DisturbanceDetail = () => {
   const handleOpenPdf = async () => {
     if (!disturbance) return;
     setOpeningPdf(true);
+    // Fenster SYNCHRON im Klick öffnen: Das PDF wird erst erzeugt und
+    // signiert, und ein window.open nach mehreren await-Schritten gilt am
+    // Handy nicht mehr als Nutzeraktion — Safari und Chrome blocken es
+    // wortlos, der Knopf wirkte wirkungslos.
+    const fenster = window.open("", "_blank");
     // Immer frisch erzeugen, damit das PDF den aktuellen Stand (inkl.
     // Unterschrift/Material) zeigt und im Projektordner landet.
     const path = await storeReportPdf(disturbance, { silent: true }) || disturbance.pdf_path;
     if (path) {
       const { data } = await supabase.storage.from("regiebericht-pdfs").createSignedUrl(path, 300);
-      if (data?.signedUrl) window.open(data.signedUrl, "_blank");
-      else toast({ variant: "destructive", title: "Fehler", description: "PDF konnte nicht geöffnet werden" });
+      if (data?.signedUrl) {
+        if (fenster) fenster.location.href = data.signedUrl;
+        else window.open(data.signedUrl, "_blank");
+      } else {
+        fenster?.close();
+        toast({ variant: "destructive", title: "Fehler", description: "PDF konnte nicht geöffnet werden" });
+      }
     } else {
+      fenster?.close();
       toast({ variant: "destructive", title: "Fehler", description: "PDF konnte nicht erzeugt werden" });
     }
     setOpeningPdf(false);

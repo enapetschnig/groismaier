@@ -103,7 +103,7 @@ type Disturbance = {
   status: string;
 };
 
-const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => ({
+const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = "", pauseDuration = 0): TimeBlock => ({
   id: crypto.randomUUID(),
   locationType: "baustelle",
   kostenstelle: "baustelle",
@@ -113,7 +113,10 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   endTime,
   pauseStart,
   pauseEnd,
-  pauseDuration: 0, // Keine Pause vorausgewählt
+  // Gerechnet wird ausschließlich mit pauseDuration (siehe Speichern-Logik) —
+  // pauseStart/pauseEnd sind nur Anzeige. Wer hier 0 lässt, obwohl eine Pause
+  // vorbelegt ist, bucht sie als Arbeitszeit mit.
+  pauseDuration,
   selectedEmployees: [],
   manualHours: "",
   disturbanceId: "",
@@ -177,8 +180,8 @@ const TimeTracking = () => {
   const entryMode = "zeitraum" as const;
 
   // Neuer Zeitblock inkl. Vorschlag des Standard-Fahrzeugs (entfernbar).
-  const buildBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = ""): TimeBlock => {
-    const block = createDefaultBlock(startTime, endTime, pauseStart, pauseEnd);
+  const buildBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = "", pauseDuration = 0): TimeBlock => {
+    const block = createDefaultBlock(startTime, endTime, pauseStart, pauseEnd, pauseDuration);
     const vid = standardVehicleIdRef.current;
     if (vid) {
       block.kfzOpen = true;
@@ -237,7 +240,11 @@ const TimeTracking = () => {
         const dateObj = new Date(date);
         const defaults = getDefaultWorkTimes(dateObj);
         if (defaults) {
-          setTimeBlocks([buildBlock(defaults.startTime, defaults.endTime, defaults.pauseStart, defaults.pauseEnd)]);
+          setTimeBlocks([buildBlock(
+            defaults.startTime, defaults.endTime,
+            defaults.pauseStart, defaults.pauseEnd,
+            defaults.pauseMinutes || 0,
+          )]);
         } else {
           setTimeBlocks([buildBlock()]);
         }
@@ -1695,7 +1702,7 @@ const TimeTracking = () => {
 
         {/* New Project Dialog */}
         <Dialog open={showNewProjectDialog} onOpenChange={setShowNewProjectDialog}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Neues Projekt erstellen</DialogTitle>
               <DialogDescription>Geben Sie die Details ein.</DialogDescription>
@@ -1728,7 +1735,7 @@ const TimeTracking = () => {
 
         {/* Absence Dialog */}
         <Dialog open={showAbsenceDialog} onOpenChange={setShowAbsenceDialog}>
-          <DialogContent>
+          <DialogContent className="max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Abwesenheit erfassen</DialogTitle>
               <DialogDescription>Erfassen Sie Urlaub, Krankenstand, ZA, Weiterbildung oder Feiertag</DialogDescription>

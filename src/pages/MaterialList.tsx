@@ -257,12 +257,12 @@ const MaterialList = () => {
                       <div className="min-w-0">
                         <p className="font-medium text-sm break-words">{s.material}</p>
                         <p className="text-xs text-muted-foreground">
-                          {s.einzelpreis > 0 && `${eur(s.einzelpreis)} / ${s.einheit}`}
+                          {isAdmin && s.einzelpreis > 0 && `${eur(s.einzelpreis)} / ${s.einheit}`}
                         </p>
                       </div>
                       <div className="text-right shrink-0">
                         <p className="font-bold tabular-nums">{formatMenge(s.verbrauch)} {s.einheit}</p>
-                        {s.einzelpreis > 0 && (
+                        {isAdmin && s.einzelpreis > 0 && (
                           <p className="text-xs text-muted-foreground tabular-nums">
                             {eur(s.verbrauch * s.einzelpreis)}
                           </p>
@@ -272,7 +272,10 @@ const MaterialList = () => {
                   ))}
                 </div>
                 {/* Materialkosten GESAMT — die Zahl, die auch in der
-                    Nachkalkulation als Materialkosten auftaucht. */}
+                    Nachkalkulation als Materialkosten auftaucht. Nur fuer
+                    Administratoren: Mitarbeiter sollen weder EK-Preise noch
+                    die Projektkosten sehen. */}
+                {isAdmin && (
                 <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border-2 border-primary/30 bg-primary/5 p-3">
                   <div className="min-w-0">
                     <p className="font-semibold text-sm">Materialkosten gesamt</p>
@@ -282,6 +285,7 @@ const MaterialList = () => {
                   </div>
                   <p className="text-lg font-bold tabular-nums shrink-0">{eur(gesamtWert)}</p>
                 </div>
+                )}
               </CardContent>
             )}
           </Card>
@@ -352,6 +356,9 @@ const MaterialList = () => {
                       </SelectContent>
                     </Select>
                   </div>
+                  {/* Einkaufspreis pflegt nur der Administrator — der
+                      Mitarbeiter meldet die Menge, nicht den Wert. */}
+                  {isAdmin && (
                   <div>
                     <label className="text-sm font-medium">Einkaufspreis je Einheit (€)</label>
                     <Input
@@ -363,10 +370,11 @@ const MaterialList = () => {
                       className="h-11"
                     />
                   </div>
+                  )}
                 </div>
                 {/* Live-Zwischensumme: der Erfasser sieht sofort, was die
                     Bewegung wert ist — Tippfehler (Faktor 100) fallen auf. */}
-                {parseDecimal(newMenge) !== null && parseDecimal(newEinzelpreis) !== null && (
+                {isAdmin && parseDecimal(newMenge) !== null && parseDecimal(newEinzelpreis) !== null && (
                   <p className="text-sm text-muted-foreground">
                     Wert dieser Bewegung:{" "}
                     <span className="font-semibold text-foreground tabular-nums">
@@ -407,8 +415,8 @@ const MaterialList = () => {
                           </div>
                           <p className="text-xs text-muted-foreground break-words">
                             {entry.menge && `${formatMenge(menge)} ${entry.einheit || ""}`}
-                            {ek > 0 ? ` × ${eur(ek)} = ` : ""}
-                            {ek > 0 ? <span className="font-medium text-foreground tabular-nums">{eur(menge * ek)}</span> : null}
+                            {isAdmin && ek > 0 ? ` × ${eur(ek)} = ` : ""}
+                            {isAdmin && ek > 0 ? <span className="font-medium text-foreground tabular-nums">{eur(menge * ek)}</span> : null}
                             {entry.profiles ? ` · ${entry.profiles.vorname} ${entry.profiles.nachname}` : ""}
                             {" · "}
                             {entry.datum ? new Date(entry.datum).toLocaleDateString("de-AT") : new Date(entry.created_at).toLocaleDateString("de-AT")}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,16 @@ export default function Auth() {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [mode, setMode] = useState<Mode>("login");
+
+  // Wer bereits angemeldet ist, soll hier nicht stranden: Ein Funkloch konnte
+  // einen Mitarbeiter früher auf diese Maske werfen, obwohl seine Sitzung
+  // gültig war — dann tippt er am Bau sinnlos Zugangsdaten neu ein.
+  // getSession() liest nur den lokalen Speicher und braucht kein Netz.
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user) navigate("/", { replace: true });
+    });
+  }, [navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();

@@ -190,7 +190,10 @@ export function PhotoGallery({
               ref={fileInputRef}
               type="file"
               accept="image/*"
-              capture="environment"
+              /* Kein capture="environment": das erzwingt die Kamera und macht
+                 es unmöglich, bereits geschossene Fotos aus der Galerie
+                 anzuhängen. Ohne das Attribut fragt das Handy „Kamera oder
+                 Mediathek?" — beides bleibt möglich. */
               multiple
               className="hidden"
               onChange={handleFileInputChange}

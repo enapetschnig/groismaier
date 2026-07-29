@@ -11,7 +11,23 @@ interface ProtectedRouteProps {
   feature?: FeatureKey;
 }
 
-type Status = "loading" | "authenticated" | "unauthenticated" | "pending" | "forbidden" | "redirect-freelancer";
+type Status = "loading" | "authenticated" | "unauthenticated" | "pending" | "forbidden" | "redirect-freelancer" | "offline";
+
+/**
+ * Netzfehler von echter Abmeldung unterscheiden.
+ *
+ * supabase-js wirft bei einem fehlgeschlagenen Netzwerkaufruf nicht, sondern
+ * liefert `{ user: null, error: AuthRetryableFetchError }`. Wer nur `user`
+ * auswertet, hält jedes Funkloch für eine Abmeldung — und genau das passiert
+ * dem Zimmerer auf der Baustelle mitten im Regiebericht.
+ */
+const istNetzfehler = (e: unknown): boolean => {
+  if (!e || typeof e !== "object") return false;
+  const err = e as { name?: string; status?: number; message?: string };
+  return err.name === "AuthRetryableFetchError"
+    || err.status === 0
+    || /fetch|network|failed to fetch|timeout/i.test(err.message || "");
+};
 
 export function ProtectedRoute({ children, feature }: ProtectedRouteProps) {
   const [status, setStatus] = useState<Status>("loading");
@@ -30,17 +46,31 @@ export function ProtectedRoute({ children, feature }: ProtectedRouteProps) {
   }, [location.pathname]);
 
   const checkAccess = async () => {
-    const { data: { user } } = await supabase.auth.getUser();
+    const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (!user) {
+      // Kein Netz? Dann gilt die lokal gespeicherte Sitzung weiter —
+      // getSession() fragt den Server nicht.
+      if (userError && istNetzfehler(userError)) {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) { setStatus("authenticated"); return; }
+      }
       setStatus("unauthenticated");
       return;
     }
 
-    const { data: profile } = await supabase
+    const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select("is_active")
       .eq("id", user.id)
       .maybeSingle();
+
+    // Scheitert die Abfrage am Netz, ist der Benutzer NICHT plötzlich
+    // unfreigeschaltet — sonst liest ein langjähriger Mitarbeiter bei
+    // schlechtem Empfang „Warten auf Freischaltung".
+    if (profileError) {
+      setStatus(istNetzfehler(profileError) ? "offline" : "pending");
+      return;
+    }
 
     if (!profile || profile.is_active === false || profile.is_active === null) {
       setStatus("pending");
@@ -82,6 +112,30 @@ export function ProtectedRoute({ children, feature }: ProtectedRouteProps) {
 
   if (status === "unauthenticated") {
     return <Navigate to="/auth" replace />;
+  }
+
+  if (status === "offline") {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background p-4">
+        <Card className="max-w-md w-full">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 h-16 w-16 rounded-full bg-amber-100 flex items-center justify-center">
+              <Clock className="h-8 w-8 text-amber-600" />
+            </div>
+            <CardTitle className="text-xl">Keine Verbindung</CardTitle>
+            <CardDescription className="text-base mt-2">
+              Die Daten konnten nicht geladen werden. Du bist weiterhin angemeldet —
+              sobald wieder Empfang da ist, geht es hier weiter.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex justify-center">
+            <Button onClick={() => { setStatus("loading"); checkAccess(); }}>
+              Erneut versuchen
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
   }
 
   if (status === "redirect-freelancer") {
