@@ -8,6 +8,7 @@ import {
   Clock, FolderKanban, BarChart3, LogOut, FileText, ArrowRight, Info,
   User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown,
   Calculator, Plus, TrendingUp, CalendarRange, HardHat, Shield, Banknote, Truck,
+  Wallet,
   type LucideIcon,
 } from "lucide-react";
 import { useOnboarding } from "@/contexts/OnboardingContext";
@@ -418,7 +419,7 @@ export default function Index() {
           )}
 
           {/* ── Auswertung ────────────────────────────────────── */}
-          {(canView("nachkalkulation") || canView("plantafel") || canView("stundenauswertung")) && (
+          {(canView("nachkalkulation") || canView("plantafel") || canView("stundenauswertung") || canView("finanzplanung")) && (
             <KBBereich icon={BarChart3} title="Auswertung">
               {canView("nachkalkulation") && (
                 <KBButton
@@ -426,6 +427,14 @@ export default function Index() {
                   icon={TrendingUp}
                   label="Nachkalkulation"
                   onClick={() => navigate("/nachkalkulation")}
+                />
+              )}
+              {canView("finanzplanung") && (
+                <KBButton
+                  className="w-full"
+                  icon={Wallet}
+                  label="Finanzplanung"
+                  onClick={() => navigate("/finanzplanung")}
                 />
               )}
               {/* „Auslastung" auf Kundenwunsch vorerst entfernt (Jahresansicht
