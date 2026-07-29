@@ -84,19 +84,18 @@ Deno.serve(async (req: Request) => {
     let teamEntries: TimeEntryData[];
     let createWorkerLinks = true;
     let skipMainEntry = false;
+    let zuLoeschenDisturbanceId: string | null = null;
 
     if (body.entries) {
       // New format from Regiebericht: all entries as flat array
       const entries = body.entries as TimeEntryData[];
       const deleteDisturbanceId = body.deleteDisturbanceId as string | undefined;
 
-      // Create admin client early for delete
-      const supabaseAdminEarly = createClient(supabaseUrl, supabaseServiceKey);
-
-      // Delete old entries for this disturbance if updating
-      if (deleteDisturbanceId) {
-        await supabaseAdminEarly.from("time_entries").delete().eq("disturbance_id", deleteDisturbanceId);
-      }
+      // FRUEHER wurde hier sofort geloescht — noch VOR jeder Pruefung. Schlug
+      // danach eine Validierung fehl (fremder Bericht, inaktiver Mitarbeiter),
+      // waren die Stunden des Monteurs weg und nichts Neues angelegt. Das
+      // Loeschen passiert jetzt erst unmittelbar vor dem Einfuegen.
+      zuLoeschenDisturbanceId = deleteDisturbanceId || null;
 
       // First entry is main, rest are team
       mainEntry = entries[0];
@@ -110,16 +109,22 @@ Deno.serve(async (req: Request) => {
       skipMainEntry = body.skipMainEntry ?? false;
     }
 
-    // Validate that the main entry belongs to the authenticated user
-    if (mainEntry.user_id !== userId) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Main entry must belong to authenticated user" }),
-        { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
     // Create admin client with service role key to bypass RLS
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+
+    // Der Haupteintrag muss dem Aufrufer gehoeren — ausser ein Administrator
+    // bearbeitet einen fremden Regiebericht. Vorher scheiterte genau das mit
+    // 403, NACHDEM die Stunden des Monteurs bereits geloescht waren.
+    if (mainEntry.user_id !== userId) {
+      const { data: rolle } = await supabaseAdmin
+        .from("user_roles").select("role").eq("user_id", userId).eq("role", "administrator").maybeSingle();
+      if (!rolle) {
+        return new Response(
+          JSON.stringify({ success: false, error: "Main entry must belong to authenticated user" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
 
     // Validate team members exist and are active
     if (teamEntries.length > 0) {
@@ -144,6 +149,20 @@ Deno.serve(async (req: Request) => {
         return new Response(
           JSON.stringify({ success: false, error: `Invalid or inactive team members: ${invalidIds.length}` }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+    }
+
+    // Erst jetzt — alle Pruefungen sind durch — die alten Zeiteintraege des
+    // Berichts entfernen.
+    if (zuLoeschenDisturbanceId) {
+      const { error: delError } = await supabaseAdmin
+        .from("time_entries").delete().eq("disturbance_id", zuLoeschenDisturbanceId);
+      if (delError) {
+        console.error("Error deleting old entries:", delError);
+        return new Response(
+          JSON.stringify({ success: false, error: `Alte Zeiteintraege konnten nicht entfernt werden: ${delError.message}` }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
     }

@@ -94,10 +94,17 @@ export function ImportFromOfferDialog({ open, onClose, projectId, onImport }: Im
     setLoadingItems(true);
     const { data } = await supabase
       .from("invoice_items")
-      .select("beschreibung, menge, einheit, einzelpreis, rabatt_prozent, gesamtpreis, langtext, kurztext, mwst_exempt, produktnummer")
+      // gruppe/ist_gruppensumme/auf_pdf MÜSSEN mit: Ohne sie erkennt das PDF
+      // die Detailzeilen eines Aufbaus nicht mehr (deren gesamtpreis ist 0,
+      // die Sammelzeile trägt den Betrag) und rechnet Menge × Einzelpreis
+      // nach — der Kunde bekam die doppelte Rechnungssumme gedruckt, samt
+      // der intern ausgeblendeten Kalkulationszeilen.
+      .select("beschreibung, menge, einheit, einzelpreis, rabatt_prozent, gesamtpreis, langtext, kurztext, mwst_exempt, produktnummer, gruppe, ist_gruppensumme, auf_pdf")
       .eq("invoice_id", offer.id)
       .order("position");
-    setOfferItems(data || []);
+    // Cast: die generierten Supabase-Typen kennen gruppe/ist_gruppensumme/
+    // auf_pdf noch nicht, die Spalten existieren aber (Aufbau-Gruppen).
+    setOfferItems(((data as any[]) || []) as any);
     setLoadingItems(false);
   };
 

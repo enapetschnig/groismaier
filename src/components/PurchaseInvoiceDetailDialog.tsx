@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/usePermissions";
 import { parseDecimal, formatForInput } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
 
 const FALLBACK_KATEGORIEN = [
   { value: "material", label: "Material" },
@@ -170,7 +171,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const confirmVerrechnen = async (invId: string) => {
     if (!form) return;
     const { error } = await supabase.from("purchase_invoices").update({
-      verrechnet_am: new Date().toISOString().split("T")[0],
+      verrechnet_am: heuteISO(),
       verrechnet_in_invoice_id: invId,
     } as any).eq("id", form.id);
     if (error) {

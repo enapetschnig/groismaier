@@ -66,20 +66,17 @@ const Projects = () => {
   useEffect(() => {
     checkAdminStatus();
 
-    // Einmal beim Öffnen der Projekte-Seite: Duplikate automatisch
-    // zusammenführen (gleicher Name + gleicher Kunde). Danach Projekte laden.
-    (async () => {
-      try {
-        const result = await mergeDuplicateProjects();
-        if (result.projectsRemoved > 0) {
-          toast({
-            title: "Duplikate zusammengeführt",
-            description: `${result.projectsRemoved} doppelte${result.projectsRemoved === 1 ? "s" : ""} Projekt${result.projectsRemoved === 1 ? "" : "e"} wurde${result.projectsRemoved === 1 ? "" : "n"} automatisch mit dem ältesten Eintrag verknüpft${result.details.length > 0 ? ": " + result.details.slice(0, 3).join(", ") + (result.details.length > 3 ? " …" : "") : ""}`,
-          });
-        }
-      } catch { /* silent — schlägt Cleanup fehl, normal weitermachen */ }
-      fetchProjects();
-    })();
+    // FRÜHER lief hier bei JEDEM Öffnen der Projektliste automatisch
+    // mergeDuplicateProjects() — das LÖSCHT Projekte. Die Datenbank hängt an
+    // projects mehrere Fremdschlüssel mit ON DELETE CASCADE
+    // (material_entries, documents, reports, project_daily_targets,
+    // purchase_invoice_allocations, assignment_resources, board_projects,
+    // einsaetze). Die Funktion hängt aber nur einen Teil davon um — Material-
+    // buchungen, abgelegte Dokumente, Berichte und Kostenzuordnungen des
+    // "doppelten" Projekts waren damit unwiederbringlich weg, ohne dass
+    // jemand es angestoßen hätte. Zusammenführen ist jetzt eine bewusste
+    // Aktion im Admin-Bereich, kein Nebeneffekt des Hinschauens.
+    fetchProjects();
 
     // Realtime subscription
     const channel = supabase

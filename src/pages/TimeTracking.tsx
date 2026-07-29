@@ -24,6 +24,7 @@ import {
   getTotalWorkingHours
 } from "@/lib/workingHours";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
 
 type Project = {
   id: string;
@@ -164,7 +165,7 @@ const TimeTracking = () => {
   const [showAbsenceDialog, setShowAbsenceDialog] = useState(false);
   
   const [absenceData, setAbsenceData] = useState({
-    date: new Date().toISOString().split('T')[0],
+    date: heuteISO(),
     type: "urlaub" as "urlaub" | "krankenstand" | "weiterbildung" | "feiertag" | "za",
     document: null as File | null,
     customHours: "" as string,
@@ -174,7 +175,7 @@ const TimeTracking = () => {
     absencePauseMinutes: "30",
   });
   
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedDate, setSelectedDate] = useState(heuteISO());
   const [timeBlocks, setTimeBlocks] = useState<TimeBlock[]>([createDefaultBlock()]);
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   const entryMode = "zeitraum" as const;
@@ -662,7 +663,7 @@ const TimeTracking = () => {
       toast({ title: "Erfolg", description: `${absenceLabel} erfasst` });
       setShowAbsenceDialog(false);
       setAbsenceData({
-        date: new Date().toISOString().split('T')[0],
+        date: heuteISO(),
         type: "urlaub",
         document: null,
         customHours: "",
@@ -1951,7 +1952,7 @@ const TimeTracking = () => {
                   variant="outline" 
                   onClick={() => {
                     setShowAbsenceDialog(false);
-                    setAbsenceData({ date: new Date().toISOString().split('T')[0], type: "urlaub", document: null, customHours: "", isFullDay: true, absenceStartTime: "07:00", absenceEndTime: "16:00", absencePauseMinutes: "30" });
+                    setAbsenceData({ date: heuteISO(), type: "urlaub", document: null, customHours: "", isFullDay: true, absenceStartTime: "07:00", absenceEndTime: "16:00", absencePauseMinutes: "30" });
                   }}
                   disabled={submittingAbsence}
                 >

@@ -15,6 +15,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { PurchaseInvoiceUploadDialog } from "@/components/PurchaseInvoiceUploadDialog";
 import { PurchaseInvoiceDetailDialog } from "@/components/PurchaseInvoiceDetailDialog";
+import { heuteISO } from "@/lib/datum";
 
 type PurchaseInvoice = {
   id: string;
@@ -205,7 +206,7 @@ export default function PurchaseInvoices() {
     const nowBezahlt = inv.status !== "bezahlt";
     await supabase.from("purchase_invoices").update({
       status: nowBezahlt ? "bezahlt" : "offen",
-      bezahlt_am: nowBezahlt ? new Date().toISOString().split("T")[0] : null,
+      bezahlt_am: nowBezahlt ? heuteISO() : null,
     }).eq("id", inv.id);
     loadData();
   };

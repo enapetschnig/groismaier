@@ -13,6 +13,7 @@ import { Search, UserPlus, Building, Upload, Trash2, CheckCircle, FileText, Imag
 import { supabase } from "@/integrations/supabase/client";
 import { buildProjectFilePath } from "@/lib/projectFiles";
 import { useToast } from "@/hooks/use-toast";
+import { heuteISO } from "@/lib/datum";
 import {
   CustomerForm,
   EMPTY_CUSTOMER_FORM,
@@ -128,7 +129,7 @@ export function CreateProjectDialog({
   // --- Section 1: Projektdaten ---
   const [projectName, setProjectName] = useState(defaultName);
   const [status, setStatus] = useState("");
-  const [erfassungsDatum, setErfassungsDatum] = useState(new Date().toISOString().split("T")[0]);
+  const [erfassungsDatum, setErfassungsDatum] = useState(heuteISO());
   const [beschreibung, setBeschreibung] = useState("");
 
   // --- Section 2: Kunde ---
@@ -176,7 +177,7 @@ export function CreateProjectDialog({
       // Reset form
       setProjectName(defaultName);
       setStatus("");
-      setErfassungsDatum(new Date().toISOString().split("T")[0]);
+      setErfassungsDatum(heuteISO());
       setBeschreibung("");
       setSelectedCustomerId(defaultCustomerId);
       setCustomerForm({

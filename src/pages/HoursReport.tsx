@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getNormalWorkingHours } from "@/lib/workingHours";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
+import { alsISO } from "@/lib/datum";
 
 interface TimeEntry {
   id: string;
@@ -725,7 +726,7 @@ export default function HoursReport() {
         // Tagessumme wenn mehrere Einträge am Tag — Saldo aus dem
         // Helper, NICHT mehr per-Entry summieren.
         if (dayEntries.length > 1) {
-          const datumStr = dayDate.toISOString().slice(0, 10);
+          const datumStr = alsISO(dayDate);
           const dayBal = getDayBal(datumStr);
           const dayTotalHours = dayBal?.ist ?? dayEntries.reduce((sum, e) => sum + e.stunden, 0);
           if (includeOvertime) {

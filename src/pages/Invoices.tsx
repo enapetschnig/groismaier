@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
+import { heuteISO } from "@/lib/datum";
 
 interface Invoice {
   id: string;
@@ -1145,7 +1146,7 @@ export default function Invoices() {
                                 const pdfBlob = generateStornoPdf(
                                   { nummer: inv.nummer, kunde_name: inv.kunde_name, brutto_summe: Number(inv.brutto_summe), datum: inv.datum },
                                   (inv as any).storno_nummer || "",
-                                  (inv as any).storno_datum || new Date().toISOString().split("T")[0],
+                                  (inv as any).storno_datum || heuteISO(),
                                   (inv as any).storno_grund || "",
                                   bank, logoUri, invoiceLayout
                                 );

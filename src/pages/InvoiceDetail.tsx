@@ -68,6 +68,7 @@ import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
 import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+import { alsISO, heuteISO } from "@/lib/datum";
 
 /** Geldbetrag auf Cent runden. */
 const round2 = (v: number): number =>
@@ -966,7 +967,7 @@ export default function InvoiceDetail() {
     if (zb === "individuell" && custNettofrist > 0 && form.datum) {
       const due = new Date(form.datum + "T12:00:00");
       due.setDate(due.getDate() + custNettofrist);
-      updateField("faellig_am", due.toISOString().split("T")[0]);
+      updateField("faellig_am", alsISO(due));
     }
     toast({ title: "Projektdaten übernommen", description: cust.name });
   };
@@ -1031,7 +1032,7 @@ export default function InvoiceDetail() {
         if (zb === "individuell" && custNettofrist > 0 && form.datum) {
           const due = new Date(form.datum + "T12:00:00");
           due.setDate(due.getDate() + custNettofrist);
-          updates.faellig_am = due.toISOString().split("T")[0];
+          updates.faellig_am = alsISO(due);
         }
         if (custNettofrist > 0) hints.push(`Zahlungsfrist: ${custNettofrist} Tage`);
       }
@@ -1270,7 +1271,11 @@ export default function InvoiceDetail() {
         zahlungsbedingungen: data.zahlungsbedingungen || "",
         notizen: data.notizen || "",
         betreff: data.betreff || "",
-        mwst_satz: Number(data.mwst_satz) || 20,
+        // KEIN "|| 20": Ein steuerfreier Beleg (0 %) wurde beim Umwandeln
+        // stillschweigend auf 20 % gesetzt und der Kunde bekam USt verrechnet,
+        // die er nicht schuldet.
+        mwst_satz: data.mwst_satz === null || data.mwst_satz === undefined
+          ? 20 : Number(data.mwst_satz),
         rabatt_prozent: Number(data.rabatt_prozent) || 0,
         rabatt_betrag: Number(data.rabatt_betrag) || 0,
         kalkulation_aufschlag_override: (data as any).kalkulation_aufschlag_override ?? null,
@@ -1423,7 +1428,16 @@ export default function InvoiceDetail() {
 
       // Anzahlungsrechnung: nur eine Zeile mit dem Anzahlungsbetrag.
       if (targetTyp === "anzahlungsrechnung" && (opts?.anzahlungBetrag || opts?.anzahlungProzent)) {
-        const gesamtNetto = nextItems.reduce((s, it) => s + it.gesamtpreis, 0);
+        // Basis ist der Netto-Betrag NACH Kopfrabatt — genau das, was der Kunde
+        // im Angebot als Endsumme gelesen hat. Der Kopfrabatt selbst wird auf
+        // der Anzahlungsrechnung anschliessend geloescht (siehe unten), sonst
+        // zoege er ein zweites Mal ab: Eine Anzahlung von 30.000 EUR schrumpfte
+        // bei 10 % Kopfrabatt auf 27.000 EUR.
+        const positionenNetto = nextItems.reduce((s, it) => s + it.gesamtpreis, 0);
+        const kopfRabatt = Number(data.rabatt_prozent) > 0
+          ? positionenNetto * (Number(data.rabatt_prozent) / 100)
+          : (Number(data.rabatt_betrag) || 0);
+        const gesamtNetto = Math.round((positionenNetto - kopfRabatt) * 100) / 100;
         const quellNummer = data.nummer || "Auftragsbestätigung";
         let anzBetrag: number;
         let labelKurz: string;
@@ -1450,6 +1464,8 @@ export default function InvoiceDetail() {
           rabatt_prozent: 0,
           gesamtpreis: anzBetrag,
         }];
+        // Kopfrabatt entfernen — er steckt bereits in anzBetrag.
+        setForm(prev => ({ ...prev, rabatt_prozent: 0, rabatt_betrag: 0 }));
       }
 
       // Schlussrechnung: Anzahlungen als negative BRUTTO-Zeilen anhängen.
@@ -1692,7 +1708,7 @@ export default function InvoiceDetail() {
             // "individuell" fängt der useEffect nicht ab — faellig_am
             // hier direkt setzen, damit die Rechnung sofort konsistent ist.
             if (zb === "individuell" && nettofrist > 0) {
-              const due = new Date(new Date().toISOString().split("T")[0] + "T12:00:00");
+              const due = new Date(heuteISO() + "T12:00:00");
               due.setDate(due.getDate() + nettofrist);
               setForm(prev => ({ ...prev, faellig_am: format(due, "yyyy-MM-dd") }));
             }
@@ -3800,7 +3816,7 @@ export default function InvoiceDetail() {
     const stornoGrund = (opts?.grund?.trim()) || "Storniert durch Benutzer";
     const docTypeLabel = opts?.docTypeLabel || getDocConfig(form.typ).label;
     try {
-      const stornoDatum = new Date().toISOString().split("T")[0];
+      const stornoDatum = heuteISO();
       // Atomare Stornonummer aus der DB (race-safe). Fällt die Funktion aus,
       // greift der bisherige lokale Fallback, damit ein Storno nie am
       // Nummernkreis scheitert.
@@ -7933,6 +7949,10 @@ export default function InvoiceDetail() {
               gesamtpreis: round2(item.gesamtpreis ?? (item.menge * item.einzelpreis)),
               produktnummer: item.produktnummer || "",
               mwst_exempt: !!item.mwst_exempt,
+              // Aufbau-Zugehörigkeit erhalten — siehe Kommentar im Dialog.
+              gruppe: item.gruppe ?? null,
+              ist_gruppensumme: !!item.ist_gruppensumme,
+              auf_pdf: item.auf_pdf !== false,
             }));
             setItemsDirty(prev => mergeItems(prev, newItems));
             // Quell-Angebot verknüpfen → wird beim Speichern als Rechnung auf

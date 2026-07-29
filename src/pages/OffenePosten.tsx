@@ -173,9 +173,11 @@ export default function OffenePosten() {
           bKommentar.trim(),
         ].filter(Boolean);
         if (eingang > 0) {
+          // invoice_payments hat KEINE user_id-Spalte — mit ihr lehnte
+          // PostgREST jeden Eingang ab (PGRST204) und "Eingang buchen"
+          // scheiterte ausnahmslos.
           const { error: pErr } = await supabase.from("invoice_payments").insert({
             invoice_id: sel.id,
-            user_id: user?.id,
             betrag: eingang,
             datum: bDatum,
             notizen: notizTeile.join(" · ") || null,

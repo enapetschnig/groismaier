@@ -14,6 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, Save, Loader2, Car } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
 
 /**
  * Voll-editierbarer Zeit-Eintrag-Dialog für Admins.
@@ -94,7 +95,7 @@ export function AdminTimeEntryDialog({
   // „8,5" muss tippbar bleiben) und erst beim Speichern über parseDecimal
   // in Zahlen umgesetzt.
   const [form, setForm] = useState({
-    datum: datum || new Date().toISOString().slice(0, 10),
+    datum: datum || heuteISO(),
     project_id: "",
     kostenstelle: "baustelle",
     location_type: "baustelle" as "baustelle" | "werkstatt" | "regie",
@@ -167,7 +168,7 @@ export function AdminTimeEntryDialog({
         } else {
           // Reset auf create-Defaults
           setForm({
-            datum: datum || new Date().toISOString().slice(0, 10),
+            datum: datum || heuteISO(),
             project_id: "",
             kostenstelle: "baustelle",
             location_type: "baustelle",

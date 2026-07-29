@@ -12,6 +12,7 @@ import { useEinheiten } from "@/hooks/useEinheiten";
 import { supabase } from "@/integrations/supabase/client";
 import { PageHeader } from "@/components/PageHeader";
 import { parseDecimal, toNumber } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
 
 type MaterialEntry = {
   id: string;
@@ -168,7 +169,7 @@ const MaterialList = () => {
       einzelpreis: preisNum ?? 0,
       typ: newTyp,
       notizen: newNotizen.trim() || null,
-      datum: new Date().toISOString().split("T")[0],
+      datum: heuteISO(),
     });
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: "Konnte nicht gespeichert werden" });

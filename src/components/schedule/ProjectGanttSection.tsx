@@ -4,6 +4,7 @@ import { isSameDay, parseISO } from "date-fns";
 import { GanttBar } from "./GanttBar";
 import { getProjectDayRanges, isCompanyHoliday } from "./scheduleUtils";
 import type { Assignment, Einsatz, Project, CompanyHoliday } from "./scheduleTypes";
+import { alsISO } from "@/lib/datum";
 
 interface Props {
   projects: Project[];
@@ -98,7 +99,7 @@ export function ProjectGanttSection({
                             ? () =>
                                 onProjectDayClick(
                                   project.id,
-                                  day.toISOString().split("T")[0]
+                                  alsISO(day)
                                 )
                             : undefined
                         }

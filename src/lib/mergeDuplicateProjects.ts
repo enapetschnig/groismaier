@@ -23,6 +23,14 @@ const FK_TABLES: { table: string; col: string }[] = [
   { table: "project_daily_targets", col: "project_id" },
   { table: "assignment_resources", col: "project_id" },
   { table: "purchase_invoices", col: "project_id" },
+  // Diese fünf fehlten. Da sie teils ON DELETE CASCADE tragen, wurden ihre
+  // Zeilen beim Löschen des Duplikats vernichtet statt umgehängt —
+  // Materialbuchungen, Berichte und Kostenzuordnungen waren danach weg.
+  { table: "material_entries", col: "project_id" },
+  { table: "reports", col: "project_id" },
+  { table: "purchase_invoice_allocations", col: "project_id" },
+  { table: "kalkulationen", col: "project_id" },
+  { table: "contact_history", col: "project_id" },
 ];
 
 /** Storage-Buckets mit {project_id}/-Ordnerstruktur */

@@ -546,7 +546,23 @@ export async function generateInvoicePdf(
     }
     const einzelpreis = r2(Number(item.einzelpreis) || 0);
     const listenwert = r2(menge * einzelpreis);
-    const gesamt = r2(menge * einzelpreis * (1 - rabattProz / 100));
+    const berechnet = r2(menge * einzelpreis * (1 - rabattProz / 100));
+    /**
+     * Sicherheitsnetz: Weicht der GESPEICHERTE Betrag der Zeile vom
+     * nachgerechneten ab, gilt der gespeicherte.
+     *
+     * Grund: Der Beleg-Editor, die gespeicherte netto_summe/brutto_summe und
+     * der Zahlungs-QR-Code arbeiten alle mit gesamtpreis. Rechnet das PDF
+     * abweichend nach, druckt der Kunde eine andere Summe, als die Firma
+     * gebucht hat — das ist der schlimmste denkbare Fehler. Auseinanderlaufen
+     * können die beiden z.B. bei Aufbau-Sammelzeilen, deren Einzelpreis nach
+     * einer Preisanpassung gerundet wurde.
+     */
+    const gespeichert = item.gesamtpreis === null || item.gesamtpreis === undefined
+      ? null : r2(Number(item.gesamtpreis));
+    const gesamt = gespeichert !== null && Math.abs(gespeichert - berechnet) > 0.005
+      ? gespeichert
+      : berechnet;
     return {
       menge,
       einzelpreis,

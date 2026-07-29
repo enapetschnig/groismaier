@@ -10,6 +10,7 @@ import { Download, Calendar, Briefcase, MapPin, Wrench } from "lucide-react";
 import * as XLSX from "xlsx-js-style";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
+import { alsISO, heuteISO } from "@/lib/datum";
 
 interface DetailedProjectEntry {
   id: string;
@@ -41,9 +42,9 @@ export default function ProjectHoursReport() {
   const [profiles, setProfiles] = useState<Record<string, { vorname: string; nachname: string }>>({});
   const [startDate, setStartDate] = useState<string>(() => {
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    return alsISO(new Date(now.getFullYear(), now.getMonth(), 1));
   });
-  const [endDate, setEndDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState<string>(heuteISO());
   const { toast } = useToast();
 
   useEffect(() => {
@@ -355,8 +356,8 @@ export default function ProjectHoursReport() {
                 size="sm"
                 onClick={() => {
                   const now = new Date();
-                  setStartDate(new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0]);
-                  setEndDate(new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0]);
+                  setStartDate(alsISO(new Date(now.getFullYear(), now.getMonth(), 1)));
+                  setEndDate(alsISO(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
                 }}
               >
                 Dieser Monat
@@ -367,8 +368,8 @@ export default function ProjectHoursReport() {
                 onClick={() => {
                   const now = new Date();
                   const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-                  setStartDate(lastMonth.toISOString().split('T')[0]);
-                  setEndDate(new Date(now.getFullYear(), now.getMonth(), 0).toISOString().split('T')[0]);
+                  setStartDate(alsISO(lastMonth));
+                  setEndDate(alsISO(new Date(now.getFullYear(), now.getMonth(), 0)));
                 }}
               >
                 Letzter Monat
@@ -380,8 +381,8 @@ export default function ProjectHoursReport() {
                   const now = new Date();
                   const quarterStart = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3 - 3, 1);
                   const quarterEnd = new Date(now.getFullYear(), Math.floor(now.getMonth() / 3) * 3, 0);
-                  setStartDate(quarterStart.toISOString().split('T')[0]);
-                  setEndDate(quarterEnd.toISOString().split('T')[0]);
+                  setStartDate(alsISO(quarterStart));
+                  setEndDate(alsISO(quarterEnd));
                 }}
               >
                 Letztes Quartal

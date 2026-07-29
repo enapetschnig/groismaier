@@ -83,7 +83,7 @@ export function useFinanzplanung() {
       t("finanz_personal").select("*").order("name"),
       t("finanz_bv").select("*"),
       supabase.from("invoices")
-        .select("id, typ, status, datum, netto_summe, kunde_name, betreff, leistungsdatum, leistungsdatum_bis, project_id, customer_id")
+        .select("id, typ, status, datum, netto_summe, kunde_name, betreff, leistungsdatum, leistungsdatum_bis, project_id, customer_id, parent_invoice_id")
         .order("datum"),
       supabase.from("invoice_payments").select("invoice_id, betrag, datum"),
       supabase.from("purchase_invoices")
@@ -148,11 +148,20 @@ export function useFinanzplanung() {
   const pipeline: BvZeile[] = useMemo(() => {
     const ovByInvoice = new Map(bvOverrides.filter((o) => o.invoice_id).map((o) => [o.invoice_id, o]));
     const zeilen: BvZeile[] = [];
+    // Ein Angebot, aus dem bereits eine Auftragsbestaetigung entstanden ist,
+    // darf NICHT zusaetzlich in der Pipeline stehen — sonst zaehlt dasselbe
+    // Bauvorhaben mit voller Summe doppelt (einmal als Angebot, einmal als
+    // Auftrag) und die Umsatzprognose ist um diesen Betrag zu hoch.
+    const abgeloest = new Set(
+      invoices.filter((i) => i.typ === "auftragsbestaetigung" && i.parent_invoice_id)
+              .map((i) => i.parent_invoice_id as string),
+    );
 
     for (const inv of invoices) {
       // Nur Vorhaben, nicht die Fakturierung selbst: Angebote und Aufträge.
       if (inv.typ !== "angebot" && inv.typ !== "auftragsbestaetigung") continue;
       if (inv.status === "abgelehnt") continue;
+      if (inv.typ === "angebot" && abgeloest.has(inv.id)) continue;
       const ov = ovByInvoice.get(inv.id);
       if (ov && ov.aktiv === false) continue;
 
@@ -283,6 +292,10 @@ export function useFinanzplanung() {
     // Vor `belegeAbIdx` aus der importierten Historie, danach aus den Belegen.
     const histUmsatz = wertReihe((k) => k.bereich === "sonstiger_ertrag" && k.kategorie === "__umsatz__", "ist_manuell");
     const umsatzIst = leereReihe();
+    // Anzahlungs- und Schlussrechnung gehoeren zum SELBEN Auftrag: Die
+    // Schlussrechnung enthaelt bereits die Abzugszeilen der Anzahlungen
+    // (negative Positionen), ihre netto_summe ist also der Restbetrag.
+    // Beide voll zu zaehlen haette den Umsatz doppelt ausgewiesen.
     for (const inv of invoices) {
       if (!ERLOES_TYPEN.includes(inv.typ)) continue;
       const i = idxAusDatum(inv.datum);
@@ -302,6 +315,9 @@ export function useFinanzplanung() {
     const wareneinkaufIst = leereReihe();     // GuV: nach Rechnungsdatum
     const wareneinkaufAbfluss = leereReihe(); // Liquidität: nach Zahlung bzw. Fälligkeit
     for (const e of eingangsrechnungen) {
+      // Abgelehnte oder stornierte Lieferantenrechnungen sind kein Aufwand
+      // und kein Liquiditaetsabfluss.
+      if (["abgelehnt", "storniert"].includes(String(e.status || "").toLowerCase())) continue;
       const betrag = Number(e.betrag_netto) || 0;
       if (!betrag) continue;
       const iG = idxAusDatum(e.rechnungsdatum);

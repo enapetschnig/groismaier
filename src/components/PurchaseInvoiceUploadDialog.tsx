@@ -10,6 +10,7 @@ import { Upload, X, FileText, Image as ImageIcon, Loader2, Sparkles, Split, Plus
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
 
 interface Props {
   open: boolean;
@@ -111,7 +112,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
   const [form, setForm] = useState({
     lieferant: "",
     rechnungsnummer: "",
-    rechnungsdatum: new Date().toISOString().split("T")[0],
+    rechnungsdatum: heuteISO(),
     faellig_am: "",
     betrag_brutto: "",
     betrag_netto: "",
@@ -137,7 +138,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
       setForm({
         lieferant: "",
         rechnungsnummer: "",
-        rechnungsdatum: new Date().toISOString().split("T")[0],
+        rechnungsdatum: heuteISO(),
         faellig_am: "",
         betrag_brutto: "",
         betrag_netto: "",
