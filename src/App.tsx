@@ -91,7 +91,11 @@ function AppContent() {
           <Route path="/projects" element={<ProtectedRoute><Projects /></ProtectedRoute>} />
           <Route path="/projects/:projectId" element={<ProtectedRoute><ProjectOverview /></ProtectedRoute>} />
           <Route path="/projects/:projectId/:type" element={<ProtectedRoute><ProjectDetail /></ProtectedRoute>} />
-          <Route path="/projects/:projectId/materials" element={<ProtectedRoute><MaterialList /></ProtectedRoute>} />
+          {/* Eigener Pfad: "materials" ist die Dokumentenkategorie (hochgeladene
+              Materiallisten/Lieferscheine) und gehoert zu ProjectDetail. Die
+              Materialbewegungen sind etwas anderes und lagen vorher auf
+              demselben Pfad — dadurch waren die Dokumente unerreichbar. */}
+          <Route path="/projects/:projectId/materialbewegungen" element={<ProtectedRoute><MaterialList /></ProtectedRoute>} />
           <Route path="/my-hours" element={<ProtectedRoute><MyHours /></ProtectedRoute>} />
           <Route path="/my-documents" element={<ProtectedRoute><MyDocuments /></ProtectedRoute>} />
           <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />

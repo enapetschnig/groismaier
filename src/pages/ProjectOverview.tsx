@@ -108,6 +108,16 @@ const ProjectOverview = () => {
       count: 0,
     },
     {
+      // Hierher laedt der Schnell-Upload unter "Materiallisten" (Lieferscheine,
+      // Materialzettel). Ohne diese Karte waren die Dateien im Projekt nicht
+      // auffindbar.
+      type: "materials",
+      title: "Materiallisten",
+      description: "Lieferscheine und Materialzettel",
+      icon: <Package className="h-8 w-8" />,
+      count: 0,
+    },
+    {
       type: "chef",
       title: "🔒 Chefordner",
       description: "Vertrauliche Chef-Dokumente",
@@ -282,7 +292,11 @@ const ProjectOverview = () => {
 
     setEditSaving(true);
     // Update project — adresse/plz/ort = LEISTUNGSORT (NICHT die Kundenadresse!)
-    await supabase.from("projects").update({
+    // .select() liefert die geaenderten Zeilen zurueck: Ohne diese Pruefung
+    // meldete die Maske auch dann "Projekt aktualisiert", wenn RLS das UPDATE
+    // stillschweigend verworfen hat (Mitarbeiter duerfen Projekte nicht
+    // aendern) — die Aenderung war nach dem naechsten Laden wieder weg.
+    const { data: geaendert, error: projektFehler } = await supabase.from("projects").update({
       name: editForm.name.trim(),
       beschreibung: editForm.beschreibung.trim() || null,
       adresse: editForm.projekt_adresse.trim() || null,
@@ -291,7 +305,17 @@ const ProjectOverview = () => {
       projekt_kontakt_name: editForm.projekt_kontakt_name.trim() || null,
       projekt_kontakt_telefon: editForm.projekt_kontakt_telefon.trim() || null,
       customer_id: editForm.customer_id,
-    } as any).eq("id", projectId);
+    } as any).eq("id", projectId).select("id");
+    if (projektFehler || !geaendert?.length) {
+      setEditSaving(false);
+      toast({
+        variant: "destructive",
+        title: "Nicht gespeichert",
+        description: projektFehler?.message
+          || "Nur Administratoren und Vorarbeiter dürfen Projektdaten ändern.",
+      });
+      return;
+    }
     // Update or create customer
     if (editForm.customer_id && editForm.kunde_name.trim()) {
       await supabase.from("customers").update({
@@ -509,7 +533,14 @@ const ProjectOverview = () => {
               <form onSubmit={async (e) => {
                 e.preventDefault();
                 if (!editNameValue.trim()) return;
-                await supabase.from("projects").update({ name: editNameValue.trim() }).eq("id", projectId);
+                const { data: umbenannt } = await supabase.from("projects")
+                  .update({ name: editNameValue.trim() }).eq("id", projectId).select("id");
+                if (!umbenannt?.length) {
+                  toast({ variant: "destructive", title: "Nicht gespeichert",
+                    description: "Nur Administratoren und Vorarbeiter dürfen Projekte umbenennen." });
+                  setEditingName(false);
+                  return;
+                }
                 setProjectName(editNameValue.trim());
                 setEditingName(false);
                 toast({ title: "Projektname geändert" });
@@ -837,7 +868,7 @@ const ProjectOverview = () => {
           {/* Materialliste: Entnahmen, Verbrauch & Rückgaben je Projekt */}
           <Card
             className="cursor-pointer hover:shadow-lg transition-shadow"
-            onClick={() => navigate(`/projects/${projectId}/materials`)}
+            onClick={() => navigate(`/projects/${projectId}/materialbewegungen`)}
           >
             <CardHeader>
               <div className="flex items-center justify-between">

@@ -177,8 +177,14 @@ export async function countProjectFiles(projectId: string, bucket: string): Prom
  * die "Anzahl" außen automatisch synchron mit dem Ordner.
  */
 export async function deleteProjectFile(bucket: string, file: ProjectFile): Promise<{ error?: string }> {
-  const { error } = await supabase.storage.from(bucket).remove([file.path]);
+  const { data, error } = await supabase.storage.from(bucket).remove([file.path]);
   if (error) return { error: error.message };
+  // Storage meldet KEINEN Fehler, wenn die Löschregel greift — es kommt nur
+  // eine leere Liste zurück. Ohne diese Prüfung verschwand das Foto in der
+  // Ansicht und war nach dem nächsten Laden wieder da.
+  if (Array.isArray(data) && data.length === 0) {
+    return { error: "Keine Berechtigung zum Löschen dieser Datei." };
+  }
   if (file.docId) await supabase.from("documents").delete().eq("id", file.docId);
   return {};
 }

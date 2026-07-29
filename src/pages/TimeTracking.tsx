@@ -1837,11 +1837,16 @@ const TimeTracking = () => {
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {(() => {
+                      // Text AUS der Regel ableiten, nicht daneben schreiben:
+                      // Vorher versprach der Dialog freitags 4,5 Stunden,
+                      // gebucht wurden 0 — die Regel kennt Fr/Sa/So gar nicht.
                       const absenceDateObj = new Date(absenceData.date);
-                      const dayOfWeek = absenceDateObj.getDay();
-                      if (dayOfWeek === 0 || dayOfWeek === 6) return "Wochenende: 0 Stunden";
-                      if (dayOfWeek === 5) return "Freitag: 4,5 Stunden (07:00 - 12:00)";
-                      return "Mo-Do: 8,5 Stunden (07:00 - 16:00, 30min Pause)";
+                      const stunden = getNormalWorkingHours(absenceDateObj);
+                      const zeiten = getDefaultWorkTimes(absenceDateObj);
+                      if (!stunden) return "Für diesen Tag ist keine Regelarbeitszeit hinterlegt: 0 Stunden";
+                      return zeiten
+                        ? `${stunden} Stunden (${zeiten.startTime} – ${zeiten.endTime}, ${zeiten.pauseMinutes} min Pause)`
+                        : `${stunden} Stunden laut Regelarbeitszeit`;
                     })()}
                   </div>
                   <div className="pt-2 border-t">
