@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { FileText, Clock, Package } from "lucide-react";
 import { format } from "date-fns";
+import { parseDecimal } from "@/lib/num";
 
 interface Disturbance {
   id: string;
@@ -105,7 +106,9 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     (materials || []).forEach(m => {
       newItems.push({
         beschreibung: m.material,
-        menge: parseFloat(m.menge || "1") || 1,
+        // parseFloat schneidet bei "2,5" nach dem Komma ab -> 2. Die Menge
+        // im Regiebericht ist ein Freitextfeld mit oesterreichischem Komma.
+        menge: parseDecimal(m.menge || "") ?? 1,
         einheit: m.einheit || "Stk.",
         einzelpreis: Number(m.einzelpreis) || 0,
         selected: true,
@@ -231,16 +234,16 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
             <div className="flex items-center gap-3 pb-2 border-b">
               <label className="text-sm font-medium whitespace-nowrap">Stundensatz:</label>
               <Input
-                type="number"
+                type="text"
+                inputMode="decimal"
                 value={stundensatz}
                 onChange={(e) => {
-                  const val = Number(e.target.value);
+                  // "71,50" darf nicht zu 7150 werden (oesterreichisches Komma)
+                  const val = parseDecimal(e.target.value) ?? 0;
                   setStundensatz(val);
                   setItems(prev => prev.map(i => i.source === "zeit" ? { ...i, einzelpreis: val } : i));
                 }}
                 className="w-24"
-                min={0}
-                step={0.5}
               />
               <span className="text-sm text-muted-foreground">€/Std.</span>
             </div>

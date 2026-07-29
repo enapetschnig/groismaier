@@ -175,13 +175,44 @@ export default function Invoices() {
       const { data } = await supabase.from("invoices").select("parent_invoice_id").eq("id", sel.id).maybeSingle();
       parentKey = (data as any)?.parent_invoice_id || sel.id;
     }
-    const { data: ars } = await supabase
-      .from("invoices")
-      .select("id")
-      .eq("parent_invoice_id", parentKey)
-      .eq("typ", "anzahlungsrechnung")
-      .neq("status", "storniert");
-    const ids = ((ars as any[]) || []).map((a) => a.id);
+    /**
+     * Anzahlungen der GANZEN Kette suchen, nicht nur die direkten Kinder.
+     *
+     * Typischer Ablauf: Angebot → Auftragsbestätigung → Anzahlungsrechnung.
+     * Die Anzahlung hängt dann an der Auftragsbestätigung. Wer die
+     * Schlussrechnung aus dem ANGEBOT heraus erzeugte, fand keine Anzahlung
+     * und stellte dem Kunden den vollen Betrag ein zweites Mal in Rechnung.
+     */
+    const { data: alleBelege } = await supabase
+      .from("invoices").select("id, typ, status, parent_invoice_id");
+    const belege = ((alleBelege as any[]) || []);
+    const kinderVon = new Map<string, string[]>();
+    for (const b of belege) {
+      if (!b.parent_invoice_id) continue;
+      if (!kinderVon.has(b.parent_invoice_id)) kinderVon.set(b.parent_invoice_id, []);
+      kinderVon.get(b.parent_invoice_id)!.push(b.id);
+    }
+    // Wurzel der Kette suchen (nach oben) …
+    const byId = new Map(belege.map((b) => [b.id, b]));
+    let wurzel = parentKey;
+    const gesehen = new Set<string>([wurzel]);
+    while (byId.get(wurzel)?.parent_invoice_id) {
+      const oben = byId.get(wurzel)!.parent_invoice_id as string;
+      if (gesehen.has(oben)) break;   // Schutz gegen zirkuläre Verkettung
+      gesehen.add(oben);
+      wurzel = oben;
+    }
+    // … und von dort alle Nachfahren einsammeln.
+    const kette: string[] = [];
+    const stapel = [wurzel];
+    while (stapel.length) {
+      const akt = stapel.pop()!;
+      kette.push(akt);
+      for (const k of kinderVon.get(akt) || []) if (!kette.includes(k)) stapel.push(k);
+    }
+    const ids = belege
+      .filter((b) => kette.includes(b.id) && b.typ === "anzahlungsrechnung" && b.status !== "storniert")
+      .map((b) => b.id);
     const params = new URLSearchParams({ typ: "schlussrechnung", from_doc: parentKey });
     if (ids.length > 0) params.set("abzug_ids", ids.join(","));
     navigate(`/invoices/new?${params.toString()}`);
@@ -1017,7 +1048,15 @@ export default function Invoices() {
               </div>
             );
           }
-          const visibleInvoices = invoices.filter(i => i.typ === filterTyp && i.status !== "storniert");
+          // Dieselben Typen wie die Liste darunter (INVOICE_LIKE_TYPES /
+          // ANGEBOT_LIKE_TYPES). Vorher zählte die Box nur typ === filterTyp —
+          // Anzahlungs- und Schlussrechnungen fehlten damit im „Offenen
+          // Betrag" und in „Überfällig", obwohl es echte Forderungen sind,
+          // und Auftragsbestätigungen fehlten in der Angebotssumme.
+          const relevanteTypen = filterTyp === "rechnung" ? INVOICE_LIKE_TYPES
+            : filterTyp === "angebot" ? ANGEBOT_LIKE_TYPES
+            : new Set([filterTyp]);
+          const visibleInvoices = invoices.filter(i => relevanteTypen.has(i.typ) && i.status !== "storniert");
           const count = visibleInvoices.length;
           const openBrutto = visibleInvoices.filter(i => PAYABLE_INVOICE_TYPES.has(i.typ) && (i.status === "offen" || i.status === "teilbezahlt")).reduce((s, i) => s + (Number(i.brutto_summe) - Number(i.bezahlt_betrag || 0)), 0);
           const overdue = visibleInvoices.filter(i => isOverdue(i)).length;
@@ -1671,7 +1710,14 @@ export default function Invoices() {
                 // (NICHT das denormalisierte bezahlt_betrag, das durch
                 // Gutschrift/Storno abweichen kann — sonst werden gültige
                 // Beträge abgelehnt oder Überzahlung zugelassen).
-                const bereitsGezahlt = existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+                const summeZahlungen = existingPayments.reduce((s, p) => s + Number(p.betrag), 0);
+                // bezahlt_betrag kann HOEHER sein als die Summe der erfassten
+                // Zahlungen — dort stecken auch verrechnete Gutschriften, die
+                // keine Zeile in invoice_payments haben. Wer den Wert mit der
+                // reinen Zahlungssumme ueberschreibt, loescht sie und die
+                // Rechnung steht wieder offen. Basis ist deshalb der groessere
+                // der beiden Werte.
+                const bereitsGezahlt = Math.max(summeZahlungen, Number(inv?.bezahlt_betrag) || 0);
                 const maxBetrag = Math.round(((inv?.brutto_summe || 0) - bereitsGezahlt) * 100) / 100;
                 if (betrag > maxBetrag) {
                   toast({ variant: "destructive", title: "Betrag zu hoch", description: `Maximaler Betrag: €${maxBetrag.toFixed(2)}` });

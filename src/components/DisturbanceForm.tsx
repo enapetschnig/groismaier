@@ -20,6 +20,12 @@ type MaterialEntry = {
   material: string;
   menge: string;
   einheit: string;
+  // Mitgefuehrt, damit sie beim Speichern nicht verloren gehen: Das Formular
+  // synchronisiert per Loeschen-und-Neuanlegen. Wer sie hier nicht mitlaedt,
+  // schreibt sie als NULL zurueck — Notiz und Preis der Materialzeile waren
+  // nach jedem Bearbeiten des Regieberichts weg.
+  notizen: string | null;
+  einzelpreis: number | null;
 };
 
 type DisturbanceFormProps = {
@@ -179,7 +185,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   const loadExistingMaterials = async (disturbanceId: string) => {
     const { data } = await supabase
       .from("disturbance_materials")
-      .select("id, material, menge, einheit")
+      .select("id, material, menge, einheit, notizen, einzelpreis")
       .eq("disturbance_id", disturbanceId);
 
     if (data) {
@@ -188,6 +194,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         material: m.material,
         menge: m.menge || "",
         einheit: (m as any).einheit || "Stk.",
+        notizen: (m as any).notizen ?? null,
+        einzelpreis: (m as any).einzelpreis ?? null,
       })));
     }
   };
@@ -200,7 +208,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   };
 
   const addMaterial = () => {
-    setMaterials([...materials, { id: crypto.randomUUID(), material: "", menge: "", einheit: "Stk." }]);
+    setMaterials([...materials, { id: crypto.randomUUID(), material: "", menge: "", einheit: "Stk.", notizen: null, einzelpreis: null }]);
     // Auto-scroll to new material after render
     setTimeout(() => {
       const container = document.querySelector('[data-materials-list]');
@@ -479,6 +487,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
           material: m.material.trim(),
           menge: m.menge.trim() || null,
           einheit: m.einheit || "Stk.",
+          notizen: m.notizen ?? null,
+          einzelpreis: m.einzelpreis ?? null,
         }))
       );
     }

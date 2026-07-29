@@ -59,7 +59,13 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
         .from("invoices")
         .select("*")
         .in("typ", activeTypes)
-        .eq("jahr", parseInt(year));
+        // NICHT nach der Spalte `jahr` filtern: die traegt das Jahr der
+        // Belegnummer (Anlagejahr). Eine im Januar 2027 erfasste Rechnung mit
+        // Leistungsdatum Dezember 2026 fiel damit aus dem Buchhaltungs-Export
+        // heraus — der Steuerberater bekam sie nie. Massgeblich ist das
+        // Belegdatum; die Monats-/Jahresgrenzen setzt der Datumsfilter unten.
+        .gte("datum", `${year}-01-01`)
+        .lte("datum", `${year}-12-31`);
 
       if (!exportAll) {
         // Filter by month

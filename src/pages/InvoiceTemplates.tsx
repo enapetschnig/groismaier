@@ -20,6 +20,7 @@ import { MaterialSetEditor, type SetComponent } from "@/components/MaterialSetEd
 import { BulkPriceDialog } from "@/components/BulkPriceDialog";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis } from "@/lib/kalkulation";
+import { parseDecimal } from "@/lib/num";
 import {
   Dialog,
   DialogContent,
@@ -922,18 +923,22 @@ export default function InvoiceTemplates() {
                 </div>
                 <div>
                   <Label>EK netto (€)</Label>
-                  <Input type="number" value={form.ek_netto || ""} onChange={(e) => {
-                    const ek = Number(e.target.value);
+                  {/* text + inputMode="decimal" + parseDecimal: type="number"
+                      mit Number() macht aus der oesterreichischen Eingabe
+                      "12,50" je nach Browser NaN oder 1250. */}
+                  <Input type="text" inputMode="decimal" value={form.ek_netto || ""} onChange={(e) => {
+                    const ek = parseDecimal(e.target.value) ?? 0;
                     setForm(f => ({ ...f, ek_netto: ek }));
-                  }} min={0} step={0.01} />
+                  }} />
                 </div>
                 <div>
                   <Label>VK netto (€)</Label>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={form.vk_netto || ""}
                     onChange={(e) => {
-                      const vk = Number(e.target.value);
+                      const vk = parseDecimal(e.target.value) ?? 0;
                       setForm(f => ({
                         ...f,
                         vk_netto: vk,
@@ -942,8 +947,6 @@ export default function InvoiceTemplates() {
                         vk_preis_manuell: f.ist_set ? true : f.vk_preis_manuell,
                       }));
                     }}
-                    min={0}
-                    step={0.01}
                     disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
                   />
                 </div>
@@ -965,10 +968,11 @@ export default function InvoiceTemplates() {
                 <div>
                   <Label>Brutto (€)</Label>
                   <Input
-                    type="number"
+                    type="text"
+                    inputMode="decimal"
                     value={Math.round((form.vk_netto || 0) * (1 + form.ust_satz / 100) * 100) / 100 || ""}
                     onChange={(e) => {
-                      const brutto = Number(e.target.value);
+                      const brutto = parseDecimal(e.target.value) ?? 0;
                       const vk = form.ust_satz > 0 ? Math.round(brutto / (1 + form.ust_satz / 100) * 100) / 100 : brutto;
                       setForm(f => ({
                         ...f,
@@ -978,8 +982,6 @@ export default function InvoiceTemplates() {
                         vk_preis_manuell: f.ist_set ? true : f.vk_preis_manuell,
                       }));
                     }}
-                    min={0}
-                    step={0.01}
                     disabled={(form.ist_set && !form.vk_preis_manuell) || form.ist_kalkuliert}
                   />
                 </div>

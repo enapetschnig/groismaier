@@ -688,7 +688,15 @@ export async function generateInvoicePdf(
         : `- ${fmtCurrency(rabattWert)}`;
       tableFoot.push(footRow(rabattLabel, rabattValue));
     }
-    if (isReverseCharge) {
+    if (isReverseCharge && exemptBrutto !== 0) {
+      // Bauleistung mit Anzahlung: ohne diesen Zweig fiel der Abzug aus dem
+      // Summenblock und die Schlussrechnung forderte den vollen Betrag ein
+      // zweites Mal. Bei Reverse Charge gibt es keine USt — Netto ist zugleich
+      // der Rechnungsbetrag.
+      tableFoot.push(footRow("Nettobetrag", fmtCurrency(nettoGedruckt)));
+      tableFoot.push(footRow("Anzahlungs-Abzug", fmtCurrency(exemptBrutto)));
+      tableFoot.push(footRow("Rechnungsbetrag", fmtCurrency(r2(nettoGedruckt + exemptBrutto))));
+    } else if (isReverseCharge) {
       tableFoot.push(footRow("Rechnungsbetrag", fmtCurrency(nettoGedruckt)));
     } else if (exemptBrutto !== 0) {
       // Schlussrechnung mit Anzahlungs-Abzug: expliziter Block
@@ -967,7 +975,15 @@ export async function generateInvoicePdf(
     y += Math.max(dims.h, lines.length * 4) + padBelow;
   };
 
-  if (customClosing) {
+  // Bei Rechnungen ist ein eigener Schlusstext eine ERGAENZUNG, kein Ersatz.
+  // Frueher uebersteuerte er die gesamte Zahlungslogik: Jede Rechnung trug
+  // dann den Standardsatz aus dem Textbaustein ("zahlbar innerhalb 14 Tagen")
+  // — auch die sofort faellige und die mit individuellem Datum.
+  const eigenerSchlusstextZusaetzlich =
+    !!customClosing && docCfg.isInvoiceLike && docCfg.typ !== "gutschrift";
+  if (eigenerSchlusstextZusaetzlich) renderMultilineText(customClosing!, 1);
+
+  if (customClosing && !eigenerSchlusstextZusaetzlich) {
     renderMultilineText(customClosing);
   } else if (isAngebot) {
     renderMultilineText(angebotsClosing);
