@@ -305,6 +305,35 @@ export default function Index() {
           </div>
         )}
 
+        {/* Handy-Schnellzugriff: Was man unterwegs tatsächlich macht — Zeit
+            buchen, Beleg abfotografieren, Regiebericht schreiben. Ohne das
+            muss sich der Chef am Telefon durch sieben Bereiche scrollen, bis
+            er bei den Eingangsrechnungen ist. Nur am kleinen Schirm. */}
+        <div className="mb-4 grid grid-cols-3 gap-2 sm:hidden">
+          <KBButton
+            className="w-full flex-col gap-1 py-3 text-xs"
+            icon={Clock}
+            label="Zeit buchen"
+            onClick={() => navigate("/time-tracking")}
+          />
+          {canView("eingangsrechnungen") && (
+            <KBButton
+              className="w-full flex-col gap-1 py-3 text-xs"
+              icon={FileDown}
+              label="Beleg-Foto"
+              onClick={() => navigate("/eingangsrechnungen")}
+            />
+          )}
+          {canView("regieberichte") && (
+            <KBButton
+              className="w-full flex-col gap-1 py-3 text-xs"
+              icon={FileText}
+              label="Regiebericht"
+              onClick={() => navigate("/disturbances")}
+            />
+          )}
+        </div>
+
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 items-start">
 
           {/* ── Dokumente ─────────────────────────────────────── */}
@@ -472,9 +501,9 @@ export default function Index() {
               <KBButton className="w-full" icon={Truck} label="Fahrzeuge" onClick={() => navigate("/fahrzeuge")} />
             )}
             <KBButton className="w-full" icon={BarChart3} label="Meine Stunden" onClick={() => navigate("/my-hours")} />
-            {!isAdmin && (
-              <KBButton className="w-full" icon={FileText} label="Meine Dokumente" onClick={() => navigate("/my-documents")} />
-            )}
+            {/* Auch der Chef bucht eigene Stunden und hat eigene Dokumente —
+                früher war dieser Punkt für Administratoren ausgeblendet. */}
+            <KBButton className="w-full" icon={FileText} label="Meine Dokumente" onClick={() => navigate("/my-documents")} />
           </KBBereich>
 
           {/* ── Verwaltung ────────────────────────────────────── */}
