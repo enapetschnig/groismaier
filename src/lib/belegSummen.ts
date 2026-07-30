@@ -22,6 +22,7 @@
 export const round2 = (v: number): number => Math.round((v + Number.EPSILON) * 100) / 100;
 
 export interface BelegPosition {
+  beschreibung?: string | null;
   menge?: number | null;
   einzelpreis?: number | null;
   rabatt_prozent?: number | null;
@@ -49,6 +50,31 @@ export interface Summen {
   bruttoSumme: number;
 }
 
+/**
+ * Wird die Zeile beim Speichern überhaupt geschrieben?
+ *
+ * Der Beleg-Editor speichert nur Positionen mit Beschreibung. Zählte eine
+ * beschreibungslose Zeile trotzdem in die Kopfsummen, stand in der Datenbank
+ * ein höherer Betrag als die Summe der gespeicherten Zeilen — der Beleg ging
+ * nicht auf (Audit-Befund).
+ */
+export const istSpeicherbar = (p: BelegPosition): boolean =>
+  String(p.beschreibung ?? "").trim().length > 0;
+
+export const speicherbarePositionen = <T extends BelegPosition>(positionen: T[]): T[] =>
+  (positionen || []).filter(istSpeicherbar);
+
+/**
+ * Zeilenbetrag NEU berechnen (nach Änderung von Menge, Preis, Rabatt oder
+ * nach Anwenden einer Kalkulation).
+ *
+ * Detailzeilen eines Aufbaus bleiben bei 0 — ihr Betrag steckt in der
+ * Sammelzeile. Ohne diese Regel verdoppelte schon das Anwenden einer
+ * Kalkulation auf eine Detailzeile den ganzen Aufbau.
+ */
+export const neuerZeilenbetrag = (p: BelegPosition): number =>
+  istDetailzeile(p) ? 0 : berechneZeilenpreis(p.menge, p.einzelpreis, p.rabatt_prozent);
+
 /** Gehört die Zeile zu einer Gruppe, ohne deren Sammelzeile zu sein? */
 export const istDetailzeile = (p: BelegPosition): boolean =>
   !!(p.gruppe && String(p.gruppe).trim()) && !p.ist_gruppensumme;
@@ -75,7 +101,9 @@ export const zeilenBetrag = (p: BelegPosition): number => {
 
 /** Sämtliche Belegsummen aus Positionen und Kopfdaten. */
 export function belegSummen(positionen: BelegPosition[], kopf: BelegKopf): Summen {
-  const zeilen = (positionen || []).map((p) => ({ p, betrag: zeilenBetrag(p) }));
+  // Nur Zeilen, die auch gespeichert werden — sonst weichen Kopfsumme und
+  // Summe der Positionen voneinander ab.
+  const zeilen = speicherbarePositionen(positionen || []).map((p) => ({ p, betrag: zeilenBetrag(p) }));
 
   const exemptBrutto = round2(zeilen.filter((z) => z.p.mwst_exempt).reduce((s, z) => s + z.betrag, 0));
   const positionenNetto = round2(zeilen.filter((z) => !z.p.mwst_exempt).reduce((s, z) => s + z.betrag, 0));

@@ -7,11 +7,14 @@
 import { describe, it, expect } from "vitest";
 import {
   belegSummen, zeilenBetrag, berechneZeilenpreis, istDetailzeile,
+  speicherbarePositionen, neuerZeilenbetrag,
   type BelegPosition,
 } from "./belegSummen";
 
+// Eine echte Position hat immer eine Bezeichnung — nur solche werden
+// gespeichert und nur solche zaehlen in die Summe.
 const pos = (p: Partial<BelegPosition>): BelegPosition => ({
-  menge: 1, einzelpreis: 0, rabatt_prozent: 0, gesamtpreis: null, ...p,
+  beschreibung: "Position", menge: 1, einzelpreis: 0, rabatt_prozent: 0, gesamtpreis: null, ...p,
 });
 
 describe("Zeilenpreis", () => {
@@ -172,5 +175,43 @@ describe("Randfälle", () => {
     const s = belegSummen([pos({ menge: 1, einzelpreis: -500, gesamtpreis: -500 })], { mwst_satz: 20 });
     expect(s.nettoSumme).toBe(-500);
     expect(s.bruttoSumme).toBe(-600);
+  });
+});
+
+describe("Positionen ohne Beschreibung (Audit-Befund)", () => {
+  it("zählen NICHT in die Belegsumme — sie werden auch nicht gespeichert", () => {
+    // Gespeichert wird nur, was eine Beschreibung hat. Zählte die Summe eine
+    // beschreibungslose Zeile mit, stand im Kopf ein höherer Betrag als die
+    // Summe der gespeicherten Zeilen — der Beleg ging nicht auf.
+    const s = belegSummen([
+      { beschreibung: "Leistung", menge: 1, einzelpreis: 1000, gesamtpreis: 1000 },
+      { beschreibung: "", menge: 1, einzelpreis: 500, gesamtpreis: 500 },
+      { beschreibung: "   ", menge: 1, einzelpreis: 250, gesamtpreis: 250 },
+    ] as any, { mwst_satz: 20 });
+    expect(s.nettoSumme).toBe(1000);
+    expect(s.bruttoSumme).toBe(1200);
+  });
+
+  it("speicherbarePositionen liefert genau die zählenden Zeilen", () => {
+    const items = [
+      { beschreibung: "A", gesamtpreis: 10 },
+      { beschreibung: "", gesamtpreis: 20 },
+      { beschreibung: null, gesamtpreis: 30 },
+    ] as any;
+    expect(speicherbarePositionen(items)).toHaveLength(1);
+  });
+});
+
+describe("Zeilenbetrag neu berechnen (Audit-Befund)", () => {
+  it("Detailzeile eines Aufbaus bleibt bei 0 — auch nach einer Kalkulation", () => {
+    // Wird auf eine Detailzeile eine Kalkulation angewandt, setzte der Editor
+    // gesamtpreis = Menge × Einzelpreis. Der Aufbau zählte dann doppelt.
+    const detail = { gruppe: "Aufbau 1", menge: 270, einzelpreis: 71.5, gesamtpreis: 0 };
+    expect(neuerZeilenbetrag(detail as any)).toBe(0);
+  });
+
+  it("Sammelzeile und normale Zeile werden normal nachgerechnet", () => {
+    expect(neuerZeilenbetrag({ gruppe: "Aufbau 1", ist_gruppensumme: true, menge: 1, einzelpreis: 19305 } as any)).toBe(19305);
+    expect(neuerZeilenbetrag({ menge: 4, einzelpreis: 25, rabatt_prozent: 10 } as any)).toBe(90);
   });
 });

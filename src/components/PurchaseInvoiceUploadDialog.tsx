@@ -674,7 +674,10 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
               betrag_netto: round2(positionNetto(x.p) || 0),
               position_index: x.idx,
             }))
-            .filter(r => r.betrag_netto > 0);
+            // Negative Zeilen (Retouren, Gutschriftzeilen) MUESSEN bleiben —
+            // sonst traegt das Projekt Kosten, die der Lieferant gutgeschrieben
+            // hat. Nur echte Nullzeilen fallen weg.
+            .filter(r => Math.abs(r.betrag_netto) > 0.005);
           // Sobald allocations existieren, ignoriert die Nachkalkulation den
           // Kopf-Betrag der Rechnung. Damit der nicht zugeordnete Rest weiter
           // zum Hauptprojekt zählt, wird er als eigene Teilbetrags-Zeile

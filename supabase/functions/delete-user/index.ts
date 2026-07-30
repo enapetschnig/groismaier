@@ -70,7 +70,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
       if (error) console.error(`nullify ${tab}.${col} failed: ${error.message}`);
     }
 
-    // Jetzt abhängige Datensätze löschen (Cascade übernimmt anderes).
+    // ── SCHUTZ: Gebuchte Historie darf nicht verschwinden ──
+    // time_entries, documents und reports haengen mit ON DELETE CASCADE an
+    // auth.users. Das Loeschen des Zugangs vernichtet damit alle erfassten
+    // Arbeitsstunden, hochgeladenen Dokumente und Berichte dieses Menschen —
+    // obwohl der Kommentar oben das Gegenteil verspricht und ein Betrieb
+    // Arbeitszeitaufzeichnungen aufbewahren muss.
+    // Wer Historie hat, wird deaktiviert statt geloescht.
+    const [{ count: zeiten }, { count: dok }, { count: ber }] = await Promise.all([
+      supabase.from("time_entries").select("id", { count: "exact", head: true }).eq("user_id", user_id),
+      supabase.from("documents").select("id", { count: "exact", head: true }).eq("user_id", user_id),
+      supabase.from("reports").select("id", { count: "exact", head: true }).eq("user_id", user_id),
+    ]);
+    const historie = (zeiten || 0) + (dok || 0) + (ber || 0);
+    if (historie > 0) {
+      await supabase.from("profiles").update({ is_active: false }).eq("id", user_id);
+      await supabase.from("user_roles").delete().eq("user_id", user_id);
+      return new Response(JSON.stringify({
+        success: true,
+        deaktiviert: true,
+        message: `Zugang gesperrt statt geloescht: ${zeiten || 0} Zeitbuchungen, ${dok || 0} Dokumente und ${ber || 0} Berichte bleiben erhalten. Ein vollstaendiges Loeschen wuerde diese Aufzeichnungen vernichten.`,
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // Keine Historie — der Zugang kann wirklich weg.
     await supabase.from("employees").delete().eq("user_id", user_id);
     await supabase.from("user_roles").delete().eq("user_id", user_id);
     await supabase.from("profiles").delete().eq("id", user_id);

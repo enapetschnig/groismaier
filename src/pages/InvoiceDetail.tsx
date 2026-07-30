@@ -64,7 +64,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getDocConfig, interpolateText } from "@/lib/documentTypes";
-import { belegSummen } from "@/lib/belegSummen";
+import { belegSummen, neuerZeilenbetrag, speicherbarePositionen } from "@/lib/belegSummen";
 import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
 import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
@@ -1016,17 +1016,27 @@ export default function InvoiceDetail() {
       kunde_kontaktperson: (customer as any).ansprechpartner || "",
     };
     const hints: string[] = [];
-    if (form.typ === "rechnung") {
+    // Zahlungsziel und Skonto gelten fuer ALLE Forderungsbelege — vorher nur
+    // fuer typ="rechnung", wodurch Anzahlungs- und Schlussrechnungen die
+    // Kundenkonditionen nie bekamen.
+    if (["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ)) {
       const { data: fullCust } = await supabase
         .from("customers").select("skonto_prozent, skonto_tage, nettofrist").eq("id", customer.id).single();
       if (fullCust) {
         const custSkonto = Number(fullCust.skonto_prozent) || 0;
         const custSkontoTage = Number(fullCust.skonto_tage) || 0;
         const custNettofrist = Number(fullCust.nettofrist) || 0;
+        // Auch ZURUECKSETZEN: Hat der neue Kunde keinen Skonto, blieb bisher
+        // der Skonto des vorher gewaehlten Kunden auf der Rechnung stehen —
+        // der Kunde durfte einen Abzug ziehen, der nie vereinbart war.
         if (custSkonto > 0) {
           updates.skonto_prozent = custSkonto;
           updates.skonto_tage = custSkontoTage;
           hints.push(`Skonto: ${custSkonto}% / ${custSkontoTage} Tage`);
+        } else if (Number(form.skonto_prozent) > 0) {
+          updates.skonto_prozent = 0;
+          updates.skonto_tage = 0;
+          hints.push("Skonto entfernt (bei diesem Kunden nicht hinterlegt)");
         }
         const zb = nettofristToDropdown(custNettofrist);
         updates.zahlungsbedingungen = zb;
@@ -2210,15 +2220,7 @@ export default function InvoiceDetail() {
         // ein bloßes Fokus+Blur im Mengen-/Preisfeld gesamtpreis auf
         // menge×einzelpreis — der Aufbau zählte doppelt in die Belegsumme
         // (Audit-Befund).
-        if (istDetailzeile(updated[index])) {
-          updated[index].gesamtpreis = 0;
-        } else {
-          const m = Number(updated[index].menge) || 0;
-          const p = Number(updated[index].einzelpreis) || 0;
-          const r = Number(updated[index].rabatt_prozent) || 0;
-          const total = m * p * (1 - r / 100);
-          updated[index].gesamtpreis = isFinite(total) ? round2(total) : 0;
-        }
+        updated[index].gesamtpreis = neuerZeilenbetrag(updated[index] as any);
       }
       return updated;
     });
@@ -2244,12 +2246,9 @@ export default function InvoiceDetail() {
     form.kalkulation_aufschlag_override === null || form.kalkulation_aufschlag_override === undefined
       ? null : Number(form.kalkulation_aufschlag_override);
 
-  const computeItemTotal = (it: InvoiceItem): number => {
-    const m = Number(it.menge) || 0;
-    const r = Number(it.rabatt_prozent) || 0;
-    const t = m * (Number(it.einzelpreis) || 0) * (1 - r / 100);
-    return isFinite(t) ? round2(t) : 0;
-  };
+  // Ueber den gepruefen Kern: Detailzeilen eines Aufbaus bleiben bei 0, sonst
+  // verdoppelt schon das Anwenden einer Kalkulation den ganzen Aufbau.
+  const computeItemTotal = (it: InvoiceItem): number => neuerZeilenbetrag(it as any);
 
   // ── Preise anpassen (Rabatt/Aufschlag + KI) ───────────────────────────────
   // Positionen, auf die eine Preisanpassung wirken kann. mwst_exempt-Zeilen
@@ -2627,7 +2626,7 @@ export default function InvoiceDetail() {
       return false;
     }
     // Validate ALL items, not just the first
-    const validItems = items.filter(item => item.beschreibung.trim());
+    const validItems = speicherbarePositionen(items as any) as typeof items;
     if (validItems.length === 0) {
       setSaving(false);
       setActiveStep(3); // Artikel-Schritt öffnen
@@ -3037,7 +3036,7 @@ export default function InvoiceDetail() {
       await supabase.from("invoice_items").delete().eq("invoice_id", savedId!);
 
       // Filter empty items before saving
-      const validItems = items.filter(item => item.beschreibung.trim());
+      const validItems = speicherbarePositionen(items as any) as typeof items;
       const itemsToInsert = validItems.map((item, idx) => ({
         invoice_id: savedId!,
         position: idx + 1,

@@ -16,6 +16,7 @@ import { getStatusLabel } from "@/lib/statusColors";
 import { formatDateShort } from "@/lib/dateFormat";
 import { istArbeitszeitZeile } from "@/lib/stunden";
 import { cn } from "@/lib/utils";
+import { waehleSollBelege, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
 import {
   AMPEL,
   PAYABLE_INVOICE_TYPES,
@@ -429,28 +430,31 @@ export function ProjektNachkalkulation() {
     for (const p of purchases) purchaseById.set(p.id, p);
     const idsMitAufteilung = new Set(allocations.map((a) => a.purchase_invoice_id));
 
+    // Verteilung ueber den geprueften Kern (src/lib/nachkalkulation.ts):
+    // Teilbetraege zaehlen zu ihrem Projekt, der NICHT zugeordnete Rest bleibt
+    // beim Projekt der Rechnung. Frueher fiel der Kopf-Betrag komplett weg,
+    // sobald auch nur ein Teilbetrag existierte — bei einer Rechnung ueber
+    // 5.000 EUR mit 500 EUR Zuordnung verschwanden 4.500 EUR aus der
+    // Auswertung.
     const purchasesByProject = new Map<string, PurchaseRef[]>();
     for (const p of purchases) {
-      if (!p.project_id || p.status === "abgelehnt" || idsMitAufteilung.has(p.id)) continue;
       if (!inRange(p.rechnungsdatum ?? p.created_at)) continue;
-      const list = purchasesByProject.get(p.project_id) || [];
-      list.push({ id: p.id, lieferant: p.lieferant, nummer: p.rechnungsnummer, datum: p.rechnungsdatum ?? p.created_at, netto: purchaseNetto(p) });
-      purchasesByProject.set(p.project_id, list);
-    }
-    for (const a of allocations) {
-      const parent = purchaseById.get(a.purchase_invoice_id);
-      if (!parent || parent.status === "abgelehnt") continue;
-      if (!inRange(parent.rechnungsdatum ?? parent.created_at)) continue;
-      const list = purchasesByProject.get(a.project_id) || [];
-      list.push({
-        id: `${a.purchase_invoice_id}-${list.length}`,
-        lieferant: a.beschreibung ? `${parent.lieferant} — ${a.beschreibung}` : parent.lieferant,
-        nummer: parent.rechnungsnummer,
-        datum: parent.rechnungsdatum ?? parent.created_at,
-        netto: Number(a.betrag_netto) || 0,
-        anteil: true,
-      });
-      purchasesByProject.set(a.project_id, list);
+      const anteile = verteileEingangsrechnung(
+        { id: p.id, project_id: p.project_id, status: p.status, betrag_netto: purchaseNetto(p) },
+        allocations as any,
+      );
+      for (const a of anteile) {
+        const list = purchasesByProject.get(a.project_id) || [];
+        list.push({
+          id: `${p.id}-${list.length}`,
+          lieferant: a.beschreibung ? `${p.lieferant} — ${a.beschreibung}` : p.lieferant,
+          nummer: p.rechnungsnummer,
+          datum: p.rechnungsdatum ?? p.created_at,
+          netto: a.betrag,
+          anteil: a.istAnteil,
+        });
+        purchasesByProject.set(a.project_id, list);
+      }
     }
 
     const result: ProjectRow[] = [];
@@ -459,9 +463,11 @@ export function ProjektNachkalkulation() {
 
       const projInvoices = invByProject.get(proj.id) || [];
 
-      // Soll: Auftragsbestätigungen, sonst angenommene Angebote
-      const abs = projInvoices.filter((i) => i.typ === "auftragsbestaetigung" && i.status !== "storniert");
-      const sollSource = abs.length > 0 ? abs : projInvoices.filter((i) => i.typ === "angebot" && i.status === "angenommen");
+      // Soll: Auftragsbestätigungen, sonst Angebote, die zum Auftrag geführt
+      // haben. Geprüft in src/lib/nachkalkulation.test.ts — die frühere
+      // Einschränkung auf Status "angenommen" liess das Soll verschwinden,
+      // sobald aus dem Angebot eine Rechnung wurde (Status "verrechnet").
+      const sollSource = waehleSollBelege(projInvoices as any) as typeof projInvoices;
       const sollDocs: DocRef[] = sollSource.map((i) => ({
         id: i.id,
         typ: i.typ,
@@ -476,18 +482,17 @@ export function ProjektNachkalkulation() {
       // Ist: verrechnete Beträge (Beleg-Summen wie gespeichert; die
       // Schlussrechnung enthält Anzahlungs-Abzüge bereits als negative
       // Positionen). Gutschriften werden abgezogen.
-      const rechnungDocs: DocRef[] = [];
-      let verrechnetNetto = 0;
-      for (const i of projInvoices) {
-        if (i.status === "storniert" || !inRange(i.datum)) continue;
-        if (PAYABLE_INVOICE_TYPES.has(i.typ)) {
-          rechnungDocs.push({ id: i.id, typ: i.typ, nummer: i.nummer, datum: i.datum, netto: Number(i.netto_summe), status: i.status });
-          verrechnetNetto += Number(i.netto_summe);
-        } else if (i.typ === "gutschrift") {
-          rechnungDocs.push({ id: i.id, typ: i.typ, nummer: i.nummer, datum: i.datum, netto: -Number(i.netto_summe), status: i.status });
-          verrechnetNetto -= Number(i.netto_summe);
-        }
-      }
+      // Erlös über den geprüften Kern: Anzahlungs- und Schlussrechnung
+      // derselben Kette zählen EINMAL. Die Schlussrechnung führt den
+      // Anzahlungsabzug als steuerbefreite Bruttozeile — ihre netto_summe ist
+      // der volle Auftragswert, nicht der Restbetrag.
+      const verrechnung = berechneVerrechnet(projInvoices as any, (x: any) => inRange(x.datum));
+      const verrechnetNetto = verrechnung.summe;
+      const rechnungDocs: DocRef[] = verrechnung.gezaehlt.map((i: any) => ({
+        id: i.id, typ: i.typ, nummer: i.nummer, datum: i.datum,
+        netto: i.typ === "gutschrift" ? -Number(i.netto_summe) : Number(i.netto_summe),
+        status: i.status,
+      }));
 
       const istStunden = hoursByProject.get(proj.id) || 0;
       const lohnkosten = lohnByProject.get(proj.id) || 0;

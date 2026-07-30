@@ -606,25 +606,39 @@ const TimeTracking = () => {
         .eq("user_id", user.id)
         .maybeSingle();
 
-      if (taError || !timeAccount) {
-        toast({ variant: "destructive", title: "Fehler", description: "Kein Zeitkonto gefunden. Bitte wenden Sie sich an den Administrator." });
+      // Kein Zeitkonto? Dann eines anlegen statt abzubrechen. Bisher scheiterte
+      // JEDE Zeitausgleichs-Buchung an dieser Stelle, weil die Freischaltung
+      // eines Mitarbeiters zwar Profil, Rolle und Stammsatz erzeugt, aber kein
+      // Zeitkonto — es gab betriebsweit keinen einzigen Datensatz.
+      let konto = timeAccount;
+      if (!konto && !taError) {
+        const { data: neuesKonto } = await supabase
+          .from("time_accounts")
+          .insert({ user_id: user.id, balance_hours: 0 })
+          .select("id, balance_hours")
+          .single();
+        konto = neuesKonto;
+      }
+      if (taError || !konto) {
+        toast({ variant: "destructive", title: "Fehler", description: "Zeitkonto konnte nicht geladen werden. Bitte den Administrator verständigen." });
+        setSubmittingAbsence(false);
+        return;
+      }
+      const timeAccountRow = konto;
+
+      if (Number(timeAccountRow.balance_hours) < workingHours) {
+        toast({ variant: "destructive", title: "Nicht genügend ZA-Stunden", description: `Verfügbar: ${timeAccountRow.balance_hours} h, benötigt: ${workingHours} h. Guthaben entsteht aus Überstunden der Monatsauswertung.` });
         setSubmittingAbsence(false);
         return;
       }
 
-      if (Number(timeAccount.balance_hours) < workingHours) {
-        toast({ variant: "destructive", title: "Nicht genügend ZA-Stunden", description: `Verfügbar: ${timeAccount.balance_hours}h, benötigt: ${workingHours}h` });
-        setSubmittingAbsence(false);
-        return;
-      }
-
-      const balanceBefore = Number(timeAccount.balance_hours);
+      const balanceBefore = Number(timeAccountRow.balance_hours);
       const balanceAfter = balanceBefore - workingHours;
 
       const { error: updateErr } = await supabase
         .from("time_accounts")
         .update({ balance_hours: balanceAfter, updated_at: new Date().toISOString() })
-        .eq("id", timeAccount.id);
+        .eq("id", timeAccountRow.id);
 
       if (updateErr) {
         toast({ variant: "destructive", title: "Fehler", description: "ZA-Stunden konnten nicht abgebucht werden" });

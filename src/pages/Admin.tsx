@@ -2000,9 +2000,16 @@ export default function Admin() {
                   }
                   if (dData?.error) throw new Error(dData.error);
 
+                  // Hat der Benutzer gebuchte Stunden, Dokumente oder
+                  // Berichte, sperrt die Funktion den Zugang, statt zu
+                  // loeschen — die Aufzeichnungen haengen mit Loesch-Kaskade
+                  // am Konto und waeren sonst weg.
                   toast({
-                    title: "Benutzer gelöscht",
-                    description: `${userName} wurde erfolgreich gelöscht.`,
+                    title: dData?.deaktiviert ? "Zugang gesperrt" : "Benutzer gelöscht",
+                    description: dData?.deaktiviert
+                      ? dData.message
+                      : `${userName} wurde erfolgreich gelöscht.`,
+                    duration: dData?.deaktiviert ? 10000 : undefined,
                   });
 
                   fetchUsers({ silent: true });
