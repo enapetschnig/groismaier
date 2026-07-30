@@ -1,10 +1,19 @@
 /**
- * KFZ-Manager (Fahrzeuge) — KingBill-Listenmaske.
+ * KFZ-Manager — KingBill-Listenmaske für Fahrzeuge UND Maschinen.
  *
  * Aufbau exakt wie src/pages/Customers.tsx:
- *   KBToolbar [Zurück] „Fahrzeuge" [+ Neu][Bearbeiten][Löschen][Liste drucken]
+ *   KBToolbar [Zurück] „KFZ-Manager" [+ Fahrzeug][+ Maschine][Bearbeiten][Löschen][Liste drucken]
  *   + linke Filterspalte (kb-panel, mobil einklappbar)
- *   + Fahrzeug-Grid rechts (Einfachklick markiert, Doppelklick bearbeitet).
+ *   + Geräte-Grid rechts (Einfachklick markiert, Doppelklick bearbeitet).
+ *
+ * Fahrzeug und Maschine liegen in DERSELBEN Tabelle (`vehicles.art`) — beide
+ * brauchen Stunden, Kilometer/Betriebsstunden, Kosten und aktiv/inaktiv. Was
+ * sich unterscheidet, steuert `art`: die Typliste, die Pickerl-Felder (nur
+ * Fahrzeug) und die Filter.
+ *
+ * Die Kostenstelle je Gerät steuert, worauf Stunden in der Zeiterfassung
+ * gebucht werden. Sie lässt sich direkt hier anlegen — dafür muss niemand in
+ * den Admin-Bereich wechseln.
  *
  * Der Editor-Dialog enthält neben den Stammdaten eine kb-tab-Leiste:
  *   „Kosten"   — vehicle_costs des Fahrzeugs (anlegen/löschen, Summe)
@@ -49,6 +58,8 @@ import {
 
 interface Vehicle {
   id: string;
+  /** 'fahrzeug' | 'maschine' — siehe Migration 20260730130000. */
+  art: string;
   bezeichnung: string;
   kennzeichen: string | null;
   typ: string | null;
@@ -59,6 +70,14 @@ interface Vehicle {
   /** Vorlauf der Erinnerung auf der Startseite, in Tagen. */
   pickerl_erinnerung_tage: number | null;
   pickerl_letzte_pruefung: string | null;
+  /** Kostenstelle für Stundenbuchungen (admin_config_options.wert). */
+  kostenstelle: string | null;
+}
+
+/** Auswahl aus admin_config_options (kategorie='kostenstelle'). */
+interface KostenstelleOption {
+  wert: string;
+  label: string;
 }
 
 interface VehicleCost {
@@ -88,15 +107,44 @@ interface VehicleStats {
   kosten: number;
 }
 
-// Typ-Liste identisch zum bestehenden VehicleManager (Admin → Konfiguration),
-// damit beide Masken dieselben Werte schreiben. `typ` ist in der DB freier Text.
-const TYP_OPTIONS = [
+/** Die beiden Arten — Beschriftungen an EINER Stelle, damit Maske,
+ *  Filter und Meldungen nicht auseinanderlaufen. */
+const ARTEN = [
+  { value: "fahrzeug", label: "Fahrzeug", plural: "Fahrzeuge", icon: "🚚" },
+  { value: "maschine", label: "Maschine", plural: "Maschinen", icon: "⚙️" },
+] as const;
+type Art = (typeof ARTEN)[number]["value"];
+
+const artLabel = (a: string) => ARTEN.find(x => x.value === a)?.label || "Fahrzeug";
+
+// Typ-Liste je Art. Die Fahrzeugtypen sind identisch zum bestehenden
+// VehicleManager (Admin → Konfiguration), damit beide Masken dieselben Werte
+// schreiben. `typ` ist in der DB freier Text.
+const TYP_FAHRZEUG = [
   { value: "pkw", label: "PKW" },
   { value: "bus", label: "Bus / Transporter" },
   { value: "lkw", label: "LKW" },
   { value: "anhaenger", label: "Anhänger" },
-  { value: "stapler", label: "Stapler / Bagger" },
   { value: "sonstiges", label: "Sonstiges" },
+];
+
+const TYP_MASCHINE = [
+  { value: "stapler", label: "Stapler" },
+  { value: "bagger", label: "Bagger" },
+  { value: "kran", label: "Kran" },
+  { value: "hebebuehne", label: "Hebebühne" },
+  { value: "saege", label: "Säge / Abbundanlage" },
+  { value: "kompressor", label: "Kompressor" },
+  { value: "geraet", label: "Handgerät / Werkzeug" },
+  { value: "sonstiges", label: "Sonstiges" },
+];
+
+const typOptionsFuer = (art: string) => (art === "maschine" ? TYP_MASCHINE : TYP_FAHRZEUG);
+
+/** Alle Typen für den Filter — ohne Dubletten („sonstiges" steht in beiden Listen). */
+const TYP_OPTIONS = [
+  ...TYP_FAHRZEUG,
+  ...TYP_MASCHINE.filter(m => !TYP_FAHRZEUG.some(f => f.value === m.value)),
 ];
 
 const KATEGORIE_OPTIONS = [
@@ -132,11 +180,13 @@ const kmOfUsage = (row: any): number => {
 };
 
 const EMPTY_FORM = {
+  art: "fahrzeug" as Art,
   bezeichnung: "",
   kennzeichen: "",
   typ: "pkw",
   aktiv: true,
   notizen: "",
+  kostenstelle: "",
   pickerl_faellig_am: "",
   pickerl_erinnerung_tage: "30",
   pickerl_letzte_pruefung: "",
@@ -151,10 +201,14 @@ export default function Fahrzeuge() {
   const [stats, setStats] = useState<Record<string, VehicleStats>>({});
   /** vehicle_id → Namen der Mitarbeiter mit diesem Standard-Fahrzeug */
   const [standardFahrer, setStandardFahrer] = useState<Record<string, string[]>>({});
+  /** Auswahlliste der Kostenstellen — hier auch direkt erweiterbar. */
+  const [kostenstellen, setKostenstellen] = useState<KostenstelleOption[]>([]);
+  const [neueKostenstelle, setNeueKostenstelle] = useState("");
   const [loading, setLoading] = useState(true);
 
   // Filterspalte
   const [search, setSearch] = useState("");
+  const [artFilter, setArtFilter] = useState<string>("alle");
   const [typFilter, setTypFilter] = useState<string>("alle");
   const [aktivFilter, setAktivFilter] = useState<"alle" | "aktiv" | "inaktiv">("alle");
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -193,7 +247,8 @@ export default function Fahrzeuge() {
     setLoading(true);
     const [vehRes, empRes, usageRes, costRes] = await Promise.all([
       (supabase.from("vehicles" as never) as any)
-        .select("id, bezeichnung, kennzeichen, typ, aktiv, notizen, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung")
+        .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung")
+        .order("art")
         .order("aktiv", { ascending: false })
         .order("bezeichnung"),
       // employees.standard_vehicle_id ist neu → über den untypisierten Client
@@ -248,6 +303,56 @@ export default function Fahrzeuge() {
   useEffect(() => {
     fetchAll();
   }, [fetchAll]);
+
+  // ── Kostenstellen laden (dieselbe Liste wie in der Zeiterfassung) ──
+  const fetchKostenstellen = useCallback(async () => {
+    const { data } = await supabase
+      .from("admin_config_options")
+      .select("wert, label")
+      .eq("kategorie", "kostenstelle")
+      .eq("is_active", true)
+      .order("sort_order");
+    setKostenstellen(((data as KostenstelleOption[]) || []));
+  }, []);
+
+  useEffect(() => {
+    fetchKostenstellen();
+  }, [fetchKostenstellen]);
+
+  /**
+   * Neue Kostenstelle direkt hier anlegen (Kundenwunsch: „da kann ich auch die
+   * Kostenstellen erstellen"). Der technische Wert wird aus der Beschriftung
+   * abgeleitet, damit niemand zwei Felder ausfüllen muss.
+   */
+  const kostenstelleAnlegen = async () => {
+    const label = neueKostenstelle.trim();
+    if (!label) return;
+    const wert = label
+      .toLowerCase()
+      .replace(/ä/g, "ae").replace(/ö/g, "oe").replace(/ü/g, "ue").replace(/ß/g, "ss")
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    if (!wert) {
+      toast({ variant: "destructive", title: "Bezeichnung ungeeignet", description: "Bitte einen Namen mit Buchstaben oder Ziffern eingeben." });
+      return;
+    }
+    if (kostenstellen.some(k => k.wert === wert)) {
+      toast({ variant: "destructive", title: "Gibt es schon", description: `„${label}" ist bereits als Kostenstelle angelegt.` });
+      return;
+    }
+    const maxSort = kostenstellen.length * 10 + 100;
+    const { error } = await supabase.from("admin_config_options").insert({
+      kategorie: "kostenstelle", wert, label, sort_order: maxSort, is_active: true,
+    });
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    toast({ title: "Kostenstelle angelegt", description: `„${label}" steht ab sofort auch in der Zeiterfassung zur Auswahl.` });
+    setNeueKostenstelle("");
+    setForm(f => ({ ...f, kostenstelle: wert }));
+    fetchKostenstellen();
+  };
 
   // ── Kosten des offenen Fahrzeugs ──
   const fetchCosts = async (vehicleId: string) => {
@@ -326,6 +431,7 @@ export default function Fahrzeuge() {
 
   // ── Filterung ──
   const filtered = vehicles.filter(v => {
+    if (artFilter !== "alle" && (v.art || "fahrzeug") !== artFilter) return false;
     if (typFilter !== "alle" && (v.typ || "") !== typFilter) return false;
     if (aktivFilter === "aktiv" && !v.aktiv) return false;
     if (aktivFilter === "inaktiv" && v.aktiv) return false;
@@ -342,9 +448,10 @@ export default function Fahrzeuge() {
   const summeKosten = filtered.reduce((s, v) => s + (stats[v.id]?.kosten || 0), 0);
 
   // ── Editor öffnen ──
-  const openNew = () => {
+  const openNew = (art: Art = "fahrzeug") => {
     setEditId(null);
-    setForm({ ...EMPTY_FORM });
+    setForm({ ...EMPTY_FORM, art, typ: typOptionsFuer(art)[0].value });
+    setNeueKostenstelle("");
     setCosts([]);
     setUsages([]);
     setTab("kosten");
@@ -353,13 +460,16 @@ export default function Fahrzeuge() {
 
   const openEdit = (v: Vehicle) => {
     setEditId(v.id);
+    setNeueKostenstelle("");
     setForm({
+      art: ((v.art === "maschine" ? "maschine" : "fahrzeug") as Art),
+      kostenstelle: v.kostenstelle || "",
       pickerl_faellig_am: v.pickerl_faellig_am || "",
       pickerl_erinnerung_tage: String(v.pickerl_erinnerung_tage ?? 30),
       pickerl_letzte_pruefung: v.pickerl_letzte_pruefung || "",
       bezeichnung: v.bezeichnung || "",
       kennzeichen: v.kennzeichen || "",
-      typ: v.typ || "pkw",
+      typ: v.typ || typOptionsFuer(v.art || "fahrzeug")[0].value,
       aktiv: !!v.aktiv,
       notizen: v.notizen || "",
     });
@@ -381,15 +491,21 @@ export default function Fahrzeuge() {
       return;
     }
     setSaving(true);
+    const istMaschine = form.art === "maschine";
     const payload = {
+      art: form.art,
       bezeichnung: form.bezeichnung.trim(),
       kennzeichen: form.kennzeichen.trim() || null,
       typ: form.typ || null,
       aktiv: form.aktiv,
       notizen: form.notizen.trim() || null,
-      pickerl_faellig_am: form.pickerl_faellig_am || null,
+      kostenstelle: form.kostenstelle || null,
+      // Das Pickerl (§ 57a) betrifft nur Fahrzeuge. Wird ein Gerät auf
+      // „Maschine" umgestellt, muss der Termin mit weg — sonst erinnert die
+      // Startseite ewig an eine Begutachtung, die es nicht gibt.
+      pickerl_faellig_am: istMaschine ? null : (form.pickerl_faellig_am || null),
       pickerl_erinnerung_tage: Math.max(0, Number(form.pickerl_erinnerung_tage) || 30),
-      pickerl_letzte_pruefung: form.pickerl_letzte_pruefung || null,
+      pickerl_letzte_pruefung: istMaschine ? null : (form.pickerl_letzte_pruefung || null),
     };
     try {
       if (editId) {
@@ -397,11 +513,11 @@ export default function Fahrzeuge() {
           .update(payload)
           .eq("id", editId);
         if (error) throw error;
-        toast({ title: "Gespeichert", description: "Fahrzeug wurde aktualisiert" });
+        toast({ title: "Gespeichert", description: `${artLabel(form.art)} wurde aktualisiert` });
       } else {
         const { error } = await (supabase.from("vehicles" as never) as any).insert(payload);
         if (error) throw error;
-        toast({ title: "Erstellt", description: "Neues Fahrzeug wurde angelegt" });
+        toast({ title: "Erstellt", description: `${artLabel(form.art)} wurde angelegt` });
       }
       setDialogOpen(false);
       fetchAll();
@@ -422,12 +538,12 @@ export default function Fahrzeuge() {
         variant: "destructive",
         title: "Löschen nicht möglich",
         description: restrict
-          ? "Für dieses Fahrzeug gibt es bereits Zeitbuchungen. Setze es stattdessen auf „inaktiv“."
+          ? "Dafür gibt es bereits Zeitbuchungen. Setze den Eintrag stattdessen auf „inaktiv“."
           : error.message,
       });
       return;
     }
-    toast({ title: "Gelöscht", description: "Fahrzeug wurde gelöscht" });
+    toast({ title: "Gelöscht", description: "Eintrag wurde gelöscht" });
     if (selectedId === id) setSelectedId(null);
     fetchAll();
   };
@@ -532,14 +648,14 @@ export default function Fahrzeuge() {
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
       <DialogContent className="max-w-4xl w-[96vw] max-h-[92vh] overflow-y-auto p-0 gap-0">
         <DialogHeader className="sr-only">
-          <DialogTitle>{editId ? "Fahrzeug bearbeiten" : "Neues Fahrzeug"}</DialogTitle>
+          <DialogTitle>{editId ? `${artLabel(form.art)} bearbeiten` : `Neue${form.art === "maschine" ? "" : "s"} ${artLabel(form.art)}`}</DialogTitle>
         </DialogHeader>
         <KBToolbar
           sticky={false}
           className="rounded-t-md pr-12"
           onBack={() => setDialogOpen(false)}
           backLabel="Schließen ohne Speichern"
-          title={editId ? "Fahrzeug bearbeiten" : "Neues Fahrzeug"}
+          title={editId ? `${artLabel(form.art)} bearbeiten` : `Neue${form.art === "maschine" ? "" : "s"} ${artLabel(form.art)}`}
           rightActions={
             <KBToolbarButton
               icon={Check}
@@ -552,6 +668,38 @@ export default function Fahrzeuge() {
         />
 
         <div className="p-4 sm:p-5 space-y-5">
+          {/* ── Art: Fahrzeug oder Maschine ──
+              Steht ganz oben, weil davon Typliste und Pickerl-Felder abhängen. */}
+          <div>
+            <span className="block text-xs font-semibold mb-1">Art</span>
+            <div className="flex gap-2">
+              {ARTEN.map(a => {
+                const aktiv = form.art === a.value;
+                return (
+                  <button
+                    key={a.value}
+                    type="button"
+                    aria-pressed={aktiv}
+                    onClick={() => setForm(f => (
+                      f.art === a.value ? f : {
+                        ...f,
+                        art: a.value,
+                        // Typ zurücksetzen: „PKW" passt zu keiner Maschine.
+                        typ: typOptionsFuer(a.value)[0].value,
+                      }
+                    ))}
+                    className={`flex min-h-[48px] flex-1 items-center justify-center gap-2 rounded-md border-2 px-3 text-sm font-medium transition-colors ${
+                      aktiv ? "border-kb-blue bg-kb-blue/15 text-kb-blue-dark" : "border-border bg-card hover:bg-muted/50"
+                    }`}
+                  >
+                    <span aria-hidden>{a.icon}</span>
+                    {a.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* ── Stammdaten ── */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="sm:col-span-2">
@@ -561,25 +709,29 @@ export default function Fahrzeuge() {
                 className="kb-input w-full"
                 value={form.bezeichnung}
                 onChange={(e) => setForm(f => ({ ...f, bezeichnung: e.target.value }))}
-                placeholder="z.B. VW T6 Werkstatt"
+                placeholder={form.art === "maschine" ? "z.B. Liebherr Kran 22 K" : "z.B. VW T6 Werkstatt"}
               />
             </div>
             <div>
-              <label className="block text-xs font-semibold mb-1" htmlFor="fz-kz">Kennzeichen</label>
+              {/* Dieselbe Spalte trägt bei Maschinen die Inventar-/Seriennummer —
+                  gebucht und ausgewertet wird beides gleich. */}
+              <label className="block text-xs font-semibold mb-1" htmlFor="fz-kz">
+                {form.art === "maschine" ? "Inventar-/Seriennummer" : "Kennzeichen"}
+              </label>
               <input
                 id="fz-kz"
                 className="kb-input w-full"
                 value={form.kennzeichen}
                 onChange={(e) => setForm(f => ({ ...f, kennzeichen: e.target.value }))}
-                placeholder="ZT-1234F"
+                placeholder={form.art === "maschine" ? "z.B. SN-884321" : "ZT-1234F"}
               />
             </div>
             <div>
               <label className="block text-xs font-semibold mb-1">Typ</label>
               <Select value={form.typ} onValueChange={(v) => setForm(f => ({ ...f, typ: v }))}>
-                <SelectTrigger className="h-9" aria-label="Fahrzeugtyp"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="h-9" aria-label="Typ"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {TYP_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  {typOptionsFuer(form.art).map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -590,43 +742,89 @@ export default function Fahrzeuge() {
                 onCheckedChange={(c) => setForm(f => ({ ...f, aktiv: !!c }))}
               />
               <label htmlFor="fz-aktiv" className="text-sm font-medium cursor-pointer">
-                Fahrzeug aktiv
+                {artLabel(form.art)} aktiv
               </label>
             </div>
-            {/* ── Pickerl (§ 57a) ── */}
-            <div>
-              <label className="block text-xs font-semibold mb-1" htmlFor="fz-pickerl">Pickerl fällig am</label>
-              <input
-                id="fz-pickerl"
-                type="date"
-                className="kb-input w-full"
-                value={form.pickerl_faellig_am}
-                onChange={(e) => setForm(f => ({ ...f, pickerl_faellig_am: e.target.value }))}
-              />
+            {/* ── Kostenstelle: worauf Stunden für dieses Gerät gebucht werden ──
+                Dieselbe Liste wie in der Zeiterfassung; neue Einträge lassen
+                sich hier direkt anlegen (Kundenwunsch). */}
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold mb-1">Kostenstelle (Zeiterfassung)</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Select
+                  value={form.kostenstelle || "__keine__"}
+                  onValueChange={(v) => setForm(f => ({ ...f, kostenstelle: v === "__keine__" ? "" : v }))}
+                >
+                  <SelectTrigger className="h-9 sm:flex-1" aria-label="Kostenstelle"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__keine__">— keine —</SelectItem>
+                    {kostenstellen.map(k => <SelectItem key={k.wert} value={k.wert}>{k.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                <div className="flex gap-2 sm:w-[300px]">
+                  <input
+                    className="kb-input flex-1"
+                    value={neueKostenstelle}
+                    onChange={(e) => setNeueKostenstelle(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); kostenstelleAnlegen(); } }}
+                    placeholder="Neue Kostenstelle…"
+                    aria-label="Neue Kostenstelle anlegen"
+                  />
+                  <button
+                    type="button"
+                    className="kb-btn shrink-0"
+                    onClick={kostenstelleAnlegen}
+                    disabled={!neueKostenstelle.trim()}
+                    title="Kostenstelle anlegen"
+                  >
+                    <Plus className="h-4 w-4 text-kb-green" />
+                  </button>
+                </div>
+              </div>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Steuert, worauf die Mitarbeiter Stunden für dieses Gerät buchen. Neue
+                Kostenstellen stehen sofort auch in der Zeiterfassung zur Auswahl.
+              </p>
             </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1" htmlFor="fz-vorlauf">Erinnerung (Tage vorher)</label>
-              <input
-                id="fz-vorlauf"
-                type="text"
-                inputMode="numeric"
-                className="kb-input w-full"
-                value={form.pickerl_erinnerung_tage}
-                onChange={(e) => setForm(f => ({ ...f, pickerl_erinnerung_tage: e.target.value.replace(/[^0-9]/g, "") }))}
-                placeholder="30"
-              />
-              <p className="mt-0.5 text-[11px] text-muted-foreground">z.B. 30 für einen Monat, 14 für zwei Wochen</p>
-            </div>
-            <div>
-              <label className="block text-xs font-semibold mb-1" htmlFor="fz-letzte">Letzte Überprüfung</label>
-              <input
-                id="fz-letzte"
-                type="date"
-                className="kb-input w-full"
-                value={form.pickerl_letzte_pruefung}
-                onChange={(e) => setForm(f => ({ ...f, pickerl_letzte_pruefung: e.target.value }))}
-              />
-            </div>
+
+            {/* ── Pickerl (§ 57a) — nur bei Fahrzeugen ── */}
+            {form.art === "fahrzeug" && (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-pickerl">Pickerl fällig am</label>
+                  <input
+                    id="fz-pickerl"
+                    type="date"
+                    className="kb-input w-full"
+                    value={form.pickerl_faellig_am}
+                    onChange={(e) => setForm(f => ({ ...f, pickerl_faellig_am: e.target.value }))}
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-vorlauf">Erinnerung (Tage vorher)</label>
+                  <input
+                    id="fz-vorlauf"
+                    type="text"
+                    inputMode="numeric"
+                    className="kb-input w-full"
+                    value={form.pickerl_erinnerung_tage}
+                    onChange={(e) => setForm(f => ({ ...f, pickerl_erinnerung_tage: e.target.value.replace(/[^0-9]/g, "") }))}
+                    placeholder="30"
+                  />
+                  <p className="mt-0.5 text-[11px] text-muted-foreground">z.B. 30 für einen Monat, 14 für zwei Wochen</p>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-letzte">Letzte Überprüfung</label>
+                  <input
+                    id="fz-letzte"
+                    type="date"
+                    className="kb-input w-full"
+                    value={form.pickerl_letzte_pruefung}
+                    onChange={(e) => setForm(f => ({ ...f, pickerl_letzte_pruefung: e.target.value }))}
+                  />
+                </div>
+              </>
+            )}
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold mb-1" htmlFor="fz-notiz">Notizen</label>
               <textarea
@@ -634,7 +832,7 @@ export default function Fahrzeuge() {
                 className="kb-input w-full min-h-[70px] py-2"
                 value={form.notizen}
                 onChange={(e) => setForm(f => ({ ...f, notizen: e.target.value }))}
-                placeholder="z.B. Winterreifen im Lager"
+                placeholder={form.art === "maschine" ? "z.B. Service alle 250 Betriebsstunden" : "z.B. Winterreifen im Lager"}
               />
             </div>
           </div>
@@ -876,7 +1074,7 @@ export default function Fahrzeuge() {
             </div>
           ) : (
             <p className="text-sm text-muted-foreground border-t border-border pt-3">
-              Kosten und Einsätze können erfasst werden, sobald das Fahrzeug gespeichert ist.
+              Kosten und Einsätze können erfasst werden, sobald der Eintrag gespeichert ist.
             </p>
           )}
         </div>
@@ -897,8 +1095,11 @@ export default function Fahrzeuge() {
         }
       `}</style>
 
-      <KBToolbar onBack={zurueck} title="Fahrzeuge">
-        <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neu" onClick={openNew} />
+      <KBToolbar onBack={zurueck} title="KFZ-Manager">
+        {/* Zwei getrennte Knöpfe statt „Neu" + Rückfrage: ein Klick weniger,
+            und man sieht ohne Öffnen, dass es beides gibt. */}
+        <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Fahrzeug" title="Neues Fahrzeug anlegen" onClick={() => openNew("fahrzeug")} />
+        <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Maschine" title="Neue Maschine anlegen" onClick={() => openNew("maschine")} />
         <KBToolbarButton
           icon={Pencil}
           label="Bearbeiten"
@@ -939,10 +1140,20 @@ export default function Fahrzeuge() {
                 type="search"
                 className="kb-input"
                 placeholder="Suche… (Kennzeichen, Bezeichnung)"
-                aria-label="Fahrzeuge durchsuchen"
+                aria-label="Fahrzeuge und Maschinen durchsuchen"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
+
+              <Select value={artFilter} onValueChange={setArtFilter}>
+                <SelectTrigger className="w-full h-9" aria-label="Art filtern">
+                  <SelectValue placeholder="Art filtern…" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="alle">Fahrzeuge & Maschinen</SelectItem>
+                  {ARTEN.map(a => <SelectItem key={a.value} value={a.value}>Nur {a.plural}</SelectItem>)}
+                </SelectContent>
+              </Select>
 
               <Select value={typFilter} onValueChange={setTypFilter}>
                 <SelectTrigger className="w-full h-9" aria-label="Typ filtern">
@@ -966,7 +1177,7 @@ export default function Fahrzeuge() {
               </Select>
 
               <div className="border-t border-border pt-2 text-sm font-bold">
-                Anzahl Fahrzeuge: {loading ? "…" : filtered.length}
+                Anzahl Einträge: {loading ? "…" : filtered.length}
               </div>
 
               <p className="text-[11px] text-muted-foreground">
@@ -979,8 +1190,8 @@ export default function Fahrzeuge() {
           {/* ── Fahrzeug-Grid (zugleich Druckbereich) ── */}
           <section id="kb-print-area" className="kb-panel flex-1 min-w-0 overflow-hidden">
             <div className="hidden print:block px-4 pt-4">
-              <h2 className="text-lg font-bold">Fahrzeugliste</h2>
-              <p className="text-xs text-muted-foreground">Anzahl Fahrzeuge: {filtered.length} — Kennzahlen {jahr}</p>
+              <h2 className="text-lg font-bold">Fahrzeuge & Maschinen</h2>
+              <p className="text-xs text-muted-foreground">Anzahl Einträge: {filtered.length} — Kennzahlen {jahr}</p>
             </div>
             <div className="p-2 sm:p-3">
               {loading ? (
@@ -989,18 +1200,23 @@ export default function Fahrzeuge() {
                 <div className="text-center py-12">
                   <Truck className="w-12 h-12 mx-auto text-muted-foreground mb-3" />
                   <p className="text-lg font-semibold mb-1">
-                    {search || typFilter !== "alle" || aktivFilter !== "alle"
-                      ? "Keine Fahrzeuge gefunden"
-                      : "Noch keine Fahrzeuge"}
+                    {search || artFilter !== "alle" || typFilter !== "alle" || aktivFilter !== "alle"
+                      ? "Nichts gefunden"
+                      : "Noch keine Fahrzeuge oder Maschinen"}
                   </p>
                   <p className="text-sm text-muted-foreground mb-4">
-                    {search || typFilter !== "alle" || aktivFilter !== "alle"
-                      ? "Passe Suche/Filter an oder lege ein neues Fahrzeug an."
-                      : "Lege dein erstes Fahrzeug an, um Stunden, Kilometer und Kosten zu erfassen."}
+                    {search || artFilter !== "alle" || typFilter !== "alle" || aktivFilter !== "alle"
+                      ? "Passe Suche/Filter an oder lege einen neuen Eintrag an."
+                      : "Lege dein erstes Fahrzeug oder deine erste Maschine an, um Stunden, Kilometer und Kosten zu erfassen."}
                   </p>
-                  <button type="button" className="kb-btn mx-auto" onClick={openNew}>
-                    <Plus className="w-4 h-4 text-kb-green" /> Fahrzeug anlegen
-                  </button>
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <button type="button" className="kb-btn" onClick={() => openNew("fahrzeug")}>
+                      <Plus className="w-4 h-4 text-kb-green" /> Fahrzeug anlegen
+                    </button>
+                    <button type="button" className="kb-btn" onClick={() => openNew("maschine")}>
+                      <Plus className="w-4 h-4 text-kb-green" /> Maschine anlegen
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <>
@@ -1028,7 +1244,7 @@ export default function Fahrzeuge() {
                               <span className="font-semibold truncate">{v.bezeichnung}</span>
                             </div>
                             <p className="text-xs text-muted-foreground">
-                              {v.kennzeichen ? <span className="font-mono">{v.kennzeichen}</span> : "ohne Kennzeichen"} · {typLabel(v.typ)}
+                              {v.kennzeichen ? <span className="font-mono">{v.kennzeichen}</span> : "ohne Kennzeichen"} · {artLabel(v.art)} · {typLabel(v.typ)}
                             </p>
                           </div>
                           <span className="shrink-0 text-sm font-bold whitespace-nowrap">
@@ -1067,6 +1283,7 @@ export default function Fahrzeuge() {
                         <TableHead className="w-8"><span className="sr-only">Status</span></TableHead>
                         <TableHead>Kennzeichen</TableHead>
                         <TableHead>Bezeichnung</TableHead>
+                        <TableHead>Art</TableHead>
                         <TableHead>Typ</TableHead>
                         <TableHead>Standard-Fahrer</TableHead>
                         <TableHead className="text-right whitespace-nowrap">Std. ({jahr})</TableHead>
@@ -1095,6 +1312,7 @@ export default function Fahrzeuge() {
                             </TableCell>
                             <TableCell className="font-mono font-medium whitespace-nowrap">{v.kennzeichen || "–"}</TableCell>
                             <TableCell className="font-medium">{v.bezeichnung}</TableCell>
+                            <TableCell className="whitespace-nowrap">{artLabel(v.art)}</TableCell>
                             <TableCell className="whitespace-nowrap">{typLabel(v.typ)}</TableCell>
                             <TableCell className="max-w-[220px] truncate">{fahrer.length > 0 ? fahrer.join(", ") : "–"}</TableCell>
                             <TableCell className="text-right whitespace-nowrap">{s.stunden > 0 ? s.stunden.toFixed(2) : "–"}</TableCell>
@@ -1106,7 +1324,7 @@ export default function Fahrzeuge() {
                     </TableBody>
                     <TableFooter>
                       <TableRow>
-                        <TableCell colSpan={5} className="text-right font-bold">Summe {jahr}:</TableCell>
+                        <TableCell colSpan={6} className="text-right font-bold">Summe {jahr}:</TableCell>
                         <TableCell className="text-right font-bold whitespace-nowrap">{summeStunden > 0 ? summeStunden.toFixed(2) : "–"}</TableCell>
                         <TableCell className="text-right font-bold whitespace-nowrap">{summeKm > 0 ? summeKm.toLocaleString("de-AT") : "–"}</TableCell>
                         <TableCell className="text-right font-bold whitespace-nowrap">€ {eur(summeKosten)}</TableCell>
@@ -1125,10 +1343,10 @@ export default function Fahrzeuge() {
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Fahrzeug löschen?</AlertDialogTitle>
+            <AlertDialogTitle>{selectedRow ? `${artLabel(selectedRow.art)} löschen?` : "Löschen?"}</AlertDialogTitle>
             <AlertDialogDescription>
               {selectedRow
-                ? `${selectedRow.bezeichnung}${selectedRow.kennzeichen ? ` (${selectedRow.kennzeichen})` : ""} wird dauerhaft gelöscht — inklusive der erfassten Kosten. Fahrzeuge mit Zeitbuchungen lassen sich nicht löschen.`
+                ? `${selectedRow.bezeichnung}${selectedRow.kennzeichen ? ` (${selectedRow.kennzeichen})` : ""} wird dauerhaft gelöscht — inklusive der erfassten Kosten. Einträge mit Zeitbuchungen lassen sich nicht löschen.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
+import { kostenstelleIcon, kostenstelleLabel } from "@/lib/kostenstellen";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -43,6 +44,8 @@ interface TimeEntry {
   pause_end?: string;
   stunden: number;
   location_type: string;
+  /** Feine Kostenstelle — location_type kennt nur Baustelle/Werkstatt. */
+  kostenstelle?: string | null;
   project_id: string | null;
   user_id: string;
   taetigkeit: string;
@@ -641,8 +644,10 @@ export default function HoursReport() {
           const lunchBreak = calculateLunchBreak(entry);
           const project = projects[entry.project_id];
           
-          // Ort-Spalte: Baustelle oder Werkstatt
-          const ortText = entry.location_type === "baustelle" ? "Baustelle" : "Werkstatt";
+          // Ort-Spalte: die Kostenstelle der Buchung. Vorher stand hier für
+          // JEDE Nicht-Baustelle pauschal „Werkstatt" — Fuhrpark- und
+          // Maschinenstunden waren im Export nicht zu erkennen.
+          const ortText = kostenstelleLabel(entry.kostenstelle, entry.location_type, ksOptions);
           
           // Projekt-Spalte: Urlaub/Krankenstand/Weiterbildung, Störung oder Projektname
           const isAbsence = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag"].includes(entry.taetigkeit);
@@ -1113,8 +1118,8 @@ export default function HoursReport() {
                               // Tagessaldo aus Helper — pro-Tag, nur in 1. Zeile anzeigen.
                               const dayBal = getDayBal(entry.datum);
                               const project = projects[entry.project_id];
-                              const ortIcon = entry.location_type === "baustelle" ? "🏗️" : entry.location_type === "werkstatt" ? "🏢" : "";
-                              const ortText = entry.location_type === "baustelle" ? "Baustelle" : entry.location_type === "werkstatt" ? "Firma" : "";
+                              const ortIcon = kostenstelleIcon(entry.kostenstelle || entry.location_type);
+                              const ortText = kostenstelleLabel(entry.kostenstelle, entry.location_type, ksOptions);
                               const projektName = entry.taetigkeit === "Urlaub" || entry.taetigkeit === "Krankenstand"
                                 ? entry.taetigkeit
                                 : (project?.name || "");

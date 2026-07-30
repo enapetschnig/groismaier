@@ -56,7 +56,7 @@ const ProjectOverview = () => {
     kunde_adresse: "", kunde_plz: "", kunde_ort: "", kunde_email: "", kunde_telefon: "", kunde_uid: "",
     // Projekt-/Leistungsort (gespeichert in projects)
     projekt_adresse: "", projekt_plz: "", projekt_ort: "",
-    projekt_kontakt_name: "", projekt_kontakt_telefon: "",
+    projekt_kontakt_name: "",
   });
   const [customers, setCustomers] = useState<{ id: string; name: string; plz: string | null; ort: string | null }[]>([]);
   const [customerData, setCustomerData] = useState<any>(null);
@@ -276,7 +276,6 @@ const ProjectOverview = () => {
       projekt_plz: proj.plz || parts[1] || "",
       projekt_ort: (proj as any).ort || parts[2] || "",
       projekt_kontakt_name: (proj as any).projekt_kontakt_name || "",
-      projekt_kontakt_telefon: (proj as any).projekt_kontakt_telefon || "",
     });
     setEditDialogOpen(true);
   };
@@ -303,7 +302,6 @@ const ProjectOverview = () => {
       plz: editForm.projekt_plz.trim() || null,
       ort: editForm.projekt_ort.trim() || null,
       projekt_kontakt_name: editForm.projekt_kontakt_name.trim() || null,
-      projekt_kontakt_telefon: editForm.projekt_kontakt_telefon.trim() || null,
       customer_id: editForm.customer_id,
     } as any).eq("id", projectId).select("id");
     if (projektFehler || !geaendert?.length) {
@@ -669,18 +667,12 @@ const ProjectOverview = () => {
                   {[projectData.adresse, [projectData.plz, (projectData as any).ort].filter(Boolean).join(" ")].filter(Boolean).join(", ")}
                 </div>
               )}
-              {((projectData as any).projekt_kontakt_name || (projectData as any).projekt_kontakt_telefon) && (
+              {/* Telefonnummer beim Kontakt vor Ort entfällt (Kundenwunsch) —
+                  die Nummer steht beim Kunden. */}
+              {(projectData as any).projekt_kontakt_name && (
                 <div className="text-sm">
                   <span className="text-muted-foreground">Kontakt vor Ort:</span>{" "}
-                  {(projectData as any).projekt_kontakt_name || ""}
-                  {(projectData as any).projekt_kontakt_telefon && (
-                    <>
-                      {" "}
-                      <a className="text-primary underline" href={`tel:${(projectData as any).projekt_kontakt_telefon}`}>
-                        {(projectData as any).projekt_kontakt_telefon}
-                      </a>
-                    </>
-                  )}
+                  {(projectData as any).projekt_kontakt_name}
                 </div>
               )}
               {/* Rechnungsadresse (Kunde) */}
@@ -1089,92 +1081,9 @@ const ProjectOverview = () => {
             <DialogTitle>Projekt bearbeiten</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
+            {/* Kunde — steht bewusst ganz oben (Kundenwunsch:
+                „zuerst der Kundendialog … der Leistungsort dann darunter"). */}
             <div>
-              <Label>Projektname *</Label>
-              <Input value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
-            </div>
-            <div>
-              <Label>Beschreibung</Label>
-              <Textarea value={editForm.beschreibung} onChange={(e) => setEditForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} />
-            </div>
-
-
-            {/* Leistungsort / Durchführungsort */}
-            <div className="border-t pt-4">
-              <div className="flex items-start justify-between mb-1">
-                <Label className="text-base font-semibold block">Leistungsort / Durchführungsort</Label>
-                {editForm.customer_id && (editForm.kunde_adresse || editForm.kunde_plz || editForm.kunde_ort) && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setEditForm(f => ({
-                      ...f,
-                      projekt_adresse: f.kunde_adresse,
-                      projekt_plz: f.kunde_plz,
-                      projekt_ort: f.kunde_ort,
-                      projekt_kontakt_name: f.projekt_kontakt_name || (f.kunde_name || ""),
-                      projekt_kontakt_telefon: f.projekt_kontakt_telefon || (f.kunde_telefon || ""),
-                    }))}
-                  >
-                    Kundenadresse übernehmen
-                  </Button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground mb-3">
-                Adresse, wo die Arbeiten tatsächlich durchgeführt werden. Kann von der Kundenadresse abweichen.
-              </p>
-              <div className="space-y-2">
-                <div>
-                  <Label className="text-xs">Straße + Hausnr.</Label>
-                  <Input
-                    value={editForm.projekt_adresse}
-                    onChange={(e) => setEditForm(f => ({ ...f, projekt_adresse: e.target.value }))}
-                    placeholder="z.B. Hinterleitenweg 19"
-                  />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <Label className="text-xs">PLZ</Label>
-                    <Input
-                      value={editForm.projekt_plz}
-                      onChange={(e) => setEditForm(f => ({ ...f, projekt_plz: e.target.value }))}
-                      placeholder="2733"
-                    />
-                  </div>
-                  <div className="col-span-2">
-                    <Label className="text-xs">Ort</Label>
-                    <Input
-                      value={editForm.projekt_ort}
-                      onChange={(e) => setEditForm(f => ({ ...f, projekt_ort: e.target.value }))}
-                      placeholder="z.B. Schrattenbach"
-                    />
-                  </div>
-                </div>
-                <div className="grid grid-cols-2 gap-2 pt-1">
-                  <div>
-                    <Label className="text-xs">Kontakt vor Ort</Label>
-                    <Input
-                      value={editForm.projekt_kontakt_name}
-                      onChange={(e) => setEditForm(f => ({ ...f, projekt_kontakt_name: e.target.value }))}
-                      placeholder="z.B. Frau Müller"
-                    />
-                  </div>
-                  <div>
-                    <Label className="text-xs">Telefon</Label>
-                    <Input
-                      type="tel"
-                      value={editForm.projekt_kontakt_telefon}
-                      onChange={(e) => setEditForm(f => ({ ...f, projekt_kontakt_telefon: e.target.value }))}
-                      placeholder="+43 664 ..."
-                    />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Kunde */}
-            <div className="border-t pt-4">
               <div className="flex items-center justify-between mb-3">
                 <Label className="text-base font-semibold">Kunde</Label>
                 {editForm.customer_id && <span className="text-xs text-green-600 font-medium">Verknüpft</span>}
@@ -1291,6 +1200,84 @@ const ProjectOverview = () => {
                 </div>
               </div>
             </div>
+            {/* Leistungsort / Durchführungsort */}
+            <div className="border-t pt-4">
+              <div className="flex items-start justify-between mb-1">
+                <Label className="text-base font-semibold block">Leistungsort / Durchführungsort</Label>
+                {/* Ein Klick genügt (Kundenwunsch). Der Knopf hängt NICHT mehr
+                    an einer Kundenverknüpfung — auch bei einem frisch
+                    eingetippten Kunden soll die Adresse übernommen werden. */}
+                {(editForm.kunde_adresse || editForm.kunde_plz || editForm.kunde_ort) && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setEditForm(f => ({
+                      ...f,
+                      projekt_adresse: f.kunde_adresse,
+                      projekt_plz: f.kunde_plz,
+                      projekt_ort: f.kunde_ort,
+                    }))}
+                  >
+                    Adresse vom Kunden übernehmen
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground mb-3">
+                Adresse, wo die Arbeiten tatsächlich durchgeführt werden. Kann von der Kundenadresse abweichen.
+              </p>
+              <div className="space-y-2">
+                <div>
+                  <Label className="text-xs">Straße + Hausnr.</Label>
+                  <Input
+                    value={editForm.projekt_adresse}
+                    onChange={(e) => setEditForm(f => ({ ...f, projekt_adresse: e.target.value }))}
+                    placeholder="z.B. Hinterleitenweg 19"
+                  />
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <Label className="text-xs">PLZ</Label>
+                    <Input
+                      value={editForm.projekt_plz}
+                      onChange={(e) => setEditForm(f => ({ ...f, projekt_plz: e.target.value }))}
+                      placeholder="2733"
+                    />
+                  </div>
+                  <div className="col-span-2">
+                    <Label className="text-xs">Ort</Label>
+                    <Input
+                      value={editForm.projekt_ort}
+                      onChange={(e) => setEditForm(f => ({ ...f, projekt_ort: e.target.value }))}
+                      placeholder="z.B. Schrattenbach"
+                    />
+                  </div>
+                </div>
+                {/* Nur der Name — die Telefonnummer ist auf Kundenwunsch entfallen. */}
+                <div className="pt-1">
+                  <Label className="text-xs">Kontakt vor Ort</Label>
+                  <Input
+                    value={editForm.projekt_kontakt_name}
+                    onChange={(e) => setEditForm(f => ({ ...f, projekt_kontakt_name: e.target.value }))}
+                    placeholder="z.B. Frau Müller"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Projektdaten zuletzt — Kunde und Leistungsort stehen darüber. */}
+            <div className="border-t pt-4 space-y-3">
+              <Label className="text-base font-semibold block">Projektdaten</Label>
+              <div>
+                <Label>Projektname *</Label>
+                <Input value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
+              </div>
+              <div>
+                <Label>Beschreibung</Label>
+                <Textarea value={editForm.beschreibung} onChange={(e) => setEditForm(f => ({ ...f, beschreibung: e.target.value }))} rows={2} />
+              </div>
+            </div>
+
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditDialogOpen(false)}>Abbrechen</Button>

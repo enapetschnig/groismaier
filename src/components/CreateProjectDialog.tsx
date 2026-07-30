@@ -126,13 +126,13 @@ export function CreateProjectDialog({
   // Statuses
   const [projectStatuses, setProjectStatuses] = useState<{ id: string; name: string; is_default: boolean }[]>([]);
 
-  // --- Section 1: Projektdaten ---
+  // --- Projektdaten (in der Maske Abschnitt 3) ---
   const [projectName, setProjectName] = useState(defaultName);
   const [status, setStatus] = useState("");
   const [erfassungsDatum, setErfassungsDatum] = useState(heuteISO());
   const [beschreibung, setBeschreibung] = useState("");
 
-  // --- Section 2: Kunde ---
+  // --- Kunde (in der Maske Abschnitt 1) ---
   // Einheitliche Eingabemaske: customerForm bündelt ALLE Kundendaten (Identität +
   // Kontakt + Adresse + Kundentyp). Dieselbe Datenstruktur wie in Customers.tsx und
   // CustomerSelect.tsx — über `<CustomerForm variant="minimal">` gerendert.
@@ -151,13 +151,12 @@ export function CreateProjectDialog({
     titel: defaultTitel,
   }));
 
-  // --- Section 3: Projektadresse / Leistungsort ---
+  // --- Projektadresse / Leistungsort (in der Maske Abschnitt 2) ---
   const [projektAdresse, setProjektAdresse] = useState("");
   const [projektPlz, setProjektPlz] = useState("");
   const [projektOrt, setProjektOrt] = useState("");
   const [projektLand, setProjektLand] = useState("Österreich");
   const [projektKontaktName, setProjektKontaktName] = useState("");
-  const [projektKontaktTelefon, setProjektKontaktTelefon] = useState("");
   const [zusatzinfos, setZusatzinfos] = useState("");
   const [wegbeschreibung, setWegbeschreibung] = useState("");
 
@@ -198,7 +197,6 @@ export function CreateProjectDialog({
       setProjektOrt("");
       setProjektLand("Österreich");
       setProjektKontaktName("");
-      setProjektKontaktTelefon("");
       setZusatzinfos("");
       setWegbeschreibung("");
       setCreatedProjectId(null);
@@ -406,7 +404,6 @@ export function CreateProjectDialog({
           ort: projektOrt.trim() || null,
           land: projektLand.trim() || null,
           projekt_kontakt_name: projektKontaktName.trim() || null,
-          projekt_kontakt_telefon: projektKontaktTelefon.trim() || null,
           zusatzinfos: zusatzinfos.trim() || null,
           wegbeschreibung: wegbeschreibung.trim() || null,
         } as any)
@@ -657,75 +654,10 @@ export function CreateProjectDialog({
           /* PRE-SAVE: Full project creation form                          */
           /* ============================================================ */
           <div className="space-y-6">
-            {/* ======== Section 1: Projektdaten ======== */}
-            <div className="space-y-3">
-              <Label className="text-base font-semibold border-b pb-1 block">
-                Projektdaten
-              </Label>
-              <div>
-                <Label>Projektname *</Label>
-                <Input
-                  value={projectName}
-                  onChange={(e) => setProjectName(e.target.value)}
-                  placeholder="z.B. Badezimmer Sanierung Müller"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Projektnummer</Label>
-                  <Input
-                    disabled
-                    value="(wird automatisch vergeben)"
-                    className="text-muted-foreground"
-                  />
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <Select
-                    value={status || "none"}
-                    onValueChange={(v) => setStatus(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Status wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projectStatuses.length > 0 ? (
-                        projectStatuses.map((s) => (
-                          <SelectItem key={s.id} value={s.name}>
-                            {s.name}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <>
-                          <SelectItem value="Anfrage">Anfrage</SelectItem>
-                          <SelectItem value="In Arbeit">In Arbeit</SelectItem>
-                          <SelectItem value="Abgeschlossen">Abgeschlossen</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div>
-                <Label>Datum der Erfassung</Label>
-                <Input
-                  type="date"
-                  value={erfassungsDatum}
-                  onChange={(e) => setErfassungsDatum(e.target.value)}
-                />
-              </div>
-              <div>
-                <Label>Beschreibung / Kurzbeschreibung</Label>
-                <Textarea
-                  value={beschreibung}
-                  onChange={(e) => setBeschreibung(e.target.value)}
-                  placeholder="Kurze Projektbeschreibung..."
-                  rows={3}
-                />
-              </div>
-            </div>
-
-            {/* ======== Section 2: Kunde ======== */}
+            {/* ======== Section 1: Kunde ========
+                 Steht bewusst ganz oben (Kundenwunsch: „zuerst der
+                 Kundendialog, der Leistungsort dann darunter") — die
+                 Leistungsort-Übernahme braucht die Kundenadresse. */}
             <div className="space-y-3">
               <div className="flex items-center justify-between">
                 <Label className="text-base font-semibold border-b pb-1 block">
@@ -833,7 +765,7 @@ export function CreateProjectDialog({
               />
             </div>
 
-            {/* ======== Section 3: Projektadresse / Leistungsort ======== */}
+            {/* ======== Section 2: Projektadresse / Leistungsort ======== */}
             <div className="space-y-3">
               <div className="flex items-center justify-between border-b pb-1">
                 <Label className="text-base font-semibold block">
@@ -849,10 +781,9 @@ export function CreateProjectDialog({
                       setProjektPlz(customerForm.plz);
                       setProjektOrt(customerForm.ort);
                       if (!projektKontaktName) setProjektKontaktName(composeCustomerName(customerForm));
-                      if (!projektKontaktTelefon) setProjektKontaktTelefon(customerForm.telefon);
                     }}
                   >
-                    Kundenadresse übernehmen
+                    Adresse vom Kunden übernehmen
                   </Button>
                 )}
               </div>
@@ -879,15 +810,12 @@ export function CreateProjectDialog({
                   <Input value={projektOrt} onChange={(e) => setProjektOrt(e.target.value)} placeholder="z.B. Wien, Graz..." />
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <Label>Kontakt vor Ort</Label>
-                  <Input value={projektKontaktName} onChange={(e) => setProjektKontaktName(e.target.value)} placeholder="z.B. Frau Müller" />
-                </div>
-                <div>
-                  <Label>Telefon</Label>
-                  <Input type="tel" value={projektKontaktTelefon} onChange={(e) => setProjektKontaktTelefon(e.target.value)} placeholder="+43 664 ..." />
-                </div>
+              {/* Nur der Name — die Telefonnummer ist auf Kundenwunsch entfallen
+                  („die Telefonnummer bei Leistungsort und Kontakt vor Ort
+                  brauche ich nicht"); die Nummer steht beim Kunden. */}
+              <div>
+                <Label>Kontakt vor Ort</Label>
+                <Input value={projektKontaktName} onChange={(e) => setProjektKontaktName(e.target.value)} placeholder="z.B. Frau Müller" />
               </div>
               <div>
                 <Label>Land</Label>
@@ -913,6 +841,74 @@ export function CreateProjectDialog({
                   onChange={(e) => setWegbeschreibung(e.target.value)}
                   placeholder="Anfahrt, Google Maps Link..."
                   rows={2}
+                />
+              </div>
+            </div>
+
+            {/* ======== Section 3: Projektdaten ======== */}
+            <div className="space-y-3">
+              <Label className="text-base font-semibold border-b pb-1 block">
+                Projektdaten
+              </Label>
+              <div>
+                <Label>Projektname *</Label>
+                <Input
+                  value={projectName}
+                  onChange={(e) => setProjectName(e.target.value)}
+                  placeholder="z.B. Badezimmer Sanierung Müller"
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label>Projektnummer</Label>
+                  <Input
+                    disabled
+                    value="(wird automatisch vergeben)"
+                    className="text-muted-foreground"
+                  />
+                </div>
+                <div>
+                  <Label>Status</Label>
+                  <Select
+                    value={status || "none"}
+                    onValueChange={(v) => setStatus(v === "none" ? "" : v)}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Status wählen..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {projectStatuses.length > 0 ? (
+                        projectStatuses.map((s) => (
+                          <SelectItem key={s.id} value={s.name}>
+                            {s.name}
+                          </SelectItem>
+                        ))
+                      ) : (
+                        <>
+                          <SelectItem value="Anfrage">Anfrage</SelectItem>
+                          <SelectItem value="In Arbeit">In Arbeit</SelectItem>
+                          <SelectItem value="Abgeschlossen">Abgeschlossen</SelectItem>
+                        </>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div>
+                <Label>Datum der Erfassung</Label>
+                <Input
+                  type="date"
+                  value={erfassungsDatum}
+                  onChange={(e) => setErfassungsDatum(e.target.value)}
+                />
+              </div>
+              <div>
+                <Label>Beschreibung / Kurzbeschreibung</Label>
+                <Textarea
+                  value={beschreibung}
+                  onChange={(e) => setBeschreibung(e.target.value)}
+                  placeholder="Kurze Projektbeschreibung..."
+                  rows={3}
                 />
               </div>
             </div>

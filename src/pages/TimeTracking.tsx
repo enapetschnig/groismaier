@@ -24,6 +24,7 @@ import {
   getTotalWorkingHours
 } from "@/lib/workingHours";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
+import { KOSTENSTELLEN_ICONS } from "@/lib/kostenstellen";
 import { heuteISO } from "@/lib/datum";
 
 type Project = {
@@ -68,13 +69,6 @@ const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
   { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
 ];
-
-const KOSTENSTELLEN_ICONS: Record<string, string> = {
-  baustelle: "🏗️",
-  werkstatt: "🏢",
-  lagerwerkstatt: "🧰",
-  lagerplatz: "📦",
-};
 
 interface TimeBlock {
   id: string;
@@ -1213,8 +1207,13 @@ const TimeTracking = () => {
                                   aria-pressed={active}
                                   onClick={() => updateBlock(block.id, {
                                     kostenstelle: ks.wert,
-                                    // location_type bleibt die grobe Einordnung:
-                                    // Baustelle vs. Firma (alles andere).
+                                    // location_type ist per DB-CHECK auf
+                                    // 'baustelle'/'werkstatt' begrenzt und bleibt
+                                    // die grobe Einordnung. Die feine Zuordnung
+                                    // (Fuhrpark, Maschinen …) steckt in
+                                    // `kostenstelle` — die Auswertungen zeigen
+                                    // seit lib/kostenstellen.ts diese und nicht
+                                    // mehr pauschal „Firma".
                                     locationType: ks.wert === "baustelle" ? "baustelle" : "werkstatt",
                                   })}
                                   className={`flex min-h-[56px] items-center justify-center gap-2 rounded-md border-2 px-3 py-2 text-sm font-medium transition-colors ${

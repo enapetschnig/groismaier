@@ -19,7 +19,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
-import { Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt, Trash2, EyeOff, Eye } from "lucide-react";
+import { User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt, Trash2, EyeOff, Eye } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { format } from "date-fns";
 import { parseDecimal, formatForInput } from "@/lib/num";
@@ -80,10 +80,8 @@ export default function Employees() {
   const zurueck = useZurueck("/");
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null);
-  const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [loading, setLoading] = useState(true);
   const [formData, setFormData] = useState<Partial<Employee>>({});
-  const [newEmployee, setNewEmployee] = useState({ vorname: "", nachname: "", email: "" });
   const [showSizesDialog, setShowSizesDialog] = useState(false);
   const [vehicles, setVehicles] = useState<VehicleOption[]>([]);
   const [profileOptions, setProfileOptions] = useState<ProfileOption[]>([]);
@@ -156,31 +154,6 @@ export default function Employees() {
       setEmployees((data || []).filter((e: any) => !e.user_id || !hiddenIds.has(e.user_id)));
     }
     setLoading(false);
-  };
-
-  const handleCreateEmployee = async (e: React.FormEvent) => {
-    e.preventDefault();
-    
-    try {
-      const { data, error } = await supabase
-        .from("employees")
-        .insert({
-          vorname: newEmployee.vorname,
-          nachname: newEmployee.nachname,
-          email: newEmployee.email || null,
-        })
-        .select()
-        .single();
-
-      if (error) throw error;
-
-      toast({ title: "Erfolg", description: "Mitarbeiter wurde angelegt" });
-      setShowCreateDialog(false);
-      setNewEmployee({ vorname: "", nachname: "", email: "" });
-      fetchEmployees();
-    } catch (error: any) {
-      toast({ title: "Fehler", description: error.message, variant: "destructive" });
-    }
   };
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
@@ -322,12 +295,6 @@ export default function Employees() {
           weil die App keine Sidebar hat. */}
       <KBToolbar onBack={zurueck} title="Mitarbeiter">
         <KBToolbarButton
-          icon={Plus}
-          iconClassName="text-kb-green"
-          label="Neuer Mitarbeiter"
-          onClick={() => setShowCreateDialog(true)}
-        />
-        <KBToolbarButton
           icon={Shirt}
           label="Größen"
           title="Arbeitskleidung- & Schuhgrößen-Übersicht"
@@ -349,11 +316,17 @@ export default function Employees() {
         <div className="kb-panel p-8 text-center">
           <User className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
           <p className="mb-1 text-lg font-semibold">Noch keine Mitarbeiter</p>
+          {/* Mitarbeiter werden nicht mehr von Hand angelegt: Sie registrieren
+              sich selbst, der Stammdatensatz entsteht bei der Freischaltung
+              (Migration 20260730120000). Hier steht deshalb nur der Weg dorthin. */}
           <p className="mb-4 text-sm text-muted-foreground">
-            Lege deine Mitarbeiter an, um Stundenlohn, Standard-Fahrzeug und Dokumente zu pflegen.
+            Mitarbeiter registrieren sich selbst unter{" "}
+            <span className="font-medium">groismaier.handwerkapp.at</span>. Sobald du sie im
+            Admin-Bereich freischaltest, erscheinen sie hier und du kannst Stundenlohn,
+            Standard-Fahrzeug und Dokumente pflegen.
           </p>
-          <Button className="h-11" onClick={() => setShowCreateDialog(true)}>
-            <Plus className="mr-2 h-4 w-4" /> Mitarbeiter anlegen
+          <Button variant="outline" className="h-11" onClick={() => navigate("/admin")}>
+            Zum Admin-Bereich
           </Button>
         </div>
       )}
@@ -834,44 +807,6 @@ export default function Employees() {
               </div>
             </TabsContent>
           </Tabs>
-        </DialogContent>
-      </Dialog>
-
-      {/* Create-Dialog */}
-      <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Neuer Mitarbeiter</DialogTitle>
-          </DialogHeader>
-          <form onSubmit={handleCreateEmployee} className="space-y-4">
-            <div>
-              <Label>Vorname *</Label>
-              <Input
-                value={newEmployee.vorname}
-                onChange={(e) => setNewEmployee({ ...newEmployee, vorname: e.target.value })}
-                required
-              />
-            </div>
-            <div>
-              <Label>Nachname *</Label>
-              <Input
-                value={newEmployee.nachname}
-                onChange={(e) => setNewEmployee({ ...newEmployee, nachname: e.target.value })}
-                required
-              />
-            </div>
-            <div>
-              <Label>E-Mail (optional)</Label>
-              <Input
-                type="email"
-                value={newEmployee.email}
-                onChange={(e) => setNewEmployee({ ...newEmployee, email: e.target.value })}
-              />
-            </div>
-            <Button type="submit" className="w-full">
-              Mitarbeiter anlegen
-            </Button>
-          </form>
         </DialogContent>
       </Dialog>
 

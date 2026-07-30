@@ -14,6 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { useKostenstellen } from "@/hooks/useKostenstellen";
 
 type TimeEntry = {
   id: string;
@@ -24,6 +25,8 @@ type TimeEntry = {
   end_time: string | null;
   pause_minutes: number | null;
   location_type: string;
+  /** Feine Kostenstelle — location_type kennt nur Baustelle/Firma. */
+  kostenstelle?: string | null;
   notizen: string | null;
   projects: { name: string; plz: string } | null;
   project_id: string | null;
@@ -33,6 +36,8 @@ type TimeEntry = {
 
 const MyHours = () => {
   const navigate = useNavigate();
+  // Kostenstellen-Beschriftungen (Fuhrpark, Maschinen …) statt nur „Firma".
+  const { anzeige: kostenstelleAnzeigen } = useKostenstellen();
   const zurueck = useZurueck("/");
   const { toast } = useToast();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -344,7 +349,7 @@ const MyHours = () => {
                         <div key={entry.id} className="flex items-start gap-2 pt-2">
                           <div className="min-w-0 flex-1 text-sm">
                             <p className="flex flex-wrap items-center gap-1.5">
-                              <span>{entry.location_type === "werkstatt" ? "🏢 Firma" : "🏗️ Baustelle"}</span>
+                              <span>{kostenstelleAnzeigen(entry.kostenstelle, entry.location_type)}</span>
                               {entry.nachgetragen_von && (
                                 <span className="inline-flex items-center rounded border border-amber-400 bg-amber-50 px-1 py-0 text-[9px] text-amber-700">
                                   nachgetragen
@@ -421,7 +426,7 @@ const MyHours = () => {
                               ) : null}
                               <TableCell className="text-sm">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <span>{entry.location_type === 'werkstatt' ? '🏢 Firma' : '🏗️ Baustelle'}</span>
+                                  <span>{kostenstelleAnzeigen(entry.kostenstelle, entry.location_type)}</span>
                                   {entry.nachgetragen_von && (
                                     <span
                                       className="inline-flex items-center px-1 py-0 text-[9px] rounded border border-amber-400 text-amber-700 bg-amber-50"

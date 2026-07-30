@@ -565,7 +565,7 @@ export default function Index() {
             )}
             <KBButton className="w-full" icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
             {canView("fahrzeuge") && (
-              <KBButton className="w-full" icon={Truck} label="Fahrzeuge" onClick={() => navigate("/fahrzeuge")} />
+              <KBButton className="w-full" icon={Truck} label="KFZ-Manager" onClick={() => navigate("/fahrzeuge")} />
             )}
             <KBButton className="w-full" icon={BarChart3} label="Meine Stunden" onClick={() => navigate("/my-hours")} />
             {/* Auch der Chef bucht eigene Stunden und hat eigene Dokumente —

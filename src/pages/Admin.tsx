@@ -31,11 +31,10 @@ import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings"
 import { MahnungSettings } from "@/components/admin/MahnungSettings";
 import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings";
 import { ConfigOptionsManager } from "@/components/admin/ConfigOptionsManager";
-import { VehicleManager } from "@/components/admin/VehicleManager";
 import { PermissionMatrix } from "@/components/admin/PermissionMatrix";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { useConfigOptions } from "@/hooks/useConfigOptions";
-import { Cloud, AlertTriangle, Truck, Briefcase, HardHat } from "lucide-react";
+import { Truck } from "lucide-react";
 
 type Profile = {
   id: string;
@@ -1336,14 +1335,37 @@ export default function Admin() {
 
           {/* ===== TAB 5: KONFIGURATION ===== */}
           <TabsContent value="konfiguration" className="space-y-6">
-            <ConfigOptionsManager kategorie="wetter" title="Wetter-Optionen" description="Wetteroptionen für Bautagesberichte" icon={<Cloud className="h-5 w-5" />} showFarbe />
-            <ConfigOptionsManager kategorie="prioritaet" title="Prioritäten" description="Prioritätsstufen für Projekte" icon={<AlertTriangle className="h-5 w-5" />} showFarbe />
+            {/* Entfernt (Kundenwunsch): Wetter-Optionen, Prioritäten, Firma
+                intern und Firma extern. Alle vier stammten aus einer anderen
+                Betriebssoftware (die Listen enthielten fremde Firmennamen),
+                wurden in dieser App nirgends verwendet und standen nur in der
+                Konfiguration herum. */}
             <ConfigOptionsManager kategorie="taetigkeit" title="Tätigkeiten (Zeiterfassung)" description="Auswahlliste für das Tätigkeits-Feld bei Stundenbuchungen" icon={<Clock className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="kostenstelle" title="Kostenstellen (Zeiterfassung)" description="Auf welche Kostenstelle Stunden gebucht werden (Baustelle, Werkstatt, Lagerplatz …)" icon={<Clock className="h-5 w-5" />} />
-            <ConfigOptionsManager kategorie="firma_intern" title="Firma intern (Ersttermin)" description="Auswahl interner Firmen/Bereiche bei Ersttermin-Protokollen" icon={<Briefcase className="h-5 w-5" />} />
-            <ConfigOptionsManager kategorie="firma_extern" title="Firma extern (Ersttermin)" description="Auswahl externer Firmen/Subunternehmer bei Ersttermin-Protokollen" icon={<HardHat className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="kunde_herkunft" title="Kunde — Herkunft" description="Über welche Quelle ist der Kunde zu uns gekommen (Empfehlung, Google, Messe …)" icon={<UserPlus className="h-5 w-5" />} />
-            <VehicleManager />
+
+            {/* Der frühere VehicleManager stand hier als ZWEITE, abgespeckte
+                Fahrzeugmaske — ohne Art (Fahrzeug/Maschine), ohne Kostenstelle,
+                ohne Pickerl und ohne Kosten. Zwei Masken für dieselbe Tabelle
+                führen zwangsläufig zu „warum fehlt das Feld hier?". Deshalb nur
+                noch der Verweis auf den KFZ-Manager, der alles kann. */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Truck className="h-5 w-5" />
+                  Fahrzeuge & Maschinen
+                </CardTitle>
+                <CardDescription>
+                  Fahrzeuge, Maschinen, Pickerl-Termine, Kostenstellen und Kosten werden
+                  im KFZ-Manager gepflegt.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button variant="outline" onClick={() => navigate("/fahrzeuge")}>
+                  <Truck className="mr-2 h-4 w-4" /> KFZ-Manager öffnen
+                </Button>
+              </CardContent>
+            </Card>
           </TabsContent>
 
           {/* ===== TAB 6: BERECHTIGUNGEN ===== */}
