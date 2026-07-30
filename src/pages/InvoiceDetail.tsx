@@ -64,6 +64,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getDocConfig, interpolateText } from "@/lib/documentTypes";
+import { belegSummen } from "@/lib/belegSummen";
 import { PriceAdjustDialog } from "@/components/PriceAdjustDialog";
 import { type AdjustLine } from "@/lib/priceAdjust";
 import { EXECUTING_COMPANIES } from "@/lib/executingCompanies";
@@ -2552,17 +2553,25 @@ export default function InvoiceDetail() {
   // und werden separat verrechnet, damit die MwSt der Anzahlung nicht mit
   // dem aktuellen Satz neu berechnet wird.
   const r2 = (v: number) => Math.round(v * 100) / 100;
-  const exemptBrutto = r2(items.filter(it => it.mwst_exempt).reduce((sum, it) => sum + Number(it.gesamtpreis || 0), 0));
-  const positionenNetto = r2(items.filter(it => !it.mwst_exempt).reduce((sum, it) => sum + Number(it.gesamtpreis || 0), 0));
-  const rabattWert = r2(form.rabatt_prozent > 0
-    ? positionenNetto * (form.rabatt_prozent / 100)
-    : form.rabatt_betrag);
-  const nettoSumme = r2(positionenNetto - rabattWert);
+  // Gerechnet wird in src/lib/belegSummen.ts — DERSELBE Kern, den auch der
+  // PDF-Erzeuger benutzt und der in belegSummen.test.ts geprueft ist. Vorher
+  // rechneten Editor und PDF getrennt; genau daraus entstand die doppelt
+  // gedruckte Rechnungssumme.
+  const summen = belegSummen(items as any, {
+    mwst_satz: form.mwst_satz,
+    rabatt_prozent: form.rabatt_prozent,
+    rabatt_betrag: form.rabatt_betrag,
+    reverse_charge: (form as any).reverse_charge,
+  });
+  const exemptBrutto = summen.exemptBrutto;
+  const positionenNetto = summen.positionenNetto;
+  const rabattWert = summen.rabattWert;
+  const nettoSumme = summen.nettoSumme;
   // Bei Reverse Charge (§ 19 Abs. 1a) schuldet der Empfänger die USt — wir
   // weisen keine USt aus, der Rechnungsbetrag = Netto (konsistent mit dem PDF
   // und dem Zahlungsabgleich).
-  const mwstBetrag = (form as any).reverse_charge ? 0 : r2(nettoSumme * (form.mwst_satz / 100));
-  const bruttoSumme = r2(nettoSumme + mwstBetrag + exemptBrutto);
+  const mwstBetrag = summen.mwstBetrag;
+  const bruttoSumme = summen.bruttoSumme;
   const restBetrag = r2(bruttoSumme - form.bezahlt_betrag);
 
   // ── Verdienst (intern) ────────────────────────────────────────────────────

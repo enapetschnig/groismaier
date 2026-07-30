@@ -41,7 +41,18 @@ export interface MaterialRow {
   lmPerQm: number;    // calc-Modus: Laufmeter pro m²
   dimension: number;  // calc-Modus: Breite b in cm
   dimension2: number; // calc-Modus: Höhe h in cm
+  /**
+   * Mengeneinheit des gewählten Katalogartikels (z.B. "m²", "m³", "lfm").
+   * Nur zur Plausibilitätsprüfung — die Rechnung selbst bleibt unverändert.
+   * Ohne sie konnte ein Artikel mit €/m³ (BSH, KVH, Platten) unbemerkt als
+   * €/m² Aufbaufläche einfließen; bei 668,25 €/m³ ist das Faktor-Unsinn.
+   */
+  einheit?: string;
 }
+
+/** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten). */
+export const istVolumenEinheit = (einheit: string | null | undefined): boolean =>
+  /^\s*(m3|m³|fm|rm|srm)\s*$/i.test(String(einheit || ""));
 
 export interface KalkModule {
   id: number;
@@ -373,6 +384,12 @@ export function wandhoeheWarnung(wandhoehe: number, bd: Betriebsdaten): string |
 // ----------------------------------------------------------------------------
 
 export interface MaterialRowErgebnis {
+  /**
+   * true: Der Artikel ist nach Volumen bepreist (€/m³), die Zeile rechnet ihn
+   * aber als €/m² Aufbaufläche. Die App kann das Volumen nicht kennen — dafür
+   * gibt es den Modus „Holz berechnen". Die Maske warnt an dieser Zeile.
+   */
+  einheitUnpassend?: boolean;
   /** €/m² Aufbaufläche (nur DB-Modus; 0 bei manuell/berechnet) */
   ekProM2: number;
   vkProM2: number;
@@ -455,7 +472,16 @@ export function calcMaterialRow(
     return { ...leer, ekProM2: dicke * ekRoh, vkProM2: dicke * vkBasis, vkAbgeleitet: abgeleitet };
   }
   const { vk, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
-  return { ...leer, ekProM2: num(row.ekPrice), vkProM2: vk, vkAbgeleitet: abgeleitet };
+  return {
+    ...leer,
+    ekProM2: num(row.ekPrice),
+    vkProM2: vk,
+    vkAbgeleitet: abgeleitet,
+    // Volumen-Artikel (BSH, KVH, Platten …) landen hier als €/m² Aufbau-
+    // flaeche. Die Betraege bleiben unveraendert — die Maske weist darauf hin,
+    // damit der Anwender auf "Holz berechnen" umstellt.
+    einheitUnpassend: istVolumenEinheit(row.einheit),
+  };
 }
 
 /**

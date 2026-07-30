@@ -206,6 +206,9 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     // (deckt "???"-Artikel ohne Preis und den editierbaren Riegel-m³-Preis ab).
     onPatchRow(idx, {
       product: artikelName, ekPrice: num(art?.ek), vkPrice: num(art?.vk),
+      // Einheit mitnehmen: Nur damit kann die Kalkulation merken, dass ein
+      // nach m³ bepreister Artikel als €/m² Aufbauflaeche eingesetzt wird.
+      einheit: art?.einheit || "",
       actualVK: artikelName === row.product ? row.actualVK : null,
     });
   };
@@ -300,6 +303,16 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       {row.manual && r.artFrei && (
         <div className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-800">
           <NeuBadge /> steht noch nicht im Katalog
+        </div>
+      )}
+      {/* Volumen-Artikel als €/m² Aufbauflaeche — die App kann das Volumen
+          nicht kennen, dafuer gibt es den Modus "Holz berechnen". Ohne diesen
+          Hinweis wanderte z.B. BSH mit 668,25 €/m³ als 668,25 €/m² ins
+          Angebot. */}
+      {r.erg.einheitUnpassend && (
+        <div className="mt-0.5 text-[10px] font-semibold text-amber-700">
+          Artikel ist nach {row.einheit} bepreist, wird hier aber als € / m² Aufbaufläche
+          gerechnet — bitte „Holz berechnen" verwenden oder den Preis je m² eintragen.
         </div>
       )}
       {r.warnung && <div className="mt-0.5 text-[10px] font-semibold text-amber-700">{r.warnung}</div>}
