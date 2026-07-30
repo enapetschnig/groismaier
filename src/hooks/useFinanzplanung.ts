@@ -71,10 +71,12 @@ export function useFinanzplanung() {
   const [invoices, setInvoices] = useState<any[]>([]);
   const [zahlungen, setZahlungen] = useState<any[]>([]);
   const [eingangsrechnungen, setEingangsrechnungen] = useState<any[]>([]);
+  /** AfA-Katalog (Nutzungsdauern) — Auswahlhilfe in der Investitionsmaske. */
+  const [afaSaetze, setAfaSaetze] = useState<{ id: string; anlagenbeschreibung: string; nutzungsdauer: number }[]>([]);
 
   const reload = useCallback(async () => {
     const t = (name: string) => (supabase.from(name as never) as any);
-    const [set, kat, wer, kre, ans, per, bv, inv, zah, er] = await Promise.all([
+    const [set, kat, wer, kre, ans, per, bv, inv, zah, er, afa] = await Promise.all([
       supabase.from("app_settings").select("key, value").like("key", "finanz\\_%"),
       t("finanz_kategorien").select("*").order("bereich").order("sort"),
       t("finanz_werte").select("*"),
@@ -88,6 +90,7 @@ export function useFinanzplanung() {
       supabase.from("invoice_payments").select("invoice_id, betrag, datum"),
       supabase.from("purchase_invoices")
         .select("id, lieferant, rechnungsdatum, faellig_am, bezahlt_am, betrag_netto, kategorie, status"),
+      t("afa_saetze").select("id, anlagenbeschreibung, nutzungsdauer").order("anlagenbeschreibung"),
     ]);
     const s: Record<string, string> = {};
     for (const row of set.data || []) s[row.key] = row.value;
@@ -101,6 +104,7 @@ export function useFinanzplanung() {
     setInvoices(((inv.data as any[]) || []).filter((i) => i.status !== "storniert"));
     setZahlungen((zah.data as any[]) || []);
     setEingangsrechnungen((er.data as any[]) || []);
+    setAfaSaetze((afa.data as any[]) || []);
     setLoading(false);
   }, []);
 
@@ -405,7 +409,7 @@ export function useFinanzplanung() {
 
   return {
     loading, reload, settings, basisJahr, planJahre, jahre, anzahlMonate, staffel,
-    kategorien, werte, kredite, anschaffungen, personal, pipeline,
+    kategorien, werte, kredite, anschaffungen, personal, pipeline, afaSaetze,
     reihen, guvJeJahr, liquiditaetSoll, liquiditaetIst, anfangsbestand,
     warnschwelle: Number(settings.finanz_liq_warnschwelle) || 0,
   };
