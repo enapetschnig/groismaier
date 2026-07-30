@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { AlertTriangle, FileCheck2, FileText, Home, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
+import { AlertTriangle, FileCheck2, FileText, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -640,6 +640,7 @@ export default function KalkulationEditor() {
     <div className="kb-page min-h-screen pb-10">
       <KBToolbar
         onBack={() => { persist({ silent: true }); zurueck(); }}
+        onHome={() => { persist({ silent: true }); navigate("/"); }}
         title={name || "Kalkulation"}
         rightActions={
           <div className="flex items-center gap-2">
@@ -654,9 +655,6 @@ export default function KalkulationEditor() {
             Bildschirmrand laufen) — dort steht stattdessen die Aktionsleiste
             unter der Toolbar. */}
         <div className="hidden flex-wrap items-center gap-2 sm:flex">
-          <KBButton icon={Home} label="Hauptmenü"
-            onClick={() => { persist({ silent: true }); navigate("/"); }}
-            title="Speichert und wechselt zur Startmaske" />
           <KBButton icon={LayoutTemplate} label="Als Vorlage speichern"
             onClick={() => { setVorlageName(name); setVorlageOpen(true); }} />
           <KBButton icon={PackagePlus} label="In Katalog übernehmen" badge={freiePositionen.length}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
@@ -11,6 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Plus, Printer, FileDown, Search as SearchIcon, ArrowLeft, Save } from "lucide-react";
 import { toNumber, clamp } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
+import { getDocConfig } from "@/lib/documentTypes";
+import { kettenIndex, kettenSummen, offenerBetrag, type KettenBeleg } from "@/lib/belegkette";
+import { ChevronDown, ChevronRight } from "lucide-react";
 
 /**
  * Offene Posten — KingBill 1:1 (Screenshot-Vorlage):
@@ -43,6 +47,7 @@ interface OpRow {
   mwst_betrag: number;
   brutto_summe: number;
   bezahlt_betrag: number;
+  parent_invoice_id: string | null;
 }
 
 interface Buchung { id: string; datum: string; betrag: number; notizen: string | null; }
@@ -59,6 +64,9 @@ export default function OffenePosten() {
   const { toast } = useToast();
 
   const [rows, setRows] = useState<OpRow[]>([]);
+  /** Alle Belege (auch AN/AB/LS/Gutschrift) — Grundlage der Kettenansicht. */
+  const [alleBelege, setAlleBelege] = useState<OpRow[]>([]);
+  const [aufgeklappt, setAufgeklappt] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [suche, setSuche] = useState("");
   const [nurOffene, setNurOffene] = useState(true);
@@ -72,7 +80,7 @@ export default function OffenePosten() {
   const [buchungen, setBuchungen] = useState<Buchung[]>([]);
   const [mahnstufeNeu, setMahnstufeNeu] = useState("0");
   const [naechsteMahnung, setNaechsteMahnung] = useState("");
-  const [bDatum, setBDatum] = useState(new Date().toISOString().slice(0, 10));
+  const [bDatum, setBDatum] = useState(heuteISO());
   const [bEingang, setBEingang] = useState("");
   const [bSpesen, setBSpesen] = useState("");
   const [bSkonto, setBSkonto] = useState("");
@@ -85,24 +93,38 @@ export default function OffenePosten() {
 
   const lade = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("invoices")
-      .select("id, typ, nummer, status, betreff, kunde_name, kundennummer, kunde_telefon, datum, faellig_am, naechste_mahnung_am, mahnstufe, netto_summe, mwst_betrag, brutto_summe, bezahlt_betrag")
-      .in("typ", ZAHLBARE_TYPEN)
-      .neq("status", "storniert")
-      .order("faellig_am", { ascending: true });
-    if (error) {
-      toast({ variant: "destructive", title: "Fehler", description: error.message });
-    } else {
-      setRows(((data as any[]) || []).map((d) => ({
-        ...d,
-        mahnstufe: Number(d.mahnstufe) || 0,
-        netto_summe: Number(d.netto_summe) || 0,
-        mwst_betrag: Number(d.mwst_betrag) || 0,
-        brutto_summe: Number(d.brutto_summe) || 0,
-        bezahlt_betrag: Number(d.bezahlt_betrag) || 0,
-      })));
+    // ALLE Belegarten laden, nicht nur Rechnungen: Die Kettenansicht je Zeile
+    // zeigt auch Angebot/AB/Lieferschein desselben Auftrags. Blockweise, weil
+    // PostgREST sonst still bei 1000 Zeilen kappt.
+    const alle: any[] = [];
+    for (let von = 0; ; von += 1000) {
+      const { data, error } = await supabase
+        .from("invoices")
+        .select("id, typ, nummer, status, betreff, kunde_name, kundennummer, kunde_telefon, datum, faellig_am, naechste_mahnung_am, mahnstufe, netto_summe, mwst_betrag, brutto_summe, bezahlt_betrag, parent_invoice_id")
+        .or("archiviert.is.null,archiviert.eq.false")
+        // id als Tiebreaker: Bei gleichem faellig_am (oder NULL) können sich
+        // 1000er-Blöcke sonst überlappen bzw. Zeilen auslassen.
+        .order("faellig_am", { ascending: true })
+        .order("id", { ascending: true })
+        .range(von, von + 999);
+      if (error) {
+        toast({ variant: "destructive", title: "Fehler", description: error.message });
+        setLoading(false);
+        return;
+      }
+      alle.push(...((data as any[]) || []));
+      if (!data || data.length < 1000) break;
     }
+    const belege = alle.map((d) => ({
+      ...d,
+      mahnstufe: Number(d.mahnstufe) || 0,
+      netto_summe: Number(d.netto_summe) || 0,
+      mwst_betrag: Number(d.mwst_betrag) || 0,
+      brutto_summe: Number(d.brutto_summe) || 0,
+      bezahlt_betrag: Number(d.bezahlt_betrag) || 0,
+    }));
+    setAlleBelege(belege);
+    setRows(belege.filter((d) => ZAHLBARE_TYPEN.includes(d.typ) && d.status !== "storniert"));
     setLoading(false);
   };
   useEffect(() => { void lade(); }, []);
@@ -125,17 +147,29 @@ export default function OffenePosten() {
     return base;
   }, [rows, nurOffene, datumFilterAn, datumVon, datumBis, suche]);
 
+  // Kettenzugehörigkeit über ALLE Belege (auch AN/AB), gruppiert je Wurzel.
+  const ketten = useMemo(() => kettenIndex(alleBelege as unknown as KettenBeleg[]), [alleBelege]);
+  const wurzelJeBeleg = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const [wurzel, glieder] of ketten) for (const g of glieder) m.set((g as any).id, wurzel);
+    return m;
+  }, [ketten]);
+  const ketteVon = (r: OpRow): OpRow[] =>
+    ((ketten.get(wurzelJeBeleg.get(r.id) || r.id) as unknown as OpRow[]) || [r]);
+
   const sel = rows.find((r) => r.id === selectedId) || null;
   const brauchtAuswahl = () =>
     toast({ title: "Keine Rechnung markiert", description: "Bitte zuerst eine Zeile in der Liste anklicken." });
 
-  const offenVon = (r: OpRow) => r2(r.brutto_summe - r.bezahlt_betrag);
+  // Status „bezahlt" = ausgeglichen, auch wenn ein Skonto den Eingang unter
+  // das Brutto drückt — sonst steht der Skontobetrag ewig als „offen".
+  const offenVon = (r: OpRow) => offenerBetrag(r as KettenBeleg);
 
   const oeffneBuchen = async (row: OpRow) => {
     setSelectedId(row.id);
     setMahnstufeNeu(String(row.mahnstufe));
     setNaechsteMahnung(row.naechste_mahnung_am || "");
-    setBDatum(new Date().toISOString().slice(0, 10));
+    setBDatum(heuteISO());
     setBEingang(""); setBSpesen(""); setBSkonto(""); setBKommentar("");
     const { data } = await supabase
       .from("invoice_payments")
@@ -188,9 +222,15 @@ export default function OffenePosten() {
         const neuBezahlt = r2(sel.bezahlt_betrag + eingang);
         const restNachSkonto = r2(sel.brutto_summe - neuBezahlt - skonto);
         const neuStatus = restNachSkonto <= 0.005 ? "bezahlt" : neuBezahlt > 0 ? "teilbezahlt" : sel.status;
+        // Vollzahlung beendet das Mahnverfahren — sonst trägt die bezahlte
+        // Rechnung dauerhaft „2. Mahnung" (Audit-Befund).
         const { error: sErr } = await supabase
           .from("invoices")
-          .update({ bezahlt_betrag: neuBezahlt, status: neuStatus })
+          .update({
+            bezahlt_betrag: neuBezahlt,
+            status: neuStatus,
+            ...(neuStatus === "bezahlt" ? { mahnstufe: 0, naechste_mahnung_am: null } : {}),
+          } as any)
           .eq("id", sel.id);
         if (sErr) throw sErr;
       }
@@ -208,7 +248,7 @@ export default function OffenePosten() {
     const kopf = ["Status", "Mahnstatus", "Faelligkeitsdatum", "Datum", "Naechste Mahnung am", "Betreff", "Kundennummer", "Kunde", "Telefon", "Summe Netto", "Summe MwSt", "Summe Brutto", "Offen"];
     const zeilen = gefiltert.map((r) => [
       r.status, r.mahnstufe, r.faellig_am || "", r.datum, r.naechste_mahnung_am || "",
-      (r.betreff || `${r.typ === "rechnung" ? "Rechnung" : r.typ} ${r.nummer}`).replace(/;/g, ","),
+      (r.betreff || `${getDocConfig(r.typ).label} ${r.nummer}`).replace(/;/g, ","),
       r.kundennummer || "", r.kunde_name.replace(/;/g, ","), r.kunde_telefon || "",
       r.netto_summe.toFixed(2), r.mwst_betrag.toFixed(2), r.brutto_summe.toFixed(2), offenVon(r).toFixed(2),
     ]);
@@ -233,13 +273,12 @@ export default function OffenePosten() {
     setEingaengeOpen(true);
   };
 
-  const summen = useMemo(() => ({
-    anzahl: gefiltert.length,
-    netto: gefiltert.reduce((s, r) => s + r.netto_summe, 0),
-    mwst: gefiltert.reduce((s, r) => s + r.mwst_betrag, 0),
-    brutto: gefiltert.reduce((s, r) => s + r.brutto_summe, 0),
-    offen: gefiltert.reduce((s, r) => s + offenVon(r), 0),
-  }), [gefiltert]);
+  // Netto/MwSt über die Kettenlogik: Anzahlungen, deren Schlussrechnung
+  // mitgezählt wird, dürfen nicht doppelt in die Summe (Audit-Befund).
+  const summen = useMemo(() => {
+    const ks = kettenSummen(gefiltert as unknown as KettenBeleg[]);
+    return { anzahl: gefiltert.length, ...ks };
+  }, [gefiltert]);
 
   return (
     <div className="kb-page min-h-screen">
@@ -305,7 +344,9 @@ export default function OffenePosten() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-8"><span className="sr-only">Belegkette</span></TableHead>
                     <TableHead className="w-12">Status</TableHead>
+                    <TableHead>Typ</TableHead>
                     <TableHead>Mahnstatus</TableHead>
                     <TableHead>Fälligkeitsdatum</TableHead>
                     <TableHead>Datum</TableHead>
@@ -322,20 +363,43 @@ export default function OffenePosten() {
                 </TableHeader>
                 <TableBody>
                   {loading ? (
-                    <TableRow><TableCell colSpan={13} className="p-6 text-center text-muted-foreground">Lädt …</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={15} className="p-6 text-center text-muted-foreground">Lädt …</TableCell></TableRow>
                   ) : gefiltert.length === 0 ? (
-                    <TableRow><TableCell colSpan={13} className="p-6 text-center text-muted-foreground">Keine offenen Posten.</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={15} className="p-6 text-center text-muted-foreground">Keine offenen Posten.</TableCell></TableRow>
                   ) : (
                     gefiltert.map((r) => {
                       const selektiert = selectedId === r.id;
-                      const ueberfaellig = r.faellig_am && r.faellig_am < new Date().toISOString().slice(0, 10) && offenVon(r) > 0.005;
+                      const ueberfaellig = r.faellig_am && r.faellig_am < heuteISO() && offenVon(r) > 0.005;
+                      const kette = ketteVon(r);
+                      const hatKette = kette.length > 1;
+                      const offen = aufgeklappt.has(r.id);
                       return (
+                        <Fragment key={r.id}>
                         <TableRow
-                          key={r.id}
                           className={`cursor-pointer ${selektiert ? "bg-[#FFF3B8] hover:bg-[#FFEE9E]" : "hover:bg-muted/50"}`}
                           onClick={() => setSelectedId(r.id)}
                           onDoubleClick={() => void oeffneBuchen(r)}
                         >
+                          <TableCell className="w-8">
+                            {hatKette && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAufgeklappt((prev) => {
+                                    const n = new Set(prev);
+                                    if (n.has(r.id)) n.delete(r.id); else n.add(r.id);
+                                    return n;
+                                  });
+                                }}
+                                onDoubleClick={(e) => e.stopPropagation()}
+                                title={offen ? "Belegkette einklappen" : `Belegkette zeigen (${kette.length} Belege)`}
+                                aria-label="Belegkette zeigen"
+                              >
+                                {offen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                              </button>
+                            )}
+                          </TableCell>
                           <TableCell>
                             <span
                               className={`block h-3 w-3 rounded-full border border-black/10 ${
@@ -344,11 +408,16 @@ export default function OffenePosten() {
                               title={r.status}
                             />
                           </TableCell>
+                          <TableCell>
+                            <span className="rounded border border-border bg-muted px-1.5 py-0.5 text-[11px] font-semibold" title={getDocConfig(r.typ).label}>
+                              {getDocConfig(r.typ).shortLabel}
+                            </span>
+                          </TableCell>
                           <TableCell className="tabular-nums">{r.mahnstufe}</TableCell>
                           <TableCell className="whitespace-nowrap">{fmtDat(r.faellig_am)}</TableCell>
                           <TableCell className="whitespace-nowrap">{fmtDat(r.datum)}</TableCell>
                           <TableCell className="whitespace-nowrap">{fmtDat(r.naechste_mahnung_am)}</TableCell>
-                          <TableCell className="max-w-[16rem] truncate font-medium">{r.betreff?.trim() || `Rechnung ${r.nummer}`}</TableCell>
+                          <TableCell className="max-w-[16rem] truncate font-medium">{r.betreff?.trim() || `${getDocConfig(r.typ).label} ${r.nummer}`}</TableCell>
                           <TableCell className="font-mono text-xs text-muted-foreground">{r.kundennummer || ""}</TableCell>
                           <TableCell className="max-w-[12rem] truncate">{r.kunde_name}</TableCell>
                           <TableCell className="hidden text-muted-foreground xl:table-cell">{r.kunde_telefon || ""}</TableCell>
@@ -359,6 +428,44 @@ export default function OffenePosten() {
                             {eur(offenVon(r))}
                           </TableCell>
                         </TableRow>
+                        {offen && hatKette && (
+                          <TableRow className="bg-muted/30 hover:bg-muted/30">
+                            <TableCell colSpan={15} className="p-0">
+                              {/* Alles, was zu diesem Auftrag gehört — auch Angebot,
+                                  AB und Lieferschein, jeweils anklickbar. */}
+                              <div className="px-10 py-2">
+                                <p className="mb-1 text-[11px] font-semibold text-muted-foreground">
+                                  Belegkette — gehört zu diesem Auftrag:
+                                </p>
+                                <div className="divide-y divide-border/60 rounded border border-border bg-card">
+                                  {[...kette].sort((a, b) => (a.datum || "").localeCompare(b.datum || "")).map((g) => {
+                                    const cfg = getDocConfig(g.typ);
+                                    const gOffen = offenerBetrag(g as KettenBeleg);
+                                    return (
+                                      <button
+                                        key={g.id}
+                                        type="button"
+                                        className={`flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-2 py-1.5 text-left text-sm hover:bg-muted/50 ${g.id === r.id ? "bg-[#FFF9DC]" : ""}`}
+                                        onClick={() => navigate(`/invoices/${g.id}`)}
+                                        title={`${cfg.label} ${g.nummer} öffnen`}
+                                      >
+                                        <span className="w-9 rounded border border-border bg-muted px-1 text-center text-[11px] font-semibold">{cfg.shortLabel}</span>
+                                        <span className="font-mono text-xs">{g.nummer}</span>
+                                        <span className="whitespace-nowrap text-xs text-muted-foreground">{fmtDat(g.datum)}</span>
+                                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{g.status}</span>
+                                        <span className="tabular-nums">€ {eur(g.brutto_summe)}</span>
+                                        <span className={`w-28 text-right tabular-nums ${gOffen > 0.005 ? "font-medium text-orange-700" : "text-green-700"}`}>
+                                          {ZAHLBARE_TYPEN.includes(g.typ) ? `offen € ${eur(gOffen)}` : "—"}
+                                        </span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                        </Fragment>
                       );
                     })
                   )}

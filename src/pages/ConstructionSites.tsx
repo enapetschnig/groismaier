@@ -15,8 +15,9 @@
  * frühere Einstieg Dashboard.tsx ist in App.tsx nicht mehr geroutet).
  */
 import { useEffect, useState } from "react";
-import { Building2, MapPin, Home, FolderKanban } from "lucide-react";
+import { Building2, MapPin, FolderKanban } from "lucide-react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 
@@ -32,6 +33,8 @@ type Site = {
 
 const ConstructionSites = () => {
   const navigate = useNavigate();
+  // Zurück über den Verlauf; beim Direkteinstieg (PWA) zur Startmaske.
+  const zurueck = useZurueck("/");
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,18 +57,7 @@ const ConstructionSites = () => {
     <div className="kb-page min-h-screen">
       <KBToolbar
         title="Baustellen"
-        onBack={() => navigate(-1)}
-        rightActions={
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            aria-label="Zur Startmaske"
-            title="Zur Startmaske"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-          >
-            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-          </button>
-        }
+        onBack={zurueck}
       >
         <KBToolbarButton icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
       </KBToolbar>

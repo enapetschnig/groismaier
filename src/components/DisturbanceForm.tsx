@@ -517,64 +517,24 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
         <div className="flex-1 overflow-y-auto pr-1">
         <form ref={formRef} onSubmit={handleSubmit} className="space-y-6">
-          {/* 1. Kunde — steht ganz oben, weil er am Bau zuerst gewählt wird */}
+          {/* 1. Projekt zuerst (Kundenwunsch): Wahl des Projekts füllt den
+              Kunden automatisch. Ohne Projekt wird der Kunde darunter direkt
+              gewählt oder neu angelegt. Bestimmt auch den Projektordner. */}
           <div className="space-y-2">
-            <Label className="flex items-center gap-2 font-medium">
-              <User className="h-4 w-4" />
-              Kunde *
-            </Label>
-            <CustomerSelect
-              value={selectedCustomerId}
-              onChange={(id, customer) => {
-                setSelectedCustomerId(id);
-                if (customer) {
-                  setFormData(prev => ({
-                    ...prev,
-                    kundeName: customer.name,
-                    kundeEmail: customer.email || "",
-                    kundeAdresse: customer.adresse || "",
-                    kundePlz: customer.plz || "",
-                    kundeOrt: customer.ort || "",
-                    kundeTelefon: customer.telefon || "",
-                  }));
-                } else {
-                  setFormData(prev => ({
-                    ...prev,
-                    kundeName: "",
-                    kundeEmail: "",
-                    kundeAdresse: "",
-                    kundePlz: "",
-                    kundeOrt: "",
-                    kundeTelefon: "",
-                  }));
-                }
-              }}
-              placeholder="Kunde auswählen"
-              className="h-11 w-full"
-            />
-            {formData.kundeName ? (
-              <div className="rounded-lg border p-3 bg-muted/30 space-y-1 text-sm">
-                <div className="font-medium">{formData.kundeName}</div>
-                {formData.kundeAdresse && <div className="text-muted-foreground">{formData.kundeAdresse}</div>}
-                {(formData.kundePlz || formData.kundeOrt) && <div className="text-muted-foreground">{formData.kundePlz} {formData.kundeOrt}</div>}
-                <div className="flex flex-wrap gap-x-4 gap-y-1">
-                  {formData.kundeEmail && <span className="text-muted-foreground flex items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{formData.kundeEmail}</span>}
-                  {formData.kundeTelefon && <span className="text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3 shrink-0" />{formData.kundeTelefon}</span>}
-                </div>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Kunde oben auswählen oder im Dropdown „Neuer Kunde" anlegen.
-              </p>
-            )}
-          </div>
-
-          {/* 2. Projekt-Zuordnung (bestimmt den Projektordner für das PDF) */}
-          <div className="space-y-2">
-            <Label>Projekt (optional — Bericht landet im Projektordner)</Label>
+            <Label className="font-medium">Projekt (füllt den Kunden automatisch)</Label>
             <Select value={selectedProjectId || "none"} onValueChange={async (v) => {
               const projId = v === "none" ? null : v;
               setSelectedProjectId(projId);
+              if (!projId) {
+                // Automatisch übernommenen Kunden wieder freigeben, damit die
+                // Auswahl unten nicht mit dem alten Projektkunden vorbelegt bleibt.
+                setSelectedCustomerId(null);
+                setFormData(prev => ({
+                  ...prev,
+                  kundeName: "", kundeEmail: "", kundeAdresse: "",
+                  kundePlz: "", kundeOrt: "", kundeTelefon: "",
+                }));
+              }
               if (projId) {
                 const project = projects.find(p => p.id === projId);
                 if (project?.customer_id) {
@@ -604,6 +564,67 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          {/* 2. Kunde — kommt aus dem Projekt; ohne Projekt hier wählen oder
+              neu anlegen („+ Neuer Kunde" steht im Dropdown ganz oben). */}
+          <div className="space-y-2">
+            <Label className="flex items-center gap-2 font-medium">
+              <User className="h-4 w-4" />
+              Kunde *
+            </Label>
+            {selectedProjectId && formData.kundeName ? null : (
+            <CustomerSelect
+              value={selectedCustomerId}
+              onChange={(id, customer) => {
+                setSelectedCustomerId(id);
+                if (customer) {
+                  setFormData(prev => ({
+                    ...prev,
+                    kundeName: customer.name,
+                    kundeEmail: customer.email || "",
+                    kundeAdresse: customer.adresse || "",
+                    kundePlz: customer.plz || "",
+                    kundeOrt: customer.ort || "",
+                    kundeTelefon: customer.telefon || "",
+                  }));
+                } else {
+                  setFormData(prev => ({
+                    ...prev,
+                    kundeName: "",
+                    kundeEmail: "",
+                    kundeAdresse: "",
+                    kundePlz: "",
+                    kundeOrt: "",
+                    kundeTelefon: "",
+                  }));
+                }
+              }}
+              placeholder="Kunde auswählen oder neu anlegen"
+              className="h-11 w-full"
+            />
+            )}
+            {formData.kundeName ? (
+              <div className="rounded-lg border p-3 bg-muted/30 space-y-1 text-sm">
+                <div className="font-medium">{formData.kundeName}</div>
+                {formData.kundeAdresse && <div className="text-muted-foreground">{formData.kundeAdresse}</div>}
+                {(formData.kundePlz || formData.kundeOrt) && <div className="text-muted-foreground">{formData.kundePlz} {formData.kundeOrt}</div>}
+                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                  {formData.kundeEmail && <span className="text-muted-foreground flex items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{formData.kundeEmail}</span>}
+                  {formData.kundeTelefon && <span className="text-muted-foreground flex items-center gap-1"><Phone className="h-3 w-3 shrink-0" />{formData.kundeTelefon}</span>}
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Oben ein Projekt wählen — der Kunde wird automatisch eingesetzt.
+                Ohne Projekt: Kunde hier auswählen oder „+ Neuer Kunde" anlegen.
+              </p>
+            )}
+            {selectedProjectId && formData.kundeName && (
+              <p className="text-xs text-muted-foreground">
+                Kunde kommt aus dem Projekt. Zum Ändern oben „Kein Projekt" wählen.
+              </p>
+            )}
           </div>
 
           {/* 3. Datum & Uhrzeit */}

@@ -17,10 +17,13 @@ export default defineConfig(({ mode }) => ({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Holzbau Lutz — Zimmerei & Holzbau',
-        short_name: 'Holzbau Lutz',
+        // Achtung Fork-Altlast: Hier stand „Holzbau Lutz" — die installierte
+        // App hieß dadurch am Startbildschirm falsch. theme_color = dasselbe
+        // Blau wie <meta name="theme-color"> in index.html.
+        name: 'Holzbau Groismaier — Zimmerei & Holzbau',
+        short_name: 'Holzbau Groismaier',
         description: 'Angebote, Rechnungen, Kalkulation & Zeiterfassung',
-        theme_color: '#0E5A44',
+        theme_color: '#002337',
         background_color: '#ffffff',
         display: 'standalone',
         start_url: '/',

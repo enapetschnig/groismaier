@@ -1,0 +1,1099 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<onlv xmlns="http://www.oenorm.at/schema/A2063/2015-07-15">
+  <metadaten>
+    <erstelltam>2024-04-19T14:53:00Z</erstelltam>
+    <dateiname>AWN-21036-AWN-21036 ZIMMERMANN.onlv</dateiname>
+    <programmsystem>ABK8-LV (www.abk.at)</programmsystem>
+    <programmversion>V8.3a-CB16-hf</programmversion>
+  </metadaten>
+  <grafiktabelle>
+    <grafikelement id="f0828767-b6fe-4046-b701-ae5bdd137d42">
+      <bezeichnung>Rankhilfe</bezeichnung>
+      <format>image/jpeg</format>
+      <daten>GEKUERZT</daten>
+    </grafikelement>
+  </grafiktabelle>
+  <leistungsteiltabelle>
+    <leistungsteil nr="1">
+      <bezeichnung>Festpreis, ganzes LV</bezeichnung>
+      <definition-preisanteil1>
+        <festpreise></festpreise>
+      </definition-preisanteil1>
+      <definition-preisanteil2>
+        <festpreise></festpreise>
+      </definition-preisanteil2>
+    </leistungsteil>
+  </leistungsteiltabelle>
+  <zztabelle>
+    <zzgruppe nr="MZ">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Montagezylinder WDVS 70*70</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Montagezylinder WDVS 98*98</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="RS">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Randsteine</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Randsteine</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="SB">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Sanitärcontainer vorhalten Baubetrieb</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Chem. Toiletten vorhalten Baubetrieb</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="SC">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>SanitärContainer</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Chem. Toletten, Altern. zu Sanitärcontainer</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="SS">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Sanitärcontainer vorhalten Stilliegezeit</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Chem. Toiletten vorhalten Stillliegezeit</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="TR">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Kellertrennwände</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Kellertrennwände gehobelt</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+    <zzgruppe nr="TT">
+      <varianten>
+        <variante nr="0">
+          <bezeichnung>Trennwand Tür</bezeichnung>
+        </variante>
+        <variante nr="1">
+          <bezeichnung>Trennwand Tür gehobelt</bezeichnung>
+        </variante>
+      </varianten>
+    </zzgruppe>
+  </zztabelle>
+  <zugelassenenachlaesse>
+    <aufpreisanteile></aufpreisanteile>
+    <hierarchiestufen>
+      <auflvsumme></auflvsumme>
+    </hierarchiestufen>
+  </zugelassenenachlaesse>
+  <ausschreibungs-lv>
+    <kenndaten>
+      <lvcode>AVAAG\AWN-21036\AWN-21036 ZIMMERMANN</lvcode>
+      <vorhaben>Wohnhaus Nesper-Adelhelm Bach</vorhaben>
+      <lvbezeichnung>Zimmermann</lvbezeichnung>
+      <auftraggeber>
+        <firma>
+          <name>STEKAT GmbH</name>
+          <kommunikation>
+            <adresse>
+              <strasse>Kraichen 62a</strasse>
+              <ort>Bach</ort>
+              <plz>6653</plz>
+              <land>AUT</land>
+            </adresse>
+          </kommunikation>
+          <kontaktperson>
+            <nachname>Nicht angegeben</nachname>
+          </kontaktperson>
+        </firma>
+      </auftraggeber>
+      <vergebendestelle>
+        <firma>
+          <name>Architektur Wasle und Strele ZT GesmbH</name>
+          <kommunikation>
+            <adresse>
+              <strasse>Kög 22</strasse>
+              <ort>Reutte</ort>
+              <plz>6600</plz>
+              <land>AUT</land>
+            </adresse>
+            <telefon>+43 (5672) 64242</telefon>
+            <fax>+43 (5672) 64242-44</fax>
+            <email>office@architektur-wasle-strele.at</email>
+            <www>http://www.architektur-wasle-strele.at</www>
+          </kommunikation>
+        </firma>
+      </vergebendestelle>
+      <lversteller>
+        <firma>
+          <name>Architektur Wasle und Strele ZT GmbH</name>
+          <kommunikation>
+            <adresse>
+              <strasse>Kög 22</strasse>
+              <ort>Reutte</ort>
+              <plz>6600</plz>
+              <land>AUT</land>
+            </adresse>
+            <telefon>+43 (5672) 64242</telefon>
+            <fax>+43 (5672) 64242-44</fax>
+            <email>office@architektur-wasle-strele.at</email>
+            <www>http://www.architektur-wasle-strele.at</www>
+          </kommunikation>
+        </firma>
+      </lversteller>
+      <bearbeitungsstand>2023-07-01</bearbeitungsstand>
+      <preisanteilmodell>
+        <preisanteile>
+        </preisanteile>
+      </preisanteilmodell>
+      <wkz>EUR</wkz>
+      <angebotsfrist>2024-05-03T10:00:00Z</angebotsfrist>
+    </kenndaten>
+    <gliederung-lg>
+      <preiserstellungsverfahren>Preisangebotsverfahren</preiserstellungsverfahren>
+      <lb>
+        <bezeichnung>frei formuliert</bezeichnung>
+        <herausgeber>
+          <firma>
+            <name>frei formuliert</name>
+          </firma>
+        </herausgeber>
+        <lbkennung>FF</lbkennung>
+        <versionsnummer>999</versionsnummer>
+        <versionsdatum>2009-06-01</versionsdatum>
+        <status>freigegeben</status>
+        <downloadurl></downloadurl>
+      </lb>
+      <svb>
+      </svb>
+      <lg-liste>
+        <lg nr="00">
+          <lg-eigenschaften>
+            <ueberschrift>Allgemeine Bestimmungen</ueberschrift>
+          </lg-eigenschaften>
+          <ulg-liste>
+            <ulg nr="12">
+              <ulg-eigenschaften>
+                <ueberschrift>Allgemeine Ausschreibungs- und Vertragsbedingungen AW+S</ueberschrift>
+                <vorbemerkung>
+                  <p>Es gelten die ALLGEMEINE AUSSCHREIBUNGS- UND VERTRAGSBEDINGUNGEN – AVB</p>
+                  <p>(der ARCHITEKTUR WASLE und STRELE ZT GMBH), Stand: Jänner 2023</p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="01">
+                  <grundtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Projektbeschreibung</stichwort>
+                      <langtext>
+                        <p>Neubau eines Wohnhauses mit 4 Wohneinheiten:</p>
+                        <p>- leichte Hanglage (Erdgeschoss liegt auf Gartenniveau)</p>
+                        <p>- Teilunterkellerung</p>
+                        <p>- Grundstück liegt in der gelben Gefahrenzone, Auflagen der Wildbach und Lawinenverbauung (WLV), siehe Baubescheid vom 01.03.2023, Az: 2/2023</p>
+                        <p>- eingeschränkte Platzsituation, wenig bis keine Lager- bzw. Aufstellfläche</p>
+                        <p>- Grenzabstände wurden bei der Planung ausgereizt, bestimmte Baufortschritte müssen durch eine befugte Person oder Stelle vermessen, dokumentiert und der Behörde vorgelegt werden, siehe Auflage Baubescheid vom 01.03.2023, Az: 2/2023</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baubeginn - Baudauer</stichwort>
+                      <langtext>
+                        <p>Mit den Bauarbeiten wurde im September 2023 begonnen.<br/><br/>Die Baudauer beträgt ca.11 Monate.<br/><br/>Grundlage ist der beigelegte Terminplan<br/><br/><br/><br/><br/><br/><bl></bl>
+	<bl></bl> Ort, Datum Firmenmäßige Fertigung </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="02">
+                  <grundtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Örtliche Besonderheiten</stichwort>
+                      <langtext>
+                        <p>Auf folgende einzukalkulierende Umstände der Leistungserbringung wird aufmerksam gemacht:</p>
+                        <p>- Der Neubau befindet sich mitten in einer Wohnsiedlung, ringsum wohnen junge Familien mit Kindern. Es sind die entsprechenden Sicherheitsvorkehrungen zum Schutz der Kinder zu treffen!</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="C" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Verkehrswege</stichwort>
+                      <langtext>
+                        <p>Die Baustellenzufahrt erfolgt über eine Gemeindestraße. Eventuell erforderliche zeitgebundene Sperrungen sind mit der Gemeinde und dem betroffenen Nachbarn abzusprechen und die erforderlichen Umleitungsschilder anzubringen. </p>
+                        <p></p>
+                        <p>Die Baustelle ist den Vorschriften entsprechend gegen alle Verkehrswege und Anrainergrundstücke hin abzusichern. </p>
+                        <p></p>
+                        <p>Das Reinigen der vom AN verursachten Verschmutzungen aller beanspruchten Verkehrsflächen ist laufend durchzuführen. </p>
+                        <p></p>
+                        <p>Kosten für diese Leistungen können nicht in Rechnung gestellt werden.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="03">
+                  <grundtext>
+                    <langtext>
+                      <p>Auf folgende einzukalkulierende Erschwernisse oder Erleichterungen wird aufmerksam gemacht:</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Besondere Erschwernisse/Erleichterungen</stichwort>
+                      <langtext>
+                        <p>Winterbau: </p>
+                        <p>Die vorgesehene Bauzeit erstreckt sich über die Wintermonate. Eventuell anfallende Erschwernis (Stilliegezeit, Schneeräumung usw.) wird nicht gesondert Vergütet und kann auch nicht in Rechnung gestellt werden.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="14">
+              <ulg-eigenschaften>
+                <ueberschrift>Allgemeine Bestimmungen</ueberschrift>
+                <vorbemerkung>
+                  <p>Die gegenseitigen Rechte und Pflichten der Vertragspartner ergeben sich aus sämtlichen dem Vertragsabschluss zu Grunde gelegten Unterlagen.</p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="03">
+                  <grundtext>
+                    <langtext>
+                      <p>Weiters gelten:</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Ergänzungen</stichwort>
+                      <langtext>
+                        <p>
+	<u>Weiteres Vertragsbestandteil werden:</u>
+</p>
+                        <p>* Genehmigte Einreichplanung des planenden Architekten</p>
+                        <p>* sämtliche Bescheide samt aller Auflagen</p>
+                        <p>* Polierplanung in der aktuell gültigen Fassung</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Angaben zur Leistungsbeschreibung</stichwort>
+                      <langtext>
+                        <p>Grundlagen: Grundlage des Angebotes sind die Planungsbeilagen und die Leistungsbeschreibung der Architekten. Etwaige Unklarheiten sind vor Abgabe des Angebotes mit der ausschreibenden Stelle zu klären. In den Positionstexten fehlende Maßangaben sind den Planungsbeilagen zu entnehmen, auch wenn in den Positionstexten und/oder Zeichnungen nicht sämtliche Angaben der auszuführenden Leistung getätigt sind, versteht sich das Angebot für die fachlich einwandfreie, technisch und funktionell vollständige Ausführung samt allen Anschlüssen an das Bauwerk. Lediglich ausdrücklich bauseits beigestellte Leistungen sind nicht vom Auftragnehmer zu erbringen. </p>
+                        <p>Unterlagen: Der Bieter ist gehalten, die im Leistungsverzeichnis beschriebenen Details auf Vollständigkeit, fachgerechte Ausführung und Eignung für den vorgesehenen Verwendungszweck zu überprüfen. Sinnvoll oder notwendig erscheinende Änderungen oder Ergänzungen sind mit einer entsprechenden Begründung dem Angebot beizufügen. </p>
+                        <p>Formale Gestaltung und Ausbildung: Die zur Verfügung gestellten Planungsunterlagen für die Konstruktionen gelten hinsichtlich der formalen Gestaltung (optisch-architektonisches Erscheinungsbild) als verbindlich. </p>
+                        <p>Geringfügige architektonische Änderungen durch den Auftraggeber sind vom Auftragnehmer zu berücksichtigen und begründen keinen Anspruch auf Kostenersatz (bis zur Genehmigung der Werkstatt- und Montagezeichnungen des Auftragnehmers durch den Auftraggeber). </p>
+                        <p>Ausbildung: Die konstruktive firmenspezifische Ausbildung der Konstruktionen im ganzen bzw. von Teilleistungen (auch der Unterkonstruktionen, Verankerungen etc.) ist Aufgabe des Auftragnehmers unter Berücksichtigung der Architektenpläne. </p>
+                        <p>Der Auftragnehmer ist bei der Erfüllung des Auftrages verpflichtet, alle behördlichen Vorschriften genau einzuhalten, insbesonders die Punkte des Baubewilligungsbescheides. Außerdem hat sich der Bieter über die baulichen Gegebenheiten genauestens zu informieren. Nachforderungen aus Unkenntnis der örtlichen Gegebenheiten werden grundsätzlich nicht anerkannt. </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="C" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Bauphysikalische Anforderungen</stichwort>
+                      <langtext>
+                        <p>Die Anforderungen lt. Tiroler Baugesetz, bzw. lt. genehmigten Energieausweis sind zu erfüllen.</p>
+                        <p>Prüfzeugnisse:</p>
+                        <p>Zulassungsbescheid und Prüfzeugnis der Brand-, Wärme-, bzw. Schallschutzausführung inkl. etw. Bänder und Beschläge für die Gesamtkonstruktion sind vom AN unaufgefordert vorzulegen.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="D" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Qualitätssicherung</stichwort>
+                      <langtext>
+                        <p>Für alle angebotenen Systeme sind die Systemvorschriften und Verarbeitungsrichtlinien des Herstellers genau einzuhalten. Weiters sind die Gebäudefunktion, Lage und Gebäudehöhe bzw. Einbauhöhe der Konstruktionen zu berücksichtigen. Sämtliche statischen und bauphysikalischen Erfordernisse sind in die Einheitspreise einzurechnen. Auf Anforderung durch den Auftraggeber sind entsprechende Nachweise vorzulegen (statische, bauphysikalische, Gleichwertigkeit, etc...).</p>
+                        <p>Ausführung, Verarbeitung und Auswahl der verwendeten Materialien gemäß dem Letztstand der Technik.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="E" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baustoffe gem. Baustoffliste ÖA</stichwort>
+                      <langtext>
+                        <p>Sämtliche Baustoffe haben der Baustoffliste ÖE und ÖA gem. Baugesetz, Bauprodukte- und Akkreditierungsgesetz zu entsprechen und müssen ein Einbauzeichen ÜA nachweisen.</p>
+                        <p>Der AN erbringt unaufgefordert den schriftlichen Nachweis, daß die gelieferten Baustoffe den gesetzlichen Vorschriften entsprechen. Dieser Nachweis ist als Bestandteil der Bestandsdokumentation erforderlich (Unterlage für spätere Arbeiten gem. BauKG). Eine Kopie der Nachweise ist umgehend und ohne weitere Aufforderung an den Baustellenkoordinator und die ÖBA zu übergeben.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="F" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Verpackung, Abfall, Schutt/Abfallbewirtschaftung</stichwort>
+                      <langtext>
+                        <p>Die ordnungsgemäße Entsorgung der Verpackungsabfälle obliegt dem AN.</p>
+                        <p>Der AN hat ohne gesonderte Vergütung seinen Arbeitsplatz laufend zu säubern sowie Abfall, Schutt und alle seine nicht benötigten Baustoffe und Geräte von der Baustelle zu entfernen. Der AN trennt anfallende Materialien gemäß den Verordnungen zum Abfallwirtschaftsgesetz, wenn ein in diesen Bestimmungen genannter Schwellwert überschritten wird und übergibt dem AG entsprechende Nachweise. Der AG kann die Bezahlung der Schlußrechnung davon abhängig machen. Die Kosten für das Trennen und die Nachweise sind, soweit nicht gesonderte Positionen im Leistungsverzeichnis vorgesehen wurden, in die Einheitspreise einzukalkulieren.</p>
+                        <p>Abfalbewirtschaftung</p>
+                        <p>Der AN hat die Entsorgung laufend, mind. 1 x wöchentlich durchzuführen. Kommt der AN seinen Verpflichtungennicht nach, so ist der AG berechtigt, diese Arbeiten von der Baufirma bzw. einer Drittfirma auf Kosten des AN durchführen zu lassen. Die gesetzmäßige Entsorgung hat der AN dem AG nachzuweisen!</p>
+                        <p>Abfallbew. Kostenaufteilung:</p>
+                        <p>Die für die Entsorgung für nicht vom Verursacher entfernte Abfälle anfallenden Kosten werden dem Verursacher angelastet. Kann der Verursacher nicht festgestellt werden, werden diese Kosten unter den betroffenen Firmen aufgeteilt!</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="G" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baukoordinationsgesetz BauKG</stichwort>
+                      <langtext>
+                        <p>Es wird ausdrücklich darauf hingewiesen, daß a l l e Arbeitgeber (auch Subunternehmer und Lieferanten) zur Umsetzung der Allgemeinen Grundsätze der Gefahrenverhütung gemäß Paragraph 7 ArbeitnehmerInnenschutzgesetz (AschG) verpflichtet sind. Es wird auch ausdrücklich darauf hingewiesen, daß a l l e Arbeitgeber gemäß Paragraph 8 desselben Gesetzes zur koordinierten und sicheren Arbeitsdurchführung und zur Zusammenarbeit mit a l l e n anderen auf der Baustelle tätigen Arbeitgeber im Hinblick des Paragraph 7 AschG verpflichtet sind. Weiters sind die Hinweise und Anordnungen des Baustellenkoordinators im Zusammenhang mit der Arbeitssicherheit von a l l e n Arbeitgebern zu berücksichtigen. Die Inhalte des Sicherheits- und Gesundheitsschutzplanes (SiGe-Plan) und der Unterlage für spätere Arbeiten (Unterlage) im Sinne des BauKG sind, soweit für das Gewerk zutreffend, exakt umzusetzen, in die Baustellenevaluierung aufzunehmen und exakt einzuhalten (der SiGe-Plan liegt zur Einsicht auf der Baustelle auf). Stellt der Arbeitgeber fest, dass im SiGe-Plan Fehler oder Unklarheiten sind, so ist der Bauherr davon in Kenntnis zu setzen (Warnpflicht). Die gesamten, erforderlichen Leistungen daraus sind in die entsprechenden Positionen des LV einzurechnen und sind in der Vertragsbauzeit durch den AN in vollem Umfang zu berücksichtigen. Ist dies nicht kalkulierbar oder nicht möglich, hat der Auftragnehmer unverzüglich bei Angebotslegung, jedoch noch vor Auftragsvergabe an ihn, den AG über diesen Umstand zu informieren (Hinweispflicht des AN). Nachträge und Bauzeitverlängerungen sind aus diesem Titel ausgeschlossen. Sind Änderungen bzw. Erweiterungen gegenüber den Festlegungen des SiGe-Planes bzw. der Unterlage für spätere Arbeiten erforderlich, so ist der AN zur Information und Warnung an den AG verpflichtet (Warnpflicht des AN) und hat dies dem Auftraggeber und demBaustellenkoordinator vor Ausführung der Arbeiten mitzuteilen. Dies gilt auch für vom Auftragnehmer vorgeschlagene Änderungen bei Materialien, im Bauablauf und in derAusführungstechnologie (Arbeitsverfahren). Solche Änderungen hat der AG dem AN aber ausdrücklich zu genehmigen bzw. zu gestatten. Der Auftragnehmer ist verpflichtet, vor Arbeitsbeginn die von ihm vorgesehenen Subunternehmer (weitere Arbeitgeber im Sinne des BauKG) und die von Ihm vorgesehenen Selbständigen (im Sinne des BauKG) zu nennen. Dies bedarf einer ausdrücklichen Zustimmung des Auftraggebers. Jede Änderung gegenüber diesen genehmigten Angaben ist der ÖBA und dem Baustellenkoordinator unverzüglich mitzuteilen und vom AG genehmigen zu lassen. Der Auftragnehmer verpflichtet sich ausdrücklich zur Koordinierung im Sinne des Paragraph 8 des AschG zwischen den von ihm beschäftigten Arbeitgebern (Subunternehmern und Lieferanten ) und Selbstständigen im Sinne des BauKG. </p>
+                        <p>Anzahl der vom Auftragnehmer vorgesehenen Subunternehmer: <bl></bl></p>
+                        <p>Anzahl der vom Auftragnehmer vorgesehenen Selbständigen: <bl></bl></p>
+                        <p>Werden voraussichtlich vom AN Leiharbeitskräfte eingesetzt? Ja / Nein: <bl></bl></p>
+                        <p>Der Auftragnehmer ist als Arbeitgeber oder Selbständiger im Sinne des Bauarbeitenkoordinationsgesetzes verpflichtet, die gesetzlichen ArbeitnehmerInnenschutzbestimmungen einzuhalten. Bei Auslegungsdifferenzen des AschG und der BauV entscheidet die SFK (Sicherheitsfachkraft) bzw. die SVP (Sicherheitsvertrauensperson) des AN endgültig. Werden Einrichtungen anderer Gewerke oder des AG mitbenutzt, so sind diese - vor Benutzung - auf offensichtliche Mängel zu prüfen. Vorhandene Mängel sind der ÖBA und dem Baustellenkoordinator unverzüglich mitzuteilen. Vor Behebung der Mängel dürfen die Einrichtungen nicht benutzt werden. Werden Einrichtungen, die zum Schutz der Arbeitnehmer dienen, aus arbeitstechnischen Gründen entfernt, so ist durch das Unternehmen, das die Einrichtungen entfernt, vorher die ÖBA und der Baustellenkoordinator nachweislich zu verständigen und sofort entsprechend wirksame Schutzmaßnahmen durch das Unternehmen zu ergreifen. Nach Beendigung der Arbeiten ist der urspründliche Zustand wieder herzustellen. Es ist den Auftragnehmern und den von Ihnen beauftragten Subunternehmern strikt verboten, Maßnahmen/ Einrichtungen, die zum Fernhalten der von Unbefugten dienen zu verändern oder zu entfernen. Die Auftragnehmer haften für Ihre Subunternehmer in vollem Umfang und zu ungeteilten Handen gegenüber dem AG. Ergeben sich im Zuge des Bauablaufes Gefahren für Dritte, mit denen nicht gerechnet wurde, so sind unverzüglich entsprechende Maßnahmen, im Einvernehmen mit dem Baustellenkoordinator und der ÖBA festzulegen. Alle Arbeitnehmer, auch die der Subunternehmer des AN und Selbstständige des AN sind mit der erforderlichen, persönlichen Schutzausrüstung auszustatten. Dabei sind Schutzhelme (z.B. im Schwenkbereich des Kranes), Gehörschutz (z.B. in der Nähe von Abbruchhämmern) und filtrierende Halbmasken (Staubschutz) auch dann unentgeltlich vorzuhalten und einzusetzen, wenn die Ursache für den Einsatz nicht durch eigene Arbeiten bedingt ist. Lagerungen haben derart zu erfolgen, daß daraus keine Gefährdung für die eigenen Arbeitnehmer und die Arbeitnehmer anderer Arbeitgeber bzw. von Selbstständigen erfolgt. Jedes Unternehmen ist dafür verantwortlich, dass durch regelmäßiges Entfernen des von den eigenen Arbeiten herrührenden Gebindes gefährlicher Arbeitsstoffe und des Abfalles, die Sicherheit und Ordnung auf der Baustelle aufrecht erhalten wird. Wird im Zuge der Ausführung ein gefährlicher Arbeitsstoff eingesetzt, so ist dies rechtzeitig vor dem Einsatz des Arbeitsstoffes dem Baustellenkoordinator mitzuteilen, wenn daraus eine Gefahr (z.B. Explosion, Brand, gesundheitsschädliche Atmosphäre) für Arbeitnehmer anderer Arbeitgeber bzw. für Selbstständige im Sinne des BauKG entsteht. Der AN hat für die gesamte Dauer der beauftragten Bauarbeiten eine deutschsprachige Ansprechperson einzusetzen, welche immer auf der Baustelle anwesend ist. Die genannte, deutschsprachige Ansprechperson ist vom Auftragnehmer nachweislich, eigenverantwortlich beauftragt, für die Weiterleitung der Informationen des Baustellenkoordinators zu den Arbeitnehmern des AN, zu den Arbeitnehmern des/der Subunternehmer/s und zu den Selbstständigen des AN (Arbeitgeber) zu sorgen. </p>
+                        <p>Ansprechperson (Name, Tel, Fax, e-mail ) <bl></bl><bl></bl></p>
+                        <p>Der AN hat bei Auftragserteilung, jedoch noch vor Beginn der Bauarbeiten die im Unternehmen tätige Sicherheitsfachkraft (SFK) namentlich, unter Angabe von Telefon, Fax, e-mail dem Baustellenkoordinator bekanntzugeben. Ist keine SFK bestellt, so ist die Sicherheitsvertrauensperson (SVP) zu nennen. </p>
+                        <p>SFK oder SVP (Name, Tel, Fax, e-mail ) <bl></bl><bl></bl></p>
+                        <p>Der AN verpflichtet sich ausdrücklich , bei der wöchentlichen Baubesprechung anwesend zu sein, und den dort getätigten Anweisungen des Baustellenkoordinators Folge zu leisten. Bei wiederholter Nichteinhaltung aller vorangeführten Punkte wird der für das betreffende Bauvorhaben zuständige Arbeitsinspektor informiert und es liegt die Rechtsfolge des Verzuges im Sinne der ÖN 2110 vor. </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="H" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Schutzmaßn./Bauführung</stichwort>
+                      <langtext>
+                        <p>Die Auflagen des Baubescheides der Gemeinde sowie den Weisungen der Gemeinde, Ver- und Entsorgungsunternehmen ist Folge zu leisten. Die Bestimmungen und Geschäftsbedingungen der Ver- und Entsorgungsunternehmen in der zum Beginn der Anbotsfrist gültigen Fassung sind zu überprüfen und einzuhalten. Der Auftragnehmer ist für alle durch ihn bzw. seine Beauftragten entstandenen Schäden am Baugrundstück, den Nachbargrundstücken und Objekten, Straßen und Gehwegen bzw. dritten Personen voll verantwortlich. Er hat alle Vorkehrungen zum Schutz derselben auf seine Kosten zu treffen. Zur Vermeidung von Differenzen ist vor Beginn der Arbeiten vom Auftragnehmer im Bautagebuch der Zustand der umliegenden Straßen, Gehwege, Einfriedungen usw. festzuhalten. </p>
+                        <p>Weiters sind alle vor Baubeginn vorhandenen Höhepunkte und Markierungen, welche vom Vermessungsingenieur für die Vermarkung der Grundgrenzen angebracht wurden, entsprechend zu übernehmen, schriftlich festzuhalten, bzw. an Ort und Stelle zu versichern, ausreichend zu schützen und der ursprünglichen Zustand dieser Punkte nach Baufertigstellung wieder herzustellen. Sollten durch unsachgemäße Absicherungen, Erdschüttungen, usw. Nachvermessungen durch den zuständigen Geometer erforderlich werden, gehen diese Kosten zu Lasten des AN. Für die Einmessung des Bauwerkes in das vorhandene Grundstück hat sich der Auftragnehmer eines geeigneten Vermessungsingenieurs zu bedienen. Gleiches gilt auch für die Festlegung der 0,00 Kote des Gebäudes in Bezug auf das Gelände. Er hat die 0,00 Kote im Bautagebuch zu vermerken. Dies gilt ebenso für die gesetzlichen Bauabstände. Werden diese oben angeführten Punkte verletzt, sodass dem Bauherrn dadurch finanzielle Nachteile entstehen, so übernimmt dafür der Auftragnehmer die Haftung. </p>
+                        <p>Zur Vermeidung von Schäden an Versorgungsleitungen egal welcher Art, hat der Auftragnehmer das Vorhandensein und die genaue Lage vor Beginn seiner Arbeiten durch Rücksprache bei den zuständigen Stellen und unter Einsichtnahme in deren Planunterlagen festzuhalten. Er hat darüber Aktennotizen oder Bautagebucheintragungen zu erstellen, diese sind gegenzuzeichnen.</p>
+                        <p>Vor Beginn der Erdarbeiten hat sich der Auftragnehmer über die Lage des Kanales (auch wenn dieser später ausgeführt wird) genaue Unterlagen zu besorgen, sodass später ein Anschluss an einen Kanal insbesondere in seiner Höhe, keinerlei Schwierigkeiten und Nachteile für den Bauherrn bringt. Auch diese Angaben sind in Aktennotizen oder Bautagebucheintragungen unter jeweiligen Gegenzeichnungen schriftlich festzuhalten. Vor Beginn seiner Arbeiten hat der Auftragnehmer den Bauführer und den Beginn der Arbeiten der zuständigen Gemeinde zu melden. </p>
+                        <p>Sollte der Bauführer gewechselt werden, ist dies unverzüglich zu melden. Der AN hat mit der Gemeinde alle notwendigen Absperrungsmassnahmen, zwecks Sicherung der Baustelle abzuklären. Er ist auf jeden Fall weisungsgebunden: </p>
+                        <p>- der Gemeinde und deren Beauftragten, direkt den Auflagen durch den Baubescheid der Gemeinde </p>
+                        <p>- den Auflagen durch Ver- und Entsorgungsunternehmen wie zB Elektrizitäts-, Wasser- und Gasversorgungsunternehmen.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="I" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Bauverantwortlicher</stichwort>
+                      <langtext>
+                        <p>Der AN für die Baumeisterarbeiten übernimmt die Tätigkeit des Bauverantwortlichen gemäß § 30 TBO für die Dauer der eigenen Leistung.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="J" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baustelleneinrichtung Skizze</stichwort>
+                      <langtext>
+                        <p>Sämtliche mit der Abwicklung der Baustelle verbundenen behördlichen Genehmigungen und Meldungen an die Behörden sind vom AN zeitgerecht einzuholen bzw. zu erstatten und werden nicht gesondert vergütet. Die Abhaltung von Besprechungen und Kommissionen (Straßen-, Gehwege-, Parkplatzbenutzung, etc...) ist inkl. aller Gebühren und Ablösen in die Preise einzukalkulieren. Die Baustelleneinrichtung, inkl. Zufahrt und etwaiger provisorischer Eingänge, ist im Einvernehmen mit der zuständigen Behörde auszuführen. Eine Skizze der Baustelleneinrichtung und der Provisorien ist dem Bauherrn, bzw. der ÖBA zur Genehmigung vorzulegen. Eine allfällige notwendige Koordination mit der Umweltabteilung fällt in die Obliegenheiten des Auftragnehmers.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="K" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baustelleneinrichtung Räumung</stichwort>
+                      <langtext>
+                        <p>In die Baustelleneinrichtungs- und Gerätekosten sind sämtliche für die Durchführung der Arbeiten erforderlichen Einrichtungen und Geräte einzurechnen. Dazu zählen - sofern im LV nicht anders angegeben - der Antransport, der Zusammenbau, der Betrieb (inkl. Vorhalten) und Abtransport, die Kosten für Abschreibung, Verzinsung und Reperaturen, die Errichtung aller Bauhilfszufahrten, die Schaffung von Arbeitsebenen und Vorschüttungen, die Errichtung von Hilfsanlagen, der Aufbau, Betrieb und Abbau von Baracken, die Sorge für Lager und Fertigungsplätze, die Strom-, Gas-, Trink und Nutzwasserversorgung, sowie alle sonstigen für die Erbringung der Leistung erforderlichen Nebeneinrichtungen. Weiters sämtliche Beschilderungen, Warnhinweise, Beleuchtungen, Ampeln, behördlichen Genehmigungen. Sämtliche Baustelleneinrichtungen sind mit dem Baustelleneinrichtungsplan, bzw. der ÖBA abzustimmen. Dem AN zur Verfügung gestellte Lager- und Arbeitsplätze sind auf Anweisung des AG, bzw. dessen Bevollmächtigten, sobald diese Plätze für den Baufortschritt benötigt werden zu räumen. Der Arbeitsplatz ist laufend zu reinigen. Abfall, Schutt und alle nicht benötigten Baustoffe und Geräte sind laufend von der Baustelle zu entfernen. Die Zufahrt zur Baustelle und die angrenzenden Verkehrsflächen und Gehsteige sind stets sauber zu halten, Staub- und Lärmentwicklung ist mit Rücksicht auf die Nachbarschaft zu vermeiden. Die Baustelle ist außerhalb der Arbeitszeiten stets versperrt zu halten. Das tägliche Aufsperren zu Arbeitsbeginn und Absperren nach Arbeitsende obliegt dem AN der Baumeisterarbeiten, eine Weitergabe von Schlüsseln an andere AN ist nur nach Absprache mit der ÖBA möglich. Die Schlüsselübergabe erfolgt mit Übernahme-, Übergabeprotokoll, die voraussichtliche Zeitdauer ist anzuführen. Beim Räumen der Baustelleneinrichtungen und Geräte sind u. a. das Abtragen aller Betonteile bis 0,5 m unter Geländeoberfläche, die Herstellung des planmäßigen Geländes und die Humusierungs und Begrünungsarbeiten einzurechnen. Soweit hierfür keine gesonderten Positionen angeführt sind, sind die Baustellengemeinkosten in die Einheitspreise einzukalkulieren. </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="L" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Baustellenbesichtigung</stichwort>
+                      <langtext>
+                        <p>Vor Abgabe des Angebotes hat sich der AN an Ort und Stelle über Art und Umfang der ausgeschriebenen Arbeiten genauestens zu unterrichten. Er bestätigt gleichzeitig mit seiner Unterschrift, daß er sich über die örtlichen Verhältnisse, die Lage der Baustelle, deren Zufahrtswege und evtl. Besonderheiten ausreichend genau orientiert hat und die ihm zur Verfügung gestellten Unterlagen und Angaben ausreichend waren, um die Leistungen nach Ausführungsart und Umfang genau zu bestimmen. Ferner bestätigt der AN, daß er alle öffentlichen und privaten Wasser-, Kanal-, Strom-, Gas-, Fernwärme- und Fernmeldeeinrichtungen sowie deren Anschlüsse erhoben hat. Nachforderungen, die aus - wenn auch unverschuldeter - Unkenntnis der Sachlage entstehenkönnen, werden daher nicht anerkannt.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="M" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Abbruch, Transport, Staub, Lärm</stichwort>
+                      <langtext>
+                        <p>Bei Abbrucharbeiten und dem Transport von Abbruchmaterial ist besonders darauf zu achten, daß unnötige Staub- und Lärmentwicklung vermieden werden, hiefür sind die geeigneten Schutzmaßnahmen zu ergreifen und in die Einheitspreise einzukalkulieren. Der Zugang zum Gebäude und den Räumen ist während der gesamten Baudauer freizuhalten. </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="N" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Abbrucharbeiten</stichwort>
+                      <langtext>
+                        <p>Die Terminisierung der Abbrucharbeiten isr rechtzeitig mit ÖBA und Statiker abzuklären. Sämtliche Abbrucharbeiten ohne Unterschied der Art und des Abbruchverfahrens lt. Angabe des Statikers.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="O" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Verlassen der Baustelle</stichwort>
+                      <langtext>
+                        <p>Der AN hat dafür Sorge zu tragen, daß die Baustelle nach Arbeitsende ordnungsgemäß verlassen wird. Dazu zählt u.a.: Baustelle versperren, Fenster und Türen schließen, Licht abschalten, keine offenen Feuerquellen, Verwahren von brandgefährdeten Stoffen in eigens abgesperrtem Raum, Wiederanbringen von Schutzvorkehrungen und Absturzsicherungen, etc... In diesem Zusammenhang wird auf die Baustellenordnung verwiesen. </p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="P" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Oberflächen- Tagwasser</stichwort>
+                      <langtext>
+                        <p>Oberflächenwasser (Niederschlags,- Tagwasser,- und Hangwasser) ist auf Kosten des AN so abzuleiten, dass weder die eigenen, noch die Bauleistungen anderer auf der Baustelle tätiger Firmen, Nachbarn oder sonstigen Betroffenen in Mitleidenschaft gezogen werden.<br/> Die bei den Aushub-, Fundierungs- und sonstigen Arbeiten erforderliche Wasserhaltung der gesamten Oberflächenwässer ist in die EP einzukalkulieren. Das Erstellen der notwendigen Gräben, das Einrichten von Pumpensümpfen, das Liefern und Inbetrieb halten der Pumpen ist zu berücksichtigen. Das Vorhalten der Wasserhaltung für andere Ausbaufirmen ist zu gewährleisten. Wenn nicht eigens ausgeschrieben.<br/> Anfallendes Oberflächenwässer ist in allen Geschossen des Rohbaus, Schächten, Arbeitsräume etc. ohne Aufforderung des AG ständig auszupumpen, mit entsprechenden Geräten auszutrocknen. Die Kosten hiefür sind in die einzelnen Positionen kalkuliert.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="Q" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Lieferumfang</stichwort>
+                      <langtext>
+                        <p>Grundsätzlich sind alle zur Ausführung der beschriebenen Leistung erforderlichen Haupt-, Neben- und Kleinarbeiten, die erforderlichen Materialien, die erforderlichen Planungen, Herstellungen, Lieferungen, Transporte, Montage- und Versetzarbeiten inkl. Abdichtungen und einsetzen von Dichtungen in die Einheitspreise einzurechnen, sofern diese nicht in gesonderten Positionen berücksichtigt sind.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="R" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Vermessung</stichwort>
+                      <langtext>
+                        <p>Das Einmessen und Abstecken des Gebäudes (Schnurgerüste etc.) sowie erforderliche Kontrollvermessungen sind auf Kosten des AN durch einen befugten Zivilingenieur für Vermesungswesen durchzuführen; die entsprechenden Unterlagen sind der ÖBA des AG in schriftlicher wie auch planlicher Form zu übergeben. Alle vorhandenen Grenzsteine, Vermessungspunkte, amtliche oder private Grenzpunkte und Verpflockungen aller Art sind so zu sichern, dass diese jederzeit wieder hergestellt werden können. Verlorengegangene Punkte sind auf Kosten des AN in Verbindung mit dem Vermessungsamt oder einem befugten Zivilingenieur für Vermesungswesen wieder herzustellen. Falls der AG diese Arbeiten von einem Vermessungsingenieur ausführen lässt, so hat der AN diese Vermessungspunkte bzw. Achsen zu kontrollieren und sein Schnurgerüst nach diesen Punkten zu erstellen.<br/> Dem AN obliegt ebenfalls die verbindliche Höhenkontrolle des Objektes, was er durch das Einmessen und Kontrollvermessen der Lage der Bodenplatte und der letzten, obersten Ziegelschar zu erbringen hat, inkl. dem schriftlichen Beleg über diese Tätigkeit bzw. Meldung an die Baubehörde, Gemeinde etc. (lt. jeweiligen Baubescheid). Somit sind die Pflichten gemäß TBO an den AN überbunden und von Ihm durchzuführen.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="S" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Öffentliche Flächen</stichwort>
+                      <langtext>
+                        <p>Der AN hat bei der zuständigen Gemeinde, Behörden etc. um Benützungsbewilligung von öffentlichen Verkehrsflächen- Wege- u.Straßen sowie Regelung der Baustellenzu- Anfahrt u. dgl. in Abstimmung mit den jeweiligen Behörden etc. zu erkunden bzw. anzusuchen. Alle hiefür anfallenden Kosten sind in Einheitspreise einzurechnen.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="50">
+              <ulg-eigenschaften>
+                <ueberschrift>Baustellenkosten</ueberschrift>
+                <vorbemerkung>
+                  <p>wie nachstehend beschrieben:</p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="01">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Strom- u. Wasserverbrauch</stichwort>
+                      <langtext>
+                        <p>Die Kosten für den Verbrauch von Strom und Wasser trägt der Auftraggeber. Die Herstellung der Entnahmestellen sowie die Vorhaltung für Strom u. Wasser erfolgt durch den Baumeister. Von der Schlussrechnung werden 1,5 % der Abrechnungssumme als Abgeltung für die gemeinsamen administrative Aufwendungen in Abzug gebracht.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+                <grundtextnr nr="02">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Leistungen für andere AN Tarif</stichwort>
+                      <langtext>
+                        <p>Der Auftragnehmer stellt die von ihm für eigene Leistungen hergestellten Entnahmemöglichkeiten, Anschlüsse oder dergleichen anderen Auftragnehmern (AN) kostenlos zur Verfügung. Der festgestellte Verbrauch anderer AN wird nach dem Tarif des zuständigen Versorgungsunternehmens ohne Aufschlag weiterverrechnet.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+                <grundtextnr nr="03">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Erschwernis Winter/Schlechtwetter</stichwort>
+                      <langtext>
+                        <p>Soweit hierfür keine gesonderten Positionen im Leistungsvertrag enthalten sind, werden durch Winter- beziehungsweise Schlechtwetter bedingte Erschwernisse nicht gesondert vergütet.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+                <grundtextnr nr="04">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Frist einschließlich Schlechtwetter</stichwort>
+                      <langtext>
+                        <p>Bei Schlechtwetter gilt: Die Ausführungsfrist verlängert sich nicht infolge Behinderung durch Schlechtwetter.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+                <grundtextnr nr="05">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Bautagesberichte AN</stichwort>
+                      <langtext>
+                        <p>Aufzeichnungen über wichtige Vorkommnisse: Die Führung von Bautagesberichten durch den Auftragnehmer (AN) wird vereinbart.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+          </ulg-liste>
+        </lg>
+        <lg nr="01">
+          <lg-eigenschaften>
+            <ueberschrift>Baustellengemeinkosten</ueberschrift>
+            <vorbemerkung>
+              <p>Soweit in Vorbemerkungen oder Positionstexten nicht anders angegeben, gelten für alle Leistungen dieser Gruppe folgende Regelungen:</p>
+              <p><b>1. Allgemeines:</b></p>
+              <p>Baustellengemeinkosten sind im Sinne der ÖNORM B 2061 angeboten.</p>
+              <p><b>2. Vorhalten:</b></p>
+              <p>Das Vorhalten umfasst auch sämtliche Prüfungen, Instandhaltungsmaßnahmen, etwaiges Verbrauchsmaterial und die erforderliche Reinigung.</p>
+              <p>Abgerechnet wird in Verrechnungseinheiten, ermittelt aus dem Ausmaß x der Anzahl der Wochen. Wochen sind teilbar wobei 1 Kalendertag gleich 1/7 Woche ist.</p>
+              <p><b>3. Stillliegezeiten:</b></p>
+              <p>Für die Verrechnung der Stillliegezeiten bedarf es einer Anordnung des Auftraggebers.</p>
+            </vorbemerkung>
+          </lg-eigenschaften>
+          <ulg-liste>
+            <ulg nr="00">
+              <ulg-eigenschaften>
+                <ueberschrift>Einzukalkulierende Leistungen</ueberschrift>
+                <vorbemerkung>
+                  <p>Einzukalkulierende Leistungen<br/> Der Auftragnehmer hat sich für den Wasser- und Stromanschluß bei der Gemeinde zu informieren sowie sämtliche Kosten dafür in die Einheitspreise einzurechnen, auch evt. Kosten für eine Bautrafohilfsstation. Die Abgabe des Baustroms an die Professionisten wird direkt weiterverrechnet mit Aufteilungsschlüssel durch den Auftraggeber.<br/> Die Kosten für die Grobabsteckung des Aushubes sowie Achsen für das Schnurgerüst trägt der Auftragnehmer. Bei Beanspruchung von Fremdgrund, sind die Vermessungsarbeiten und das wieder herstellen der Grenzpunkte auf Kosten des AN einzukalkulieren.<br/> Die Herstellung des Meterrisses in sämtlichen Räumen vor und nach Innenputz sowie nach Fertigstellung des Trockenbaues ist in die Einheitspreise einzukalkulieren.<br/></p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="10">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Abgrenzungen Zuordnungen</stichwort>
+                      <langtext>
+                        <p>In dieser Leistungsgruppe sind die Baustellengemeinkosten, die nicht gemäß den Fachnormen als Nebenleistungen mit den mengenabhängigen Positionen abgegolten werden, zusammengefasst. Insbesondere zählen hierzu die Baustelleneinrichtung, die Gerätekosten, Kosten von Sonderfachleuten und Kosten zur Gewährleistung von Sicherheit und Gesundheitsschutz von Arbeitnehmern auf der Baustelle soweit solche Maßnahmen nicht in anderen Positionen einkalkuliert sind. Bei Verrechnung nach Monaten (Mo) gilt ein Kalendertag als ein Dreißigstel. Eine Umrechnung nach Tagen kann nur für jene Zeit erfolgen, welche über die Vollmonate der angefallenen Einsatzzeit hinausgeht.<br/></p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+                <grundtextnr nr="11">
+                  <grundtext>
+                    <langtext>
+                      <p>Der Bieter weist die Preisbildung der angegebenen Positionen durch eine detaillierte Aufgliederung der Preiskomponenten gemäß ÖNORM B 2061 nach (K-7 Blatt beziehungsweise K-6 Blatt).</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Kalk-Aufglied.Baust-gemeink.</stichwort>
+                      <langtext>
+                        <p>Auf Anforderung des Auftraggebers, für alle Positionen der Leistungsgruppe Baustellengemeinkosten.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="12">
+                  <grundtext>
+                    <langtext>
+                      <p>Die Mindest-Voraussetzung (Anschlussmöglichkeiten) zur Erfüllung der Vorschriften bezüglich der Sicherheit und des Gesundheitsschutzes von Arbeitnehmern, bestehend aus Stromanschlussmöglichkeit 230 V mit Baustromverteiler zum Anschluss der Beleuchtung und Sozialeinrichtung, Wasseranschlussmöglichkeit für Sozialeinrichtungen (Waschgelegenheiten, WC usw.) und Abwasserentsorgung wird wie folgt geregelt:<br/></p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Mindest-Vorauss.Baustelle AN</stichwort>
+                      <langtext>
+                        <p>Wird vom Auftragnehmer zur Verfügung gestellt.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+          </ulg-liste>
+        </lg>
+        <lg nr="36">
+          <lg-eigenschaften>
+            <ueberschrift>Holzbau</ueberschrift>
+            <vorbemerkung>
+              <p>Soweit in Vorbemerkungen oder Positionstexten nicht anders angegeben, gelten für alle Leistungen dieser Gruppe folgende Regelungen:</p>
+              <p><b>1. Materialien:</b></p>
+              <p>Im Folgenden sind Ausführungen in Lärche beschrieben.</p>
+              <p>Wenn nicht anders angegeben, wird Vollholz (VH) verwendet.</p>
+              <p><b>Vollholz (VH): </b>Für Vollholz gilt eine maximale Einzellänge von 6 m in einer Festigkeitsklasse C 24.</p>
+              <p><b>Konstruktionsvollholz: </b>Als Konstruktionsvollholz wird keilgezinktes Vollholz gemäß ÖNORM EN 15497, Oberfläche egalisiert (auf Maß gehobelt, mit zulässigen Raustellen) verwendet. Soweit in der Position nicht gesondert angegeben, gelten für Konstruktionsvollholz eine maximale Einzellänge von 13 m, eine maximale Breite von 16 cm und eine maximale Höhe von 28 cm. </p>
+              <p><b>Brettschichtholz (BSH): </b>Es wird Brettschichtholz gemäß ÖNORM EN 14080 mit der Festigkeitsklasse GL 24h verwendet. Für Brettschichtholz gilt eine maximale Höhe von 60 cm, eine maximale Breite von 24 cm und eine maximale Einzellänge von 13 m.</p>
+              <p><b>Brettsperrholz (BSP): </b>Es wird Brettsperrholz mit einer Europäisch technischen Zulassung (ETZ) verwendet. Ausgangsmaterial ist Vollholz C24, E0, mean=11600 N/mm<sup>2</sup>; Gr, mean=65 N/mm<sup>2</sup>, fertig abgebunden mit Formatschnitt senkrecht zur Plattenebene.</p>
+              <p><b>Oriented Strand Board (OSB): </b>Es wird der Plattentyp OSB/3 für tragende Zwecke ungeschliffen und stumpf gestoßen im Feuchtbereich gemäß ÖNORM verwendet. </p>
+              <p><b>Spanplatte:</b> Spanplatten, geschliffen, werden für tragende Zwecke im Trockenbereich gemäß ÖNORM verwendet.</p>
+              <p><b>Mitteldichte Faserplatte (MDF): </b>Plattentyp MDF.LA für tragende Zwecke zur Verwendung im Trockenbereich gemäß ÖNORM.</p>
+              <p><b>2. Oberflächenqualität:</b></p>
+              <p>Die Oberflächen werden gemäß ÖNORM ausgeführt.</p>
+              <p><b>3. Höhen: </b></p>
+              <p>Im Folgenden sind Leistungen bei Höhen von Null bis 3,2 m (b.3,2m) beschrieben. </p>
+              <p><b>4. Leistungsumfang/einkalkulierte Leistungen:</b></p>
+              <ul><li>Montagehilfen (z.B. Unterstellungen, Abspannungen)</li><li>Einbauteile und Verbindungsmittel aus Stahl bis 1 kg je Stück</li><li>Dachkonstruktionen mit einer Neigung bis 45° (ausgenommen Mansardendach)</li></ul>
+            </vorbemerkung>
+          </lg-eigenschaften>
+          <ulg-liste>
+            <ulg nr="00">
+              <ulg-eigenschaften>
+                <ueberschrift>Wählbare Vorbemerkungen</ueberschrift>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="04">
+                  <grundtext>
+                    <langtext>
+                      <p>Folgende Angaben und Anforderungen an die Art und Weise der Leistungserbringung gelten als vereinbart und sind in die Einheitspreise einkalkuliert:</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>einkalk. Leistungen</stichwort>
+                      <langtext>
+                        <p>Sämtliche Klein- und Nebenteile, Verbindungsmittel, Stoßbretter, Schwellenhölzer, Schall- und Luftdichtbänder, Ausschnitte für Öffnungen, Sturmverankerungen, etc. sind in den Positionspreis einzukalkulieren.<br/>Die BSP- Wände und Decken werden nach tatsächlich verlegter Fläche, unabhängig der Form ohne jegliche Zuschläge und Aufzahlungen für Schrägschnitte, Ausschnitte, etc. vergütet. Innenliegende Öffnungen (Türöffnungen) über 2,5 m2 werden in Abzug gebracht.</p>
+                      </langtext>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="16">
+              <ulg-eigenschaften>
+                <ueberschrift>Schalungen und Lattungen</ueberschrift>
+                <vorbemerkung>
+                  <p>Vorbemerkungen:<br/><br/>Aussparungen bei Schalungen und Lattungen<br/>bis zu einer Einzelfläche von 4,0 m2,<br/>werden bei der Ausmaßermittlung nicht<br/>abgezogen.<br/></p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="20">
+                  <grundtext>
+                    <langtext>
+                      <p>.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Balkontrennwände in Holz</stichwort>
+                      <langtext>
+                        <p>Lärche Balkontrennwände mit einer Lärchenlattung und einem Hohlrahmen an Boden und Wand befestigt.<br/>Oberflächenbehandlung: sägerau</p>
+                        <p>Maße: 170*220cm</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>1.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Pflanzkübel</stichwort>
+                      <langtext>
+                        <p>Lärche Pflanzkübel - horizontale Lattung - 60mm Rombusleisten im Abstand von 10mm aufeinander gesetzt, verdeckt geschraubt, Innenseite mit Wurzelvlies verkleidet, Füsse min. 20mm, Ecken auf Gehrung geschnitten<br/>Oberflächenbehandlung: sägerau</p>
+                        <p>Außenmaße: L170 x B 50 x H60cm</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>2.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="30">
+                  <grundtext>
+                    <langtext>
+                      <p>Lattung und Traglattung.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Rankhilfe</stichwort>
+                      <langtext>
+                        <p>Herstellen, liefern und montieren einer Rankhilfe bestehend aus einer horizontalen Lattung, einschließlich Befestigung einer Vertikalen Lattung auf Betonuntergrund</p>
+                        <p>Querschnitt, Breite/Höhe (cm): 24 mm x 60 mm</p>
+                        <p>Achsabstand (cm): 40 - 60 mm</p>
+                        <p>Maße: B 240cm x H 180cm</p>
+                        <p>(ähnlich der Abb., anstatt der Edelstahlrohre mittig, eine Traglattung an Betonwand montiert)</p>
+                      </langtext>
+                      <grafiklinks>
+                        <grafiklink linkid="f0828767-b6fe-4046-b701-ae5bdd137d42"></grafiklink>
+                      </grafiklinks>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>2.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="40">
+                  <grundtext>
+                    <langtext>
+                      <p>.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Lamellenfassade</stichwort>
+                      <langtext>
+                        <p>bestehend aus 5 Stück Lärche-Lamellen, Neigung verstellbar, Tiefe 50cm (siehe Schnitt B und C)</p>
+                        <p>Oberflächenbehandlung: sägerau</p>
+                        <p>Maße: 275 x 245cm</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>1.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="18">
+              <ulg-eigenschaften>
+                <ueberschrift>Trennwände (Abteilungswände)</ueberschrift>
+                <vorbemerkung>
+                  <p>.</p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="01">
+                  <grundtext>
+                    <langtext>
+                      <p>Trennwände (Kellerabteilwände) mit Auswechslungen für Stockrahmen, einschließlich aller Befestigungsmittel, Wand bis 2,6 m hoch. Kantholzgerippe 8 cm dick, Säulen, Schwellen und Riegel in Entfernung von höchstens 1 m, abgerechnet ohne Abzug für Öffnungen.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Trennwand raue Latten</stichwort>
+                      <langtext>
+                        <p>Aus rauem Kantholzgerippe mit rauer Lattung, 5 x 2,4 cm, Zwischenräume bis 5 cm.</p>
+                      </langtext>
+                      <einheit>m²</einheit>
+                      <pzzv>
+                        <normalposition_einer_variante>
+                          <zz>TR</zz>
+                          <variantennummer>0</variantennummer>
+                        </normalposition_einer_variante>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>30.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="C" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Trennwand gehob.Latten</stichwort>
+                      <langtext>
+                        <p>Trennwände (Kellerabteilwände) mit Auswechslungen für Stockrahmen, einschließlich aller Befestigungsmittel, Wand bis 2,66 m hoch. Kantholzgerippe 8 cm dick, Säulen, Schwellen und Riegel in Entfernung von höchstens 1,0 m, abgerechnet ohne Abzug für Öffnungen.<br/>Trennwände Aus gehobeltem Kantholzgerippe<br/>mit gehobelter Lattung, im Rauhmaß 2,4 x 5<br/>cm, Zwischenräume bis 5 cm inkl.<br/>Ausschnitte für Lüftungen, Leitungen o.ä.<br/>Ausführung lt. Polierplan</p>
+                      </langtext>
+                      <einheit>m²</einheit>
+                      <pzzv>
+                        <wahlposition>
+                          <zz>TR</zz>
+                          <variantennummer>1</variantennummer>
+                        </wahlposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>30.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="02">
+                  <grundtext>
+                    <langtext>
+                      <p>.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Az Trennw.Tür raue Latten</stichwort>
+                      <langtext>
+                        <p>Mit rauer Lattung.</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition_einer_variante>
+                          <zz>TT</zz>
+                          <variantennummer>0</variantennummer>
+                        </normalposition_einer_variante>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>4.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Az.Trennw.Tür.gehob.Latten</stichwort>
+                      <langtext>
+                        <p>Aufzahlung (Az) auf die Positionen Trennwände mit einem Holzgerippe bis 8 cm dick für die Ausführung einer Drehtüre, 80/200 cm, gerichtet für Sperrung mit bauseitigem Vorhangschloss.<br/>Trennwände mit einem Holzgerippe bis 8 cm<br/>dick. Mit gehobelter Lattung.</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <wahlposition>
+                          <zz>TT</zz>
+                          <variantennummer>1</variantennummer>
+                        </wahlposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>4.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="19">
+              <ulg-eigenschaften>
+                <ueberschrift>Fassade</ueberschrift>
+                <vorbemerkung>
+                  <p>Die vorgehängte, hinterlüftete Fassade umfasst das Gesamtsystem bestehend aus Unterkonstruktion, Verankerungs-, Verbindungs- und Befestigungselementen, Hinterlüftungsspalt und Außenschicht aus Holz. </p>
+                  <p><b>Neigungen:</b>
+</p>
+                  <p>Fassadenneigungen von 0° bis 15° zur Vertikalen sind in die Einheitspreise einkalkuliert.</p>
+                  <p></p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="05">
+                  <grundtext>
+                    <langtext>
+                      <p>Lattung, Konterlattung und Traglattung.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="L" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Schindelfassade</stichwort>
+                      <langtext>
+                        <p>Herstellen, Liefern und Montieren einer Schindelfassade inkl. der Unterkonstruktion, Dämmung, Schalung und Insektenschutzgitter, inkl. aller erforderlichen Hilfs- und Befestigungsmittel um die Leistung zu erbringen.</p>
+                        <p>Untergrund: STB</p>
+                        <p></p>
+                        <p>Wandaufbau geplant: </p>
+                        <p>12cm Lattung vertikal dazw. MW-WF (Steinwolle)</p>
+                        <p>10cm Lattung horizontal dazw. MW-WF (Steinwolle)</p>
+                        <p>Windpapier - diffusionsoffen und UV-beständig</p>
+                        <p>0,3cm Holzlattung vertikal/Hinterlüftung</p>
+                        <p>2,5cm Sparschalung</p>
+                        <p>1,5cm Holzschindeln Lärche</p>
+                      </langtext>
+                      <einheit>m²</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>130.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="65">
+              <ulg-eigenschaften>
+                <ueberschrift>Terrassen-u.Balkonbeläge</ueberschrift>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="01">
+                  <grundtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Holzlattenrost Balkone</stichwort>
+                      <langtext>
+                        <p>Herstellen, Liefern und Versetzen von Lärchenholzrosten bestehend aus zweilagigen Polsterhölzern<br/>(Oberseite eben, Unterseite im Gefälle) ca. 55 x 85 mm und mind. einseitig geriffelten Lärchendielen ca. 115 x 30 mm, befestigt mit selbstbohrenden Niro V-2a Schrauben.<br/>Die Konstruktion ist vollflächig mit Gummigranulatstreifen zu unterlegen.<br/>Dielenabstand zueinander 10 mm, sichtbare Kanten gerundet, nicht sichtbare Kanten gefast. Die Balkonplatten weisen ein Gefälle von 2,0 % auf. Die Lärchenroste sind horizontal zu verlegen, inkl. dem Gefälleausgleich und etwaiger punktueller Befestiung am Untergrund gegen Abrutschen.<br/><br/>Holzart: heimische Lärche (Beste Qualität)<br/>Balkontiefe: variabel<br/>Oberflächenbehandlung: einseitig geriffelt, </p>
+                        <p>Unterkonstruktion: Imprägnierung mit Holzschutzmittel </p>
+                        <p>Dielen: unbehandelt (vorgetrocknet)<br/>Ort: Balkone <br/><br/>Ausführung lt. Polierpläne: Schnitte</p>
+                      </langtext>
+                      <einheit>m²</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>50.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="02">
+                  <grundtext>
+                  </grundtext>
+                  <folgeposition ftnr="R" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Fassadenrinne</stichwort>
+                      <langtext>
+                        <p>Fassaden- und Terrassenrinne, <br/>stufenlos von oben höhenverstellbar 10,8-16,8cm<br/>beidseitig integrierte Kiesleiste gegen fassadenseitige Staunässe, 4mm Drainschlitze, geschlossenem Rinnenboden, werkseitig vormontiertem Rostverriegelungs- und Rinnenverbindungssystem, einliegender Rost, begehbar sowie rollstuhlbefahrbar<br/><br/>hydraulische Leistung 3,75-5,25 l/(sec.*m)<br/><br/>liefern und verlegen<br/><br/>Fabrikat: ACO ProfiLine oder gleichwertiges: <bl></bl><br/><br/>Material: Stahl verzinkt<br/>Baubreite: 25 cm<br/>Bauhöhe: 10,8 - 16,8 cm<br/>Baulänge: 100 cm</p>
+                      </langtext>
+                      <einheit>m</einheit>
+                      <pzzv>
+                        <eventualposition>
+                        </eventualposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>40.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="70">
+              <ulg-eigenschaften>
+                <ueberschrift>Einfriedungen aus Holz</ueberschrift>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="07">
+                  <grundtext>
+                    <langtext>
+                      <p>Lattenzaun aus heimischen Lärchenholz, Oberfläche sägerau , mit drei Tragriegeln und Standsäulen aus Formrohr im Abstand bis ca. 1,30 1,50 m, Lattenabstand ca. 3 cm</p>
+                      <p>Das Versetzen der Standsäulen ist in den Laufmeterpreis des Zaun einzurechnen.</p>
+                      <p>Abgerechnet wird die einfache Ansichtsfläche, Türen und Tore sind in einer Extra Position.</p>
+                      <p>Alle Stahlteile ( Säulen ) sind VERZINKT und die Schrauben in Edelstahl anzubieten.</p>
+                      <p>Im Positionsstichwort sind die Abmessungen der Latten (cm) und die Höhe des Zaunes angegeben.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Zaun heimische Lärche 1,05 m H. m. freistehenden Stahlsä. au</stichwort>
+                      <langtext>
+                        <p>Herstellen, Liefern und Montieren des Zauns aus heimischer Lärche mit einer Höhe von 1,05 m, auf Betonmauer mit Formrohr 50/50/4, mit Anschraubplatten unten und 3x Anschraublasche ca. 100/80/5 verzinkt.</p>
+                        <p>Ober- und Unterkante werden dem Geländeverlauf angepasst.</p>
+                        <p>Beschreibung: </p>
+                        <ul><li>3 Stk. Riegel Lärche 120/50 mm, schräg geschnitten</li><li>FR 50/50/4 mit Befestigungslaschen</li><li>Lattung 40/80 mm sägerau, stehend </li><li>Abstand zwischen Latten 30 mm</li></ul>
+                        <p>EP-Preis inkl. aller Hilfs- und Befestigungsmittel um die Leistung zu erbringen.</p>
+                      </langtext>
+                      <einheit>m</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>50.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="S" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Holzzaunsäule befest.St-schuh</stichwort>
+                      <langtext>
+                        <p>Auf dem vorhandenen Betonsockel mit Stahlschuh befestigt, ohne Unterschied des Holzquerschnittes und der Zaunhöhe, einschließlich des feuerverzinkten Stahlschuhes.</p>
+                      </langtext>
+                      <einheit>Stk</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>32.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+            <ulg nr="90">
+              <ulg-eigenschaften>
+                <ueberschrift>Regieleistungen</ueberschrift>
+                <vorbemerkung>
+                  <p></p>
+                  <p><b>1. Allgemeines:</b></p>
+                  <p>In dieser Unterleistungsgruppe werden nur angehängte Regieleistungen gemäß ÖNORM B 2110 erfasst.</p>
+                  <p>Regieleistungen werden nur ausgeführt, wenn sie vom Auftraggeber im Einzelfall angeordnet werden, auch wenn sie im Vertrag (Leistungsverzeichnis) vorgesehen sind.</p>
+                  <p>Die aufgewendeten Stunden, verwendeten Geräte, Transportleistungen und verbrauchten Stoffe werden täglich in die Regiescheine eingetragen und dem Auftraggeber zur Gegenzeichnung vorgelegt.</p>
+                  <p><b>2. Mengenänderungen:</b><br/><br/>Die Bestimmungen, wonach bei Mengenänderungen die Neuvereinbarung von Einheitspreisen verlangt werden kann, sind auf Regieleistungen nicht anwendbar.</p>
+                  <p><b>3. Beschäftigungsgruppen:</b><br/><br/>Die angeführten Beschäftigungsgruppen entsprechen den kollektivvertraglichen Regelungen. In den Stundensätzen sind auch anteilige Wegegelder, Fahrtspesen und Aufwandsentschädigungen (Auslösen) einkalkuliert. Verrechnet wird die an der Arbeits- oder Montagestelle tatsächlich geleistete Arbeitszeit, die kleinste Einheit ist die angefangene halbe Stunde.</p>
+                  <p><b>4. Leistungsumfang/einkalkulierte Leistungen:</b></p>
+                  <p>Die Einheitspreise für Stoffe gelten frei Baustelle, einschließlich Abladen.</p>
+                  <p><b>5. Ausmaß- und Abrechnungsregeln:</b></p>
+                  <p>Zur Verrechnung kommen die Stundensätze jener Beschäftigungsgruppe, die für die jeweilige Regieleistung ausreicht, unabhängig von der Qualifizierung des tatsächlich eingesetzten Personals.</p>
+                </vorbemerkung>
+              </ulg-eigenschaften>
+              <positionen>
+                <grundtextnr nr="01">
+                  <grundtext>
+                    <langtext>
+                      <p>Regiestunden.</p>
+                    </langtext>
+                  </grundtext>
+                  <folgeposition ftnr="A" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Regiestunde Facharbeiter</stichwort>
+                      <langtext>
+                        <p>Facharbeiter.</p>
+                      </langtext>
+                      <einheit>h</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>50.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                  <folgeposition ftnr="B" mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Regiestunde Hilfsarbeiter</stichwort>
+                      <langtext>
+                        <p>Hilfsarbeiter.</p>
+                      </langtext>
+                      <einheit>h</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>50.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </folgeposition>
+                </grundtextnr>
+                <grundtextnr nr="51">
+                  <ungeteilteposition mfv="">
+                    <pos-eigenschaften>
+                      <stichwort>Materiallieferungen f.Regieleistungen</stichwort>
+                      <langtext>
+                        <p>Materiallieferungen für angeordnete Regieleistungen, für die keine gesonderten Regiepositionen ausgeschrieben wurden, werden mit einem prozentuellen Aufschlag (Gesamtzuschlag Material) auf die vom Auftragnehmer nachgewiesenen Materialkosten frei Bau (ohne Umsatzsteuer) abgerechnet (sinngemäß K4 nach ÖNORM B 2061).</p>
+                        <p>Der Rechnungsbetrag ist durch saldierte Rechnungen nachzuweisen und muss allfällige gewährte Rabatte berücksichtigen. Skonti (Nachlässe bei früherem Zahlungsziel) oder Zinsen für verspätete Zahlungen bleiben unberücksichtigt.</p>
+                        <p>Diese Position unterliegt auch bei Verträgen zu veränderlichen Preisen nicht der Preisumrechnung.</p>
+                        <p>Als Einheitspreis wird der angebotene Prozentsatz mit höchstens 2 Stellen nach dem Komma als Faktor eingesetzt.</p>
+                        <p>1 VE = 1 EURO</p>
+                        <p>Beispiel:<br/>angebotener Prozentsatz: +12%<br/>als Einheitspreis einzusetzen: 1,12</p>
+                      </langtext>
+                      <einheit>VE</einheit>
+                      <pzzv>
+                        <normalposition>
+                        </normalposition>
+                      </pzzv>
+                      <leistungsteil>1</leistungsteil>
+                      <lvmenge>1000.00</lvmenge>
+                      <nichtangeboten></nichtangeboten>
+                    </pos-eigenschaften>
+                  </ungeteilteposition>
+                </grundtextnr>
+              </positionen>
+            </ulg>
+          </ulg-liste>
+        </lg>
+      </lg-liste>
+    </gliederung-lg>
+    <variantenzusammenstellungstabelle>
+      <variantenzusammenstellung nr="A">
+        <bezeichnung>Kellertrennwände</bezeichnung>
+        <zuordnungen>
+          <zuordnung zz="TR">
+            <variantennummer>1</variantennummer>
+          </zuordnung>
+          <zuordnung zz="TT">
+            <variantennummer>0</variantennummer>
+          </zuordnung>
+        </zuordnungen>
+      </variantenzusammenstellung>
+    </variantenzusammenstellungstabelle>
+  </ausschreibungs-lv>
+</onlv>

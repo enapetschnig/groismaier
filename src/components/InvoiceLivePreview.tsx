@@ -5,7 +5,7 @@ import { KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { supabase } from "@/integrations/supabase/client";
 import {
-  generateEpcQrCode,
+  zahlungsQrFuerBeleg,
   DEFAULT_BANK,
   type InvoiceHtmlData,
   type InvoiceHtmlItem,
@@ -39,7 +39,6 @@ import { loadInvoiceLogo } from "@/lib/logoLoader";
 const STORAGE_KEY = "invoiceLivePreviewOpen";
 const DEBOUNCE_MS = 800;
 // Gleiche Menge wie im Vorschau-Dialog: QR nur für zahlbare Rechnungstypen.
-const PAYABLE_QR_TYPES = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
 
 interface InvoiceLivePreviewProps {
   formData: InvoiceHtmlData & Record<string, any>;
@@ -163,18 +162,14 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         docTextsRef.current[fd.typ] = await loadDocumentTexts(fd.typ);
       }
 
-      let qrDataUri: string | undefined;
-      if (PAYABLE_QR_TYPES.has(fd.typ) && Number(fd.brutto_summe) > 0) {
-        try {
-          qrDataUri = await generateEpcQrCode(
-            Number(fd.brutto_summe),
-            fd.nummer || "Rechnung",
-            settingsRef.current.bank
-          );
-        } catch {
-          /* QR optional */
-        }
-      }
+      // Dieselbe QR-Regel wie beim Erstellen — die Vorschau darf nichts
+      // versprechen, was die fertige Rechnung nicht hält.
+      const qrDataUri = await zahlungsQrFuerBeleg(
+        fd.typ,
+        Number(fd.brutto_summe),
+        fd.nummer || "Rechnung",
+        settingsRef.current.bank
+      );
 
       const tageMatch = (fd.zahlungsbedingungen || "").match(/\d+/);
       const invoiceWithTexts = applyDocumentTextsToInvoice(fd, docTextsRef.current[fd.typ], {

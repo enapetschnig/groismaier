@@ -1,10 +1,11 @@
-import { BarChart3, Download, Check, ChevronsUpDown, FolderOpen, ImagePlus, Home } from "lucide-react";
+import { BarChart3, Download, Check, ChevronsUpDown, FolderOpen, ImagePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -48,6 +49,8 @@ type StorageFile = {
 
 const Reports = () => {
   const navigate = useNavigate();
+  // Zurück über den Verlauf; beim Direkteinstieg (PWA) zur Startmaske.
+  const zurueck = useZurueck("/");
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProject, setSelectedProject] = useState<string>("all");
   const [open, setOpen] = useState(false);
@@ -287,18 +290,7 @@ const Reports = () => {
     <div className="kb-page min-h-screen">
       <KBToolbar
         title="Projektberichte & Dateien"
-        onBack={() => navigate(-1)}
-        rightActions={
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            aria-label="Zur Startmaske"
-            title="Zur Startmaske"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-          >
-            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-          </button>
-        }
+        onBack={zurueck}
       />
 
       <main className="container mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">

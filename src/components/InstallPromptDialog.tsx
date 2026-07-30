@@ -1,292 +1,195 @@
+/**
+ * „App installieren" — erkennt das Gerät selbst und zeigt sofort den
+ * passenden Weg, statt den Anwender zuerst raten zu lassen.
+ *
+ * Aufbau:
+ *   1. Läuft die Seite schon als installierte App → grüner Bestätigungskasten.
+ *   2. Chromium (Chrome/Edge/Samsung): großer „Jetzt installieren"-Knopf,
+ *      sobald der Browser das beforeinstallprompt-Ereignis geliefert hat.
+ *   3. Darunter immer die Schritt-für-Schritt-Anleitung für das ERKANNTE
+ *      Gerät — plus Umschalter auf die anderen Geräte, damit der Chef einem
+ *      Mitarbeiter den Weg für dessen Handy zeigen kann.
+ *
+ * Der Dialog wird an zwei Stellen geöffnet: automatisch nach dem ersten
+ * Login (OnboardingContext, vor allem am Handy) und über den
+ * „App installieren"-Knopf rechts oben auf der Startseite.
+ */
 import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Smartphone, Share2, CheckCircle2, Apple, SquareArrowUp, Plus } from "lucide-react";
+import { CheckCircle2, Download, MonitorDown } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import {
+  erkennePlattform, anleitungFuer, kannDirektInstallieren,
+  geraetName, browserName, type Geraet, type PlattformInfo,
+} from "@/lib/plattform";
 
 interface InstallPromptDialogProps {
   open: boolean;
   onClose: () => void;
 }
 
-export function InstallPromptDialog({ open, onClose }: InstallPromptDialogProps) {
-  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-  const [selectedPlatform, setSelectedPlatform] = useState<'ios' | 'android' | null>(null);
-  const [showManualGuide, setShowManualGuide] = useState(false);
-  const [isInstalled, setIsInstalled] = useState(false);
+/** Läuft die Seite bereits als installierte App? (iOS setzt navigator.standalone) */
+const laeuftAlsApp = (): boolean =>
+  window.matchMedia("(display-mode: standalone)").matches ||
+  (navigator as { standalone?: boolean }).standalone === true;
 
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches;
+/** Umschalter-Reihenfolge: das erkannte Gerät kommt zuerst. */
+const GERAETE_WAHL: Geraet[] = ["ios", "android", "windows", "macos"];
+
+export function InstallPromptDialog({ open, onClose }: InstallPromptDialogProps) {
+  const [deferredPrompt, setDeferredPrompt] = useState<Event | null>(null);
+  const [isInstalled, setIsInstalled] = useState(laeuftAlsApp());
+  // Das erkannte Gerät ist die Vorauswahl; der Anwender kann umschalten.
+  const [erkannt] = useState<PlattformInfo>(() =>
+    erkennePlattform({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints })
+  );
+  // Linux hat keinen eigenen Umschalter-Chip — es teilt sich die
+  // Windows-Anleitung. Direkt-Knopf und „(dein Gerät)" müssen deshalb gegen
+  // DIESEN Wert geprüft werden, nicht gegen erkannt.geraet.
+  const erkanntChip: Geraet = erkannt.geraet === "linux" ? "windows" : erkannt.geraet;
+  const [gewaehlt, setGewaehlt] = useState<Geraet>(erkanntChip);
+
+  // Beim (Wieder-)Öffnen auf das erkannte Gerät zurückstellen — die
+  // Komponente bleibt dauerhaft gemountet, sonst klebt die letzte Auswahl.
+  useEffect(() => {
+    if (open) setGewaehlt(erkanntChip);
+  }, [open, erkanntChip]);
 
   useEffect(() => {
-    if (isStandalone) {
-      setIsInstalled(true);
-    }
-
-    const handler = (e: Event) => {
+    const promptHandler = (e: Event) => {
       e.preventDefault();
       setDeferredPrompt(e);
     };
-
-    window.addEventListener('beforeinstallprompt', handler);
-
-    window.addEventListener('appinstalled', () => {
+    const installedHandler = () => {
       setIsInstalled(true);
       toast({
         title: "App installiert!",
         description: "Die App wurde erfolgreich auf deinem Gerät installiert.",
       });
-    });
-
-    return () => {
-      window.removeEventListener('beforeinstallprompt', handler);
     };
-  }, [isStandalone]);
-
-  const handlePlatformSelect = (platform: 'ios' | 'android') => {
-    setSelectedPlatform(platform);
-    if (platform === 'ios') {
-      setShowManualGuide(true);
-    }
-  };
+    window.addEventListener("beforeinstallprompt", promptHandler);
+    window.addEventListener("appinstalled", installedHandler);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", promptHandler);
+      window.removeEventListener("appinstalled", installedHandler);
+    };
+  }, []);
 
   const handleInstallClick = async () => {
-    if (!deferredPrompt) {
-      toast({
-        variant: "destructive",
-        title: "Installation nicht verfügbar",
-        description: "Bitte nutze die manuelle Anleitung für dein Gerät.",
-      });
-      setShowManualGuide(true);
-      return;
-    }
-
-    deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
-
-    if (outcome === 'accepted') {
-      toast({
-        title: "Installation gestartet",
-        description: "Die App wird jetzt installiert...",
-      });
+    if (!deferredPrompt) return;
+    const prompt = deferredPrompt as Event & { prompt: () => void; userChoice: Promise<{ outcome: string }> };
+    prompt.prompt();
+    const { outcome } = await prompt.userChoice;
+    if (outcome === "accepted") {
       onClose();
     }
-
+    // Der Browser erlaubt nur einen prompt()-Aufruf je Ereignis.
     setDeferredPrompt(null);
   };
 
-  const handleShowManual = () => {
-    setShowManualGuide(true);
-  };
+  // Direkt-Knopf nur, wenn der Anwender das ERKANNTE Gerät ansieht — die
+  // Anleitung für ein fremdes Handy braucht keinen Installieren-Knopf.
+  const zeigeDirektKnopf =
+    !isInstalled && gewaehlt === erkanntChip && kannDirektInstallieren(erkannt);
 
-  const handleBack = () => {
-    if (showManualGuide) {
-      setShowManualGuide(false);
-      if (selectedPlatform === 'ios') {
-        setSelectedPlatform(null);
-      }
-    } else if (selectedPlatform) {
-      setSelectedPlatform(null);
-    }
-  };
+  // Anleitung: für das erkannte Gerät mit dem erkannten Browser, für die
+  // anderen Geräte mit deren üblichem Browser.
+  const anleitung = gewaehlt === erkanntChip
+    ? anleitungFuer(erkannt.geraet, erkannt.browser)
+    : anleitungFuer(gewaehlt, gewaehlt === "macos" ? "safari" : "chrome");
 
   return (
-    <Dialog open={open}>
-      <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto">
+    <Dialog open={open} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="text-2xl">
-            {isInstalled 
-              ? "App bereits installiert!" 
-              : showManualGuide 
-                ? "Installationsanleitung" 
-                : "App installieren - Anleitung um deine App zum Startbildschirm hinzuzufügen"}
+          <DialogTitle className="text-xl">
+            {isInstalled ? "App bereits installiert" : "App installieren"}
           </DialogTitle>
           <DialogDescription>
-            {isInstalled 
-              ? "Die App ist bereits installiert! Du kannst sie jederzeit verwenden."
-              : showManualGuide
-                ? "Folge diesen Schritten, um die App zu installieren:"
-                : "Wähle zuerst deine Plattform aus:"}
+            {isInstalled
+              ? "Die App liegt schon auf diesem Gerät — du kannst sie direkt vom Startbildschirm öffnen."
+              : `Erkannt: ${geraetName(erkannt.geraet)} mit ${browserName(erkannt.browser)}. Die Anleitung unten passt zu deinem Gerät.`}
           </DialogDescription>
         </DialogHeader>
 
-        {/* Schritt 1: Plattformauswahl */}
-        {!isInstalled && !selectedPlatform && !showManualGuide && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <Card 
-              className="cursor-pointer hover:shadow-lg transition-all hover:border-primary" 
-              onClick={() => handlePlatformSelect('ios')}
-            >
-              <CardHeader>
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
-                  <Apple className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">iOS / iPhone / iPad</CardTitle>
-                <CardDescription>
-                  Für Apple-Geräte (Safari Browser)
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button variant="outline" className="w-full">
-                  Weiter
-                </Button>
-              </CardContent>
-            </Card>
-
-            <Card 
-              className="cursor-pointer hover:shadow-lg transition-all hover:border-primary" 
-              onClick={() => handlePlatformSelect('android')}
-            >
-              <CardHeader>
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
-                  <Smartphone className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">Android / Desktop</CardTitle>
-                <CardDescription>
-                  Für Android-Geräte und Desktop-Browser
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button variant="outline" className="w-full">
-                  Weiter
-                </Button>
-              </CardContent>
-            </Card>
+        {isInstalled ? (
+          <div className="bg-primary/5 border border-primary/20 p-4 rounded-lg flex items-center gap-3">
+            <CheckCircle2 className="h-8 w-8 text-primary shrink-0" />
+            <p className="text-sm">
+              Du findest „Holzbau Groismaier“ am Startbildschirm bzw. in deinen Apps.
+            </p>
           </div>
-        )}
-
-        {/* Schritt 2: Installationsoptionen für Android */}
-        {!isInstalled && selectedPlatform === 'android' && !showManualGuide && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary" onClick={handleInstallClick}>
-              <CardHeader>
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
-                  <Smartphone className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">Direkt installieren</CardTitle>
-                <CardDescription>
-                  {deferredPrompt 
-                    ? "Installation mit einem Klick starten" 
-                    : "Auf diesem Gerät nicht verfügbar"}
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button 
-                  className="w-full" 
-                  disabled={!deferredPrompt}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleInstallClick();
-                  }}
-                >
-                  Jetzt installieren
+        ) : (
+          <div className="space-y-4">
+            {/* Direkt installieren — nur wo der Browser das kann */}
+            {zeigeDirektKnopf && (
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 space-y-2">
+                <p className="text-sm font-medium">Am schnellsten geht es direkt:</p>
+                <Button className="w-full h-11" onClick={handleInstallClick} disabled={!deferredPrompt}>
+                  <Download className="mr-2 h-4 w-4" />
+                  {deferredPrompt ? "Jetzt installieren" : "Installation wird vorbereitet…"}
                 </Button>
-              </CardContent>
-            </Card>
+                {!deferredPrompt && (
+                  <p className="text-xs text-muted-foreground">
+                    Wenn der Knopf nicht aktiv wird, nutze die Schritte unten — das
+                    Ergebnis ist dasselbe.
+                  </p>
+                )}
+              </div>
+            )}
 
-            <Card className="cursor-pointer hover:shadow-lg transition-all hover:border-primary" onClick={handleShowManual}>
-              <CardHeader>
-                <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center mb-2">
-                  <Share2 className="h-6 w-6 text-primary" />
-                </div>
-                <CardTitle className="text-lg">Anleitung ansehen</CardTitle>
-                <CardDescription>
-                  Schritt-für-Schritt Anleitung für Android
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleShowManual();
-                  }}
+            {/* Geräte-Umschalter: erkanntes Gerät zuerst */}
+            <div className="flex flex-wrap gap-1.5">
+              {[...GERAETE_WAHL].sort((a, b) =>
+                (a === erkanntChip ? -1 : 0) - (b === erkanntChip ? -1 : 0)
+              ).map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  aria-pressed={gewaehlt === g}
+                  onClick={() => setGewaehlt(g)}
+                  className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    gewaehlt === g
+                      ? "border-primary bg-primary/10 text-primary"
+                      : "border-border bg-card hover:bg-muted/50"
+                  }`}
                 >
-                  Anleitung zeigen
-                </Button>
-              </CardContent>
-            </Card>
-          </div>
-        )}
+                  {geraetName(g)}
+                  {g === erkanntChip ? " (dein Gerät)" : ""}
+                </button>
+              ))}
+            </div>
 
-        {/* Schritt 3: Manuelle Anleitung */}
-        {showManualGuide && !isInstalled && (
-          <div className="mt-4 space-y-4">
+            {/* Schritt-für-Schritt */}
             <div className="bg-muted p-4 rounded-lg">
-              {selectedPlatform === 'ios' ? (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
-                      <Share2 className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold mb-1">Für iPhone/iPad (Safari):</h3>
-                      <ol className="list-decimal pl-5 space-y-2 text-sm">
-                        <li className="flex items-center gap-2">Tippe unten (oder rechts oben) auf das Teilen Symbol <SquareArrowUp className="inline h-4 w-4" /> (Quadrat mit Pfeil nach oben)</li>
-                        <li className="flex items-center gap-2">Scrolle nach unten und wähle "Zum Home-Bildschirm" <Plus className="inline h-4 w-4" /></li>
-                        <li>Tippe oben rechts auf "Hinzufügen"</li>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0 mt-1">
-                      <Smartphone className="h-4 w-4 text-primary" />
-                    </div>
-                    <div>
-                      <h3 className="font-semibold mb-1">Für Android (Chrome/Edge):</h3>
-                      <ol className="list-decimal pl-5 space-y-2 text-sm">
-                        <li>Tippe oben rechts auf das Menü-Symbol (drei Punkte)</li>
-                        <li>Wähle "App installieren" oder "Zum Startbildschirm hinzufügen"</li>
-                        <li>Bestätige mit "Installieren"</li>
-                      </ol>
-                    </div>
-                  </div>
-                </div>
+              <h3 className="font-semibold mb-2 flex items-center gap-2 text-sm">
+                <MonitorDown className="h-4 w-4 text-primary" />
+                {anleitung.titel}
+              </h3>
+              <ol className="list-decimal pl-5 space-y-2 text-sm">
+                {anleitung.schritte.map((schritt, i) => (
+                  <li key={i}>{schritt}</li>
+                ))}
+              </ol>
+              {anleitung.hinweis && (
+                <p className="mt-3 text-xs text-muted-foreground">{anleitung.hinweis}</p>
               )}
             </div>
 
             <div className="bg-primary/5 border border-primary/20 p-3 rounded-lg flex items-start gap-2">
-              <CheckCircle2 className="h-5 w-5 text-primary flex-shrink-0 mt-0.5" />
+              <CheckCircle2 className="h-5 w-5 text-primary shrink-0 mt-0.5" />
               <p className="text-sm">
-                Du findest die App dann immer am Homebildschirm
+                Danach liegt die App wie eine normale App am Startbildschirm — mit
+                Anmeldung, die erhalten bleibt.
               </p>
             </div>
           </div>
         )}
 
-        {/* App bereits installiert */}
-        {isInstalled && (
-          <div className="mt-4 bg-primary/5 border border-primary/20 p-4 rounded-lg">
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="h-8 w-8 text-primary" />
-              <div>
-                <h3 className="font-semibold">App bereits installiert!</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Du kannst die App jederzeit verwenden.
-                </p>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Buttons */}
-        <div className="flex gap-3 mt-6">
-          {((selectedPlatform && !showManualGuide && selectedPlatform === 'android') || showManualGuide) && !isInstalled && (
-            <Button variant="outline" onClick={handleBack}>
-              Zurück
-            </Button>
-          )}
-          <Button 
-            onClick={onClose} 
-            className="flex-1"
-          >
-            {isInstalled ? "Fertig" : showManualGuide ? "Verstanden" : "Fertig"}
-          </Button>
-        </div>
+        <Button onClick={onClose} className="w-full">
+          {isInstalled ? "Fertig" : "Verstanden"}
+        </Button>
       </DialogContent>
     </Dialog>
   );

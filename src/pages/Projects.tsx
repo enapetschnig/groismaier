@@ -570,7 +570,7 @@ const Projects = () => {
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setQuickUploadProject({ projectId: project.id, documentType: 'materials' }); }}>
                             <Package className="w-4 h-4 mr-2" />
-                            📦 Materiallisten hochladen
+                            📦 Lieferschein-Fotos hochladen
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>

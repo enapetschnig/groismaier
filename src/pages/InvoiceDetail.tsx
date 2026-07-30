@@ -476,12 +476,29 @@ export default function InvoiceDetail() {
   // KingBill: Dialog „Änderungen speichern?" beim Verlassen mit
   // ungespeicherten Änderungen (Zurück-Button der Toolbar / Abbrechen unten).
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  // Der Dialog wird von zwei Wegen erreicht: Zurück-Pfeil und Haus-Knopf.
+  // Ohne dieses Ziel würde „Speichern & Schließen" nach einem Haus-Klick
+  // fälschlich in die Belegliste statt zur Startmaske führen.
+  const leaveZielRef = useRef<"zurueck" | "home">("zurueck");
+  const verlasseSeite = () => {
+    if (leaveZielRef.current === "home") navigate("/");
+    else zurueck();
+  };
   const handleBackNav = () => {
+    leaveZielRef.current = "zurueck";
     if (isDirty) {
       setLeaveDialogOpen(true);
       return;
     }
     zurueck();
+  };
+  const handleHomeNav = () => {
+    leaveZielRef.current = "home";
+    if (isDirty) {
+      setLeaveDialogOpen(true);
+      return;
+    }
+    navigate("/");
   };
 
   // KingBill-Schrittleiste: echte Tabs — es ist immer NUR der aktive Schritt
@@ -645,7 +662,7 @@ export default function InvoiceDetail() {
   // Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente. Zeigt
   // auf der Detailseite an, wo im Workflow wir sind, und macht Navigation
   // zwischen verknüpften Dokumenten möglich.
-  interface ChainDoc { id: string; typ: string; nummer: string | null; datum: string | null; brutto_summe: number; status: string; }
+  interface ChainDoc { id: string; typ: string; nummer: string | null; datum: string | null; brutto_summe: number; bezahlt_betrag: number | null; status: string; }
   const [chainRoot, setChainRoot] = useState<ChainDoc | null>(null);
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
@@ -1926,7 +1943,7 @@ export default function InvoiceDetail() {
     }
     const { data: rootData } = await supabase
       .from("invoices")
-      .select("id, typ, nummer, datum, brutto_summe, status")
+      .select("id, typ, nummer, datum, brutto_summe, bezahlt_betrag, status")
       .eq("id", rootId)
       .maybeSingle();
     setChainRoot(rootData ? (rootData as ChainDoc) : null);
@@ -1941,7 +1958,7 @@ export default function InvoiceDetail() {
     for (let tiefe = 0; tiefe < 6 && ebene.length > 0; tiefe++) {
       const { data: kinder } = await supabase
         .from("invoices")
-        .select("id, typ, nummer, datum, brutto_summe, status")
+        .select("id, typ, nummer, datum, brutto_summe, bezahlt_betrag, status")
         .in("parent_invoice_id", ebene)
         .order("datum", { ascending: true });
       const neu = (((kinder as any[]) || []) as ChainDoc[]).filter(
@@ -3151,7 +3168,7 @@ export default function InvoiceDetail() {
   const uploadInvoicePdfToProjectFolder = async (invId: string) => {
     if (!form.project_id) return;
     try {
-      const [{ generateInvoicePdf }, { loadInvoiceLogo }, { uploadProjectPdf }, { generateEpcQrCode }] =
+      const [{ generateInvoicePdf }, { loadInvoiceLogo }, { uploadProjectPdf }, { zahlungsQrFuerBeleg }] =
         await Promise.all([
           import("@/lib/pdfGenerator"),
           import("@/lib/logoLoader"),
@@ -3175,14 +3192,8 @@ export default function InvoiceDetail() {
 
       const logoUri = await loadInvoiceLogo();
       const invoiceForPdf = await buildInvoiceForPdf();
-      // EPC-QR-Code (GiroCode) wie im Download-/Print-Pfad
-      let qrDataUri: string | undefined;
-      const isInvoiceLike = ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ);
-      if (isInvoiceLike && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
-        try {
-          qrDataUri = await generateEpcQrCode(bruttoSumme, form.nummer || "", bank);
-        } catch { /* optional */ }
-      }
+      // EPC-QR-Code (GiroCode) — dieselbe Regel wie überall (BIC optional).
+      const qrDataUri = await zahlungsQrFuerBeleg(form.typ, bruttoSumme, form.nummer || "", bank);
       const pdfBlob = await generateInvoicePdf(
         invoiceForPdf,
         items as any,
@@ -3306,12 +3317,19 @@ export default function InvoiceDetail() {
     const newTotal = round2(form.bezahlt_betrag + betrag);
     // Preserve storno status — don't override with payment status
     const newStatus = form.status === "storniert" ? "storniert" : (newTotal >= round2(bruttoSumme) ? "bezahlt" : "teilbezahlt");
-    await supabase.from("invoices").update({ bezahlt_betrag: newTotal, status: newStatus }).eq("id", invoiceId);
+    // Vollzahlung beendet das Mahnverfahren — sonst trägt die bezahlte
+    // Rechnung dauerhaft ihre Mahnstufe (Audit-Befund).
+    await supabase.from("invoices").update({
+      bezahlt_betrag: newTotal,
+      status: newStatus,
+      ...(newStatus === "bezahlt" ? { mahnstufe: 0, naechste_mahnung_am: null } : {}),
+    } as any).eq("id", invoiceId);
     // Eigener Schreibvorgang → updated_at nachziehen, sonst scheitert das
     // nächste Speichern fälschlich am Optimistic Locking.
     await standNachziehen(invoiceId);
     updateField("bezahlt_betrag", newTotal);
     updateField("status", newStatus);
+    if (newStatus === "bezahlt") updateField("mahnstufe", 0);
 
     setNewPaymentAmount("");
     clearRoh("zahlung:betrag");
@@ -3413,7 +3431,7 @@ export default function InvoiceDetail() {
   /** Erzeugt das Rechnungs-PDF client-side (jsPDF). Lädt Bank+UID+Logo+Layout
    *  aus den Einstellungen. Liefert einen Blob zurück. */
   const buildInvoicePdfBlob = async (): Promise<Blob> => {
-    const [{ generateInvoicePdf }, { loadInvoiceLogo }, { generateEpcQrCode }] = await Promise.all([
+    const [{ generateInvoicePdf }, { loadInvoiceLogo }, { zahlungsQrFuerBeleg }] = await Promise.all([
       import("@/lib/pdfGenerator"),
       import("@/lib/logoLoader"),
       import("@/lib/invoiceHtml"),
@@ -3437,13 +3455,8 @@ export default function InvoiceDetail() {
     // EPC-QR-Code (GiroCode) nur für rechnungs-artige Dokumente, wenn Bank-
     // Daten vollständig sind. Verwendungszweck = Rechnungsnummer (kommt aus
     // dem Renderer als Unstructured Reference an die Banking-App).
-    let qrDataUri: string | undefined;
-    const isInvoiceLike = ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ);
-    if (isInvoiceLike && bank.iban && bank.bic && bank.kontoinhaber && bruttoSumme > 0) {
-      try {
-        qrDataUri = await generateEpcQrCode(bruttoSumme, form.nummer || "", bank);
-      } catch { /* QR optional — Render geht ohne weiter */ }
-    }
+    // EINE Regel für alle Pfade (BIC bewusst optional) — siehe zahlungsQrFuerBeleg.
+    const qrDataUri = await zahlungsQrFuerBeleg(form.typ, bruttoSumme, form.nummer || "", bank);
     return generateInvoicePdf(
       invoiceForPdf,
       items as any,
@@ -3783,9 +3796,15 @@ export default function InvoiceDetail() {
           const neuerStatus = neuerBezahlt >= Math.round(ziel.brutto_summe * 100) / 100
             ? "bezahlt"
             : neuerBezahlt > 0 ? "teilbezahlt" : "offen";
+          // Tilgt die Gutschrift die Rechnung vollständig, endet auch das
+          // Mahnverfahren — wie bei jeder anderen Vollzahlung.
           await supabase
             .from("invoices")
-            .update({ bezahlt_betrag: neuerBezahlt, status: neuerStatus })
+            .update({
+              bezahlt_betrag: neuerBezahlt,
+              status: neuerStatus,
+              ...(neuerStatus === "bezahlt" ? { mahnstufe: 0, naechste_mahnung_am: null } : {}),
+            } as any)
             .eq("id", zielId);
         }
       }
@@ -3886,7 +3905,10 @@ export default function InvoiceDetail() {
         storno_datum: stornoDatum,
         storno_grund: stornoGrund,
         bezahlt_betrag: 0,
-      }).eq("id", invoiceId);
+        // Eine stornierte Rechnung wird nicht weiter gemahnt.
+        mahnstufe: 0,
+        naechste_mahnung_am: null,
+      } as any).eq("id", invoiceId);
       if (error) throw error;
       await standNachziehen(invoiceId);
       setForm(prev => ({ ...prev, status: "storniert", storno_nummer: stornoNummer, storno_datum: stornoDatum, storno_grund: stornoGrund, bezahlt_betrag: 0 }));
@@ -4227,6 +4249,7 @@ export default function InvoiceDetail() {
           Speichern + grüner „Speichern & Schließen" rechts */}
       <KBToolbar
         onBack={handleBackNav}
+        onHome={handleHomeNav}
         /* Am Handy einen kurzen Titel — der lange Titel drängt sonst die
            Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
         title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen — Nr. vorläufig`) : `${typLabel} ${form.nummer}`}
@@ -4309,46 +4332,50 @@ export default function InvoiceDetail() {
               bewusst NICHT im disabled-fieldset, damit Storno/Zahlung auch am
               gesperrten Beleg funktionieren) + Grunddaten des Belegs. */}
           {activeStep === 1 && (<>
-          {/* Dokumenten-Kette: Root (Angebot/AB) + alle abgeleiteten Dokumente */}
+          {/* Belegkette: Wurzel (Angebot/AB) + alle abgeleiteten Dokumente —
+              MIT Beträgen und Status direkt sichtbar (Kundenwunsch: „dass man
+              sieht, was alles zu einer Rechnung gehört"). Vorher standen die
+              Beträge nur im Maus-Tooltip, am Handy also nirgends. */}
           {!isNew && chainRoot && (chainRoot.id !== invoiceId || chainChildren.length > 0) && (
             <Card className="kb-panel border-blue-200 bg-blue-50/40">
               <CardContent className="pt-4 pb-3">
-                <div className="text-xs font-medium text-blue-900 uppercase tracking-wide mb-2">Auftrag</div>
-                <div className="flex flex-wrap items-center gap-2 text-sm">
-                  {/* Root */}
-                  <button
-                    type="button"
-                    onClick={() => { if (chainRoot.id !== invoiceId) navigate(`/invoices/${chainRoot.id}`); }}
-                    disabled={chainRoot.id === invoiceId}
-                    className={`flex min-h-[40px] items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-xs transition-colors sm:min-h-0 sm:px-2 sm:py-1 ${
-                      chainRoot.id === invoiceId
-                        ? "border-blue-400 bg-blue-100 text-blue-900 ring-1 ring-blue-400"
-                        : "border-blue-200 bg-white hover:bg-blue-100 text-blue-900"
-                    }`}
-                  >
-                    <span className="text-[10px] uppercase text-blue-600">{getDocConfig(chainRoot.typ).shortLabel}</span>
-                    <span>{chainRoot.nummer || "—"}</span>
-                  </button>
-                  {chainChildren.length > 0 && <span className="text-blue-600">→</span>}
-                  {chainChildren.map(c => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      onClick={() => { if (c.id !== invoiceId) navigate(`/invoices/${c.id}`); }}
-                      disabled={c.id === invoiceId}
-                      className={`flex min-h-[40px] items-center gap-1.5 rounded border px-2.5 py-1.5 font-mono text-xs transition-colors sm:min-h-0 sm:px-2 sm:py-1 ${
-                        c.id === invoiceId
-                          ? "border-blue-400 bg-blue-100 text-blue-900 ring-1 ring-blue-400"
-                          : c.status === "storniert"
-                            ? "border-red-200 bg-white text-red-700 line-through opacity-70 hover:opacity-100"
-                            : "border-blue-200 bg-white hover:bg-blue-100 text-blue-900"
-                      }`}
-                      title={`${getDocConfig(c.typ).label} ${c.nummer || ""} — € ${eur(Number(c.brutto_summe))} brutto, Status ${c.status}`}
-                    >
-                      <span className="text-[10px] uppercase text-blue-600">{getDocConfig(c.typ).shortLabel}</span>
-                      <span>{c.nummer || "—"}</span>
-                    </button>
-                  ))}
+                <div className="text-xs font-medium text-blue-900 uppercase tracking-wide mb-2">Belegkette</div>
+                <div className="divide-y divide-blue-100 rounded border border-blue-200 bg-white">
+                  {[chainRoot, ...chainChildren].map((c) => {
+                    const istRechnung = ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(c.typ);
+                    const offenC = c.status === "storniert" || c.status === "bezahlt"
+                      ? 0
+                      : Math.max(0, round2(Number(c.brutto_summe) - Number(c.bezahlt_betrag || 0)));
+                    return (
+                      <button
+                        key={c.id}
+                        type="button"
+                        onClick={() => { if (c.id !== invoiceId) navigate(`/invoices/${c.id}`); }}
+                        disabled={c.id === invoiceId}
+                        className={`flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-2.5 py-1.5 text-left text-sm transition-colors ${
+                          c.id === invoiceId
+                            ? "bg-blue-100"
+                            : c.status === "storniert"
+                              ? "text-red-700 opacity-70 hover:bg-blue-50 hover:opacity-100"
+                              : "hover:bg-blue-50"
+                        }`}
+                        title={c.id === invoiceId ? "Dieser Beleg" : `${getDocConfig(c.typ).label} ${c.nummer || ""} öffnen`}
+                      >
+                        <span className="w-9 rounded border border-blue-200 bg-blue-50 px-1 text-center text-[10px] font-semibold uppercase text-blue-700">
+                          {getDocConfig(c.typ).shortLabel}
+                        </span>
+                        <span className={`font-mono text-xs ${c.status === "storniert" ? "line-through" : ""}`}>{c.nummer || "—"}</span>
+                        <span className="whitespace-nowrap text-xs text-muted-foreground">
+                          {c.datum ? new Date(c.datum + "T12:00:00").toLocaleDateString("de-AT") : ""}
+                        </span>
+                        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{c.status}</span>
+                        <span className="tabular-nums">€ {eur(Number(c.brutto_summe) || 0)}</span>
+                        <span className={`w-28 text-right text-xs tabular-nums ${offenC > 0.005 ? "font-medium text-orange-700" : "text-green-700"}`}>
+                          {istRechnung ? (offenC > 0.005 ? `offen € ${eur(offenC)}` : "ausgeglichen") : "—"}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </CardContent>
             </Card>
@@ -4436,7 +4463,13 @@ export default function InvoiceDetail() {
                     )}
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {form.typ === "rechnung" && (form.status === "offen" || form.status === "teilbezahlt") && bruttoSumme > 0 && (
+                    {/* Auch Anzahlungs-/Schlussrechnungen sind mahnbar (Audit-
+                        Befund: der Editor ließ nur „rechnung" zu, die Liste alle).
+                        Und erst NACH der Fälligkeit — vorher gibt es nichts zu
+                        mahnen. */}
+                    {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) &&
+                      (form.status === "offen" || form.status === "teilbezahlt") && bruttoSumme > 0 &&
+                      (!form.faellig_am || form.faellig_am < heuteISO()) && (
                       <Select onValueChange={async (stufe) => {
                         const mahnstufe = parseInt(stufe);
                         // Warnung bei teilbezahlten Rechnungen — offener Restbetrag wird gemahnt
@@ -4452,8 +4485,17 @@ export default function InvoiceDetail() {
                           if (!ok) return;
                         }
                         try {
-                          // Update mahnstufe in DB + save history
-                          await supabase.from("invoices").update({ mahnstufe }).eq("id", invoiceId);
+                          // Update mahnstufe in DB + save history; nächste
+                          // Mahnung laut Zahlfrist der Stufe vormerken.
+                          const { loadMahnungSettings: ladeMs } = await import("@/lib/mahnungSettings");
+                          const msVorab = await ladeMs();
+                          const fristTage = msVorab.stufen[Math.min(Math.max(mahnstufe, 1), 3) - 1]?.frist_tage || 14;
+                          const naechste = new Date();
+                          naechste.setDate(naechste.getDate() + fristTage);
+                          await supabase.from("invoices").update({
+                            mahnstufe,
+                            naechste_mahnung_am: alsISO(naechste),
+                          } as any).eq("id", invoiceId);
                           await standNachziehen(invoiceId);
                           await supabase.from("mahnung_history").insert({ invoice_id: invoiceId, mahnstufe });
                           updateField("mahnstufe", mahnstufe);
@@ -4872,7 +4914,7 @@ export default function InvoiceDetail() {
           )}
 
           {/* Mahnungs-Übersicht */}
-          {!isNew && form.typ === "rechnung" && mahnungen.length > 0 && (
+          {!isNew && ["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && mahnungen.length > 0 && (
             <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardTitle className="text-base">Mahnungen</CardTitle>
@@ -7461,7 +7503,7 @@ export default function InvoiceDetail() {
               <KBButton label="Zurück" onClick={() => setLeaveDialogOpen(false)} />
               <KBButton
                 label="Nein"
-                onClick={() => { setLeaveDialogOpen(false); zurueck(); }}
+                onClick={() => { setLeaveDialogOpen(false); verlasseSeite(); }}
               />
               <KBButton
                 icon={CheckCircle2}
@@ -7473,7 +7515,7 @@ export default function InvoiceDetail() {
                   if (ok) {
                     setLeaveDialogOpen(false);
                     toast({ title: "Gespeichert" });
-                    zurueck();
+                    verlasseSeite();
                   }
                 }}
               />

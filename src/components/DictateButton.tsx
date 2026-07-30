@@ -19,10 +19,16 @@ interface Props {
 }
 
 /**
- * Diktier-Button mit Spracheingabe → Whisper-Transkription → GPT-4o-mini Polish.
+ * Diktier-Button mit Spracheingabe → Whisper-Transkription, WORTGETREU.
  *
  * Erster Klick: Aufnahme starten (rotes Mic, pulsierend).
- * Zweiter Klick: Aufnahme stoppen → Text wird geschliffen und angehängt/ersetzt.
+ * Zweiter Klick: Aufnahme stoppen → Transkript wird unverändert übernommen
+ * (bei vorhandenem Text als neuer Absatz angehängt).
+ *
+ * Bewusst OHNE den früheren GPT-„Schleif"-Schritt: Der formulierte Sätze um
+ * und durfte sogar „leicht erweitern" — der Kunde bekam anderen Text, als er
+ * gesagt hatte („er schreibt was anderes rein, wie ich sage"). Ein diktierter
+ * Regiebericht ist eine Tatsachenaufnahme; da zählt der Wortlaut.
  */
 /**
  * Mikrofon anfordern — mit den beiden Fällen, die im Baustellenalltag wirklich
@@ -110,8 +116,9 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
 
           const form = new FormData();
           form.append("audio", blob, "dictation.webm");
-          form.append("existingText", value || "");
-          form.append("mode", value.trim() ? "append" : "polish");
+          // "raw" = Whisper-Transkript unverändert zurück (setzt selbst
+          // Satzzeichen). KEIN GPT-Umformulieren mehr.
+          form.append("mode", "raw");
 
           const { data, error } = await supabase.functions.invoke("polish-text", {
             body: form,
@@ -121,8 +128,11 @@ export function DictateButton({ value, onResult, compact, label = "Diktieren", d
           if (data?.error) throw new Error(data.error);
           if (!data?.text) throw new Error("Keine Antwort");
 
-          onResult(data.text);
-          toast({ title: "Text übernommen", description: value.trim() ? "Ergänzt und geschliffen." : "Diktat wurde geschliffen." });
+          const diktat = String(data.text).trim();
+          // Anhängen passiert hier im Client — als eigener Absatz, ohne dass
+          // eine KI den Bestandstext anfassen kann.
+          onResult(value.trim() ? `${value.trimEnd()}\n${diktat}` : diktat);
+          toast({ title: "Diktat übernommen", description: value.trim() ? "Wortgetreu angehängt." : "Wortgetreu übernommen." });
         } catch (err: any) {
           toast({ variant: "destructive", title: "Diktier-Fehler", description: err.message });
         } finally {

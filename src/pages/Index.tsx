@@ -5,7 +5,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  Clock, FolderKanban, BarChart3, LogOut, FileText, ArrowRight, Info,
+  Clock, FolderKanban, BarChart3, LogOut, FileText, ArrowRight, Download, Camera,
   User as UserIcon, Receipt, BookUser, Package, Bell, LayoutGrid, FileDown,
   Calculator, Plus, TrendingUp, CalendarRange, HardHat, Shield, Banknote, Truck,
   Wallet,
@@ -21,6 +21,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import ChangePasswordDialog from "@/components/ChangePasswordDialog";
+import { QuickFotoDialog } from "@/components/QuickFotoDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { KBButton, KBSearchRow, KBSectionHeader } from "@/components/kingbill";
@@ -43,6 +44,7 @@ export default function Index() {
   const [user, setUser] = useState<User | null>(null);
   const [userName, setUserName] = useState<string>("");
   const [mustChangePw, setMustChangePw] = useState(false);
+  const [fotoDialogOffen, setFotoDialogOffen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isActivated, setIsActivated] = useState<boolean | null>(null);
   const [pendingUsersCount, setPendingUsersCount] = useState(0);
@@ -52,6 +54,11 @@ export default function Index() {
   >([]);
   const [offenePostenCount, setOffenePostenCount] = useState(0);
   const { handleRestartInstallGuide } = useOnboarding();
+  // Läuft die Seite schon als installierte App? Dann braucht es keinen
+  // Installieren-Knopf in der Kopfzeile. (iOS setzt navigator.standalone.)
+  const laeuftAlsApp =
+    window.matchMedia("(display-mode: standalone)").matches ||
+    (navigator as { standalone?: boolean }).standalone === true;
 
   const loadForUser = async (userId: string) => {
     // 1) Activation + name
@@ -244,10 +251,13 @@ export default function Index() {
     <div className="kb-page min-h-screen">
       {/* Erzwungener Passwortwechsel beim ersten Login (vom Admin angelegte Konten) */}
       {mustChangePw && <ChangePasswordDialog forced onSuccess={() => setMustChangePw(false)} />}
+      <QuickFotoDialog open={fotoDialogOffen} onOpenChange={setFotoDialogOffen} />
 
       {/* Header — blaue KingBill-Titelleiste mit Systemleisten-Buttons wie im Original */}
       <header className="kb-toolbar sticky top-0 z-50">
-        <button type="button" className="kb-btn shrink-0" onClick={handleLogout} title="Abmelden">
+        {/* Am Handy ausgeblendet (Kundenwunsch) — Abmelden steht im Menü
+            rechts; links oben braucht es den Knopf nur am Desktop. */}
+        <button type="button" className="kb-btn hidden shrink-0 sm:inline-flex" onClick={handleLogout} title="Abmelden">
           <LogOut className="h-4 w-4 text-kb-blue-dark" />
           <span className="hidden md:inline">Beenden</span>
         </button>
@@ -272,7 +282,21 @@ export default function Index() {
             <span className="text-xs sm:text-sm text-white/85 truncate">Hallo {userName || "Benutzer"}</span>
           </div>
         </div>
-        <div className="ml-auto shrink-0">
+        <div className="ml-auto shrink-0 flex items-center gap-1 sm:gap-2">
+          {/* Eigener Installieren-Knopf (Kundenwunsch) — entfällt, sobald die
+              Seite bereits als installierte App läuft. Der Dialog erkennt das
+              Betriebssystem und zeigt die passende Anleitung. */}
+          {!laeuftAlsApp && (
+            <button
+              type="button"
+              className="kb-btn shrink-0"
+              onClick={handleRestartInstallGuide}
+              title="App auf diesem Gerät installieren"
+            >
+              <Download className="h-4 w-4 text-kb-blue-dark" />
+              <span className="hidden md:inline">App installieren</span>
+            </button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className="kb-btn">
@@ -285,8 +309,8 @@ export default function Index() {
               <DropdownMenuSeparator />
 
               <DropdownMenuItem onClick={handleRestartInstallGuide}>
-                <Info className="mr-2 h-4 w-4" />
-                <span>App zum Startbildschirm hinzufügen</span>
+                <Download className="mr-2 h-4 w-4" />
+                <span>App installieren</span>
               </DropdownMenuItem>
 
               <DropdownMenuSeparator />
@@ -378,22 +402,22 @@ export default function Index() {
             er bei den Eingangsrechnungen ist. Nur am kleinen Schirm. */}
         <div className="mb-4 grid grid-cols-3 gap-2 sm:hidden">
           <KBButton
-            className="w-full flex-col gap-1 py-3 text-xs"
+            className="w-full min-h-[72px] flex-col gap-1.5 py-3 text-sm"
             icon={Clock}
             label="Zeit buchen"
             onClick={() => navigate("/time-tracking")}
           />
-          {canView("eingangsrechnungen") && (
-            <KBButton
-              className="w-full flex-col gap-1 py-3 text-xs"
-              icon={FileDown}
-              label="Beleg-Foto"
-              onClick={() => navigate("/eingangsrechnungen")}
-            />
-          )}
+          {/* „Foto" statt „Beleg-Foto" (Kundenwunsch): Fotos landen direkt im
+              gewählten Projekt, nicht bei den Eingangsrechnungen. */}
+          <KBButton
+            className="w-full min-h-[72px] flex-col gap-1.5 py-3 text-sm"
+            icon={Camera}
+            label="Foto"
+            onClick={() => setFotoDialogOffen(true)}
+          />
           {canView("regieberichte") && (
             <KBButton
-              className="w-full flex-col gap-1 py-3 text-xs"
+              className="w-full min-h-[72px] flex-col gap-1.5 py-3 text-sm"
               icon={FileText}
               label="Regiebericht"
               onClick={() => navigate("/disturbances")}
@@ -401,7 +425,10 @@ export default function Index() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 items-start">
+        {/* Am Handy sind alle Bereichs-Knöpfe höher (Kundenwunsch: „wenn man
+            dickere Finger hat, dass es nicht zu Verwechslung kommt"); am
+            Desktop bleibt die kompakte KingBill-Höhe. */}
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 items-start [&_.kb-btn]:min-h-[52px] sm:[&_.kb-btn]:min-h-[2.25rem]">
 
           {/* ── Dokumente ─────────────────────────────────────── */}
           {canView("rechnungen") && (
@@ -437,6 +464,18 @@ export default function Index() {
                 title="Alle Belege: Angebote, Aufträge, Lieferscheine, Rechnungen"
                 onClick={() => navigate("/invoices")}
               />
+              {isAdmin && (
+                <>
+                  <div className="my-1 h-px bg-white/70" />
+                  <KBButton
+                    className="w-full"
+                    icon={FileDown}
+                    label="Ausschreibungen"
+                    title="ÖNORM-Leistungsverzeichnisse (.onlv) einlesen und bepreisen"
+                    onClick={() => navigate("/ausschreibungen")}
+                  />
+                </>
+              )}
             </KBBereich>
           )}
 

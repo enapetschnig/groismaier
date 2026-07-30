@@ -6,6 +6,42 @@ import { type InvoiceLayoutSettings, DEFAULT_LAYOUT } from "./invoiceLayoutTypes
 import { getDocConfig } from "./documentTypes";
 import { buildAllgemeineAngabenRows } from "./allgemeineAngaben";
 
+/** Belegarten, die einen Zahlungs-QR tragen (Gutschrift zahlt AN den Kunden). */
+export const ZAHLBARE_QR_TYPEN = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
+
+/**
+ * Zahlungs-QR erzeugen, wenn er auf den Beleg gehört — DIE eine Regel für
+ * alle Pfade (Live-Vorschau, Vorschau-Dialog, Download, Druck, Projektordner-
+ * PDF, Listen-Download, ZIP-Export).
+ *
+ * Hintergrund (Kundenmeldung „in der Vorschau ist der QR da, auf der
+ * erstellten Rechnung nicht"): Der Erstellen-Pfad verlangte zusätzlich einen
+ * BIC, die Vorschau prüfte gar nichts. Wer im Adminbereich nur IBAN und
+ * Kontoinhaber hinterlegt hatte, sah den QR deshalb nur in der Vorschau.
+ *
+ * Die Regel jetzt: zahlbarer Belegtyp + Betrag > 0 + IBAN + Kontoinhaber.
+ * BIC ist bewusst KEINE Pflicht — der EPC-QR in Version 002 erlaubt einen
+ * leeren BIC bei SEPA-Überweisungen im EWR; Banking-Apps ermitteln ihn aus
+ * der IBAN. Ist er hinterlegt, wird er mitgegeben.
+ */
+export async function zahlungsQrFuerBeleg(
+  typ: string,
+  brutto: number,
+  nummer: string,
+  bank: BankData | undefined
+): Promise<string | undefined> {
+  if (!ZAHLBARE_QR_TYPEN.has(typ)) return undefined;
+  const betrag = Number(brutto);
+  if (!Number.isFinite(betrag) || betrag <= 0) return undefined;
+  if (!bank || !bank.iban.trim() || !bank.kontoinhaber.trim()) return undefined;
+  try {
+    return await generateEpcQrCode(betrag, nummer || "", bank);
+  } catch {
+    // QR ist Komfort — der Beleg wird ohne ihn trotzdem erzeugt.
+    return undefined;
+  }
+}
+
 // Generate EPC QR-Code (GiroCode) for SEPA bank transfer
 export async function generateEpcQrCode(
   betrag: number,
@@ -20,8 +56,8 @@ export async function generateEpcQrCode(
     "002",                    // Version
     "1",                      // Encoding (UTF-8)
     "SCT",                    // SEPA Credit Transfer
-    b.bic,                    // BIC
-    b.kontoinhaber,           // Empfänger
+    b.bic.trim(),             // BIC (darf in Version 002 leer sein)
+    b.kontoinhaber.trim(),    // Empfänger
     ibanClean,                // IBAN (ohne Leerzeichen)
     `EUR${betrag.toFixed(2)}`, // Betrag
     "",                       // Purpose
@@ -379,13 +415,12 @@ export function buildInvoiceHtml(
     return `rgba(${r},${g},${b_},0.08)`;
   })();
 
-  const mahnBanner =
-    mahnstufe > 0
-      ? `
-    <div style="background:${accentLightBg};border:2px solid ${accent};border-radius:6px;padding:12px 20px;margin-bottom:20px;text-align:center;font-weight:800;color:${accent};font-size:12pt;letter-spacing:1px;">
-      ⚠ ${mahnstufe}. MAHNUNG
-    </div>`
-      : "";
+  // Bewusst KEIN Mahn-Banner auf dem Originalbeleg mehr: Die Mahnung ist ihr
+  // eigenes Dokument (generateMahnungPdf). Vorher trug jeder Nachdruck einer
+  // gemahnten — auch längst bezahlten — Rechnung „⚠ 2. MAHNUNG", und die
+  // PDF-Fassung (pdfGenerator) zeigte das Banner nie: Vorschau und Druck
+  // widersprachen sich (Audit-Befund).
+  const mahnBanner = "";
 
   // Extract Zahlungsfrist days for closing text
   const zahlungsTage = invoice.zahlungsbedingungen

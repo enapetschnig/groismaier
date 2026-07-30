@@ -129,6 +129,36 @@ export default function Auth() {
           <CardDescription>Zimmerei &amp; Holzbau</CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Umschalter ganz oben (Kundenwunsch: „dass man das sofort sieht") —
+              ein neuer Mitarbeiter soll die Registrierung nicht erst in einer
+              kleinen Textzeile unter dem Anmeldeformular suchen müssen. */}
+          {(mode === "login" || mode === "register") && (
+            <div className="mb-5 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="Anmelden oder registrieren">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "login"}
+                onClick={() => setMode("login")}
+                className={`min-h-[44px] rounded-md text-sm font-semibold transition-colors ${
+                  mode === "login" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Anmelden
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={mode === "register"}
+                onClick={() => setMode("register")}
+                className={`min-h-[44px] rounded-md text-sm font-semibold transition-colors ${
+                  mode === "register" ? "bg-background shadow text-foreground" : "text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                Neu registrieren
+              </button>
+            </div>
+          )}
+
           {/* ── Registrierung erfolgreich → wartet auf Freischaltung ── */}
           {mode === "registered" && (
             <div className="space-y-5 text-center">
@@ -181,11 +211,16 @@ export default function Auth() {
               <Button type="submit" className="w-full" disabled={loading}>
                 {loading ? "Lädt..." : "Anmelden"}
               </Button>
-              <div className="text-center text-sm text-muted-foreground pt-2">
-                Noch kein Konto?{" "}
-                <button type="button" onClick={() => setMode("register")} className="text-primary hover:underline font-medium">
-                  Jetzt registrieren
-                </button>
+              <div className="rounded-lg border border-primary/25 bg-primary/5 p-3 text-center">
+                <p className="text-sm font-medium">Neu bei Holzbau Groismaier?</p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="mt-2 w-full min-h-[44px]"
+                  onClick={() => setMode("register")}
+                >
+                  Als Mitarbeiter registrieren
+                </Button>
               </div>
             </form>
           )}
@@ -217,12 +252,6 @@ export default function Auth() {
               <p className="text-xs text-muted-foreground text-center">
                 Neue Konten müssen vom Administrator freigeschaltet werden, bevor sie genutzt werden können.
               </p>
-              <div className="text-center text-sm text-muted-foreground">
-                Bereits registriert?{" "}
-                <button type="button" onClick={() => setMode("login")} className="text-primary hover:underline font-medium">
-                  Zur Anmeldung
-                </button>
-              </div>
             </form>
           )}
         </CardContent>

@@ -1,0 +1,148 @@
+<?xml version="1.0"?>
+<onlv xmlns="http://www.oenorm.at/schema/A2063/2021-03-01">
+	<metadaten>
+		<erstelltam>2026-06-25T13:38:51</erstelltam>
+		<dateiname>002 Ausschreibungs-LV.onlv</dateiname>
+		<programmsystem>iTWO_64</programmsystem>
+		<programmversion>V25.0.650</programmversion>
+	</metadaten>
+	<grafiktabelle/>
+	<leistungsteiltabelle>
+		<leistungsteil nr="1">
+			<bezeichnung>Indexgruppe</bezeichnung>
+			<definition-preisanteil1>
+				<festpreise></festpreise>
+			</definition-preisanteil1>
+			<definition-preisanteil2>
+				<festpreise></festpreise>
+			</definition-preisanteil2>
+		</leistungsteil>
+	</leistungsteiltabelle>
+	<zztabelle/>
+	<zugelassenenachlaesse>
+		<aufpreisanteile/>
+		<hierarchiestufen>
+			<auflvsumme/>
+			<auflgsummen/>
+			<aufulgsummen/>
+		</hierarchiestufen>
+	</zugelassenenachlaesse>
+	<ausschreibungs-lv>
+		<kenndaten>
+			<lvcode>002</lvcode>
+			<vorhaben>Unbenanntes Bauvorhaben</vorhaben>
+			<lvbezeichnung>Brückenbau</lvbezeichnung>
+			<auftraggeber>
+				<firma>
+					<name>Swietelsky AG</name>
+					<kommunikation>
+						<adresse>
+							<strasse>Rudmanns 142</strasse>
+							<ort>Zwettl</ort>
+							<plz>3910</plz>
+							<land>AUT</land>
+						</adresse>
+						<telefon>+43 2822 52512</telefon>
+						<email>zwettl@swietelsky.at</email>
+						<www>www.swietelsy.com</www>
+					</kommunikation>
+					<kontaktperson>
+						<nachname>Gerald Rössl</nachname>
+						<vorname>Dir. Prok. Ing.</vorname>
+					</kontaktperson>
+				</firma>
+			</auftraggeber>
+			<bearbeitungsstand>2026-06-25</bearbeitungsstand>
+			<preisanteilmodell>
+				<preisanteile>
+					<preisanteilbez>
+						<preisanteil1bez>Lohn</preisanteil1bez>
+						<preisanteil2bez>Sonstiges</preisanteil2bez>
+					</preisanteilbez>
+				</preisanteile>
+			</preisanteilmodell>
+			<wkz>EUR</wkz>
+			<preisbasis>2026-06-25</preisbasis>
+		</kenndaten>
+		<gliederung-lg>
+			<preiserstellungsverfahren>Preisangebotsverfahren</preiserstellungsverfahren>
+			<lb>
+				<bezeichnung>frei formuliert</bezeichnung>
+				<herausgeber>
+					<firma>
+						<name>frei formuliert</name>
+					</firma>
+				</herausgeber>
+				<lbkennung>FF</lbkennung>
+				<versionsnummer>999</versionsnummer>
+				<versionsdatum>2009-01-01</versionsdatum>
+				<status>freigegeben</status>
+			</lb>
+			<svb>
+				<notiz/>
+			</svb>
+			<lg-liste>
+				<lg nr="93">
+					<lg-eigenschaften>
+						<ueberschrift>Brückenbauarbeiten</ueberschrift>
+						<herkunftskennzeichen>Z</herkunftskennzeichen>
+						<notiz/>
+					</lg-eigenschaften>
+					<ulg-liste>
+						<ulg nr="01">
+							<ulg-eigenschaften>
+								<ueberschrift>Brückenkonstruktion</ueberschrift>
+								<herkunftskennzeichen>Z</herkunftskennzeichen>
+								<notiz/>
+							</ulg-eigenschaften>
+							<positionen>
+								<grundtextnr nr="01">
+									<grundtext>
+										<herkunftskennzeichen>Z</herkunftskennzeichen>
+									</grundtext>
+									<folgeposition ftnr="A" mfv="">
+										<pos-eigenschaften>
+											<stichwort>Brückenkonstruktion Breitenwaida</stichwort>
+											<langtext>
+												<p>Herstellen, Liefern und Montieren einer Brücke aus Stahlträgern mit Holzbohlenbelag auf gemäß gesonderten Positionen hergestellten Stahlbetonwiderlager.</p>
+												<p>Innenlichte: 3m</p>
+												<p>Geländerhöhe: 1,2m</p>
+												<p>Spannweite (Abstand zwischen den Auflagerpunkten): 14,65 m</p>
+												<p>Gesamtlänge: ca. 15 m bzw. nach Detailplanung entsprechend statischen Vorgaben und Spannweite</p>
+												<p/>
+												<p>Leistungsumfang:</p>
+												<p>- Ausführungsstatik </p>
+												<p>Pläne, Berechnungen und Bestätigung über die Standsicherheit unter Betrachtung der zu erwartenden Lastfälle sowie unter Annahme einer Verklausung im Hochwasserfall</p>
+												<p>- Werkstattzeichnungen; Die Ausführungsplanung ist zur Freigabe vorzulegen</p>
+												<p>- Die Brückenkonstruktion bestehend aus Auflager, Hauptträger, Querträger, Windverband, Aussteifungen, Sekundärtragwerk, Holzbohlenbelag und Stahlgeländer</p>
+												<p>- Antransport und Montage auf die Widerlager</p>
+												<p/>
+												<p>Tragkonstruktion aus 3 Stück Hauptträger HE-A 450 S235 J2, Querträger nach statischem Erfordernis</p>
+												<p>Windverband und Aussteifungen nach statischem Erfordernis</p>
+												<p>Das Geländer ist als Stahlkonstruktion gemäß RVS 15.04.21 Typ B auszuführen.</p>
+												<p>Die Geländerkonstruktion ist an den Querträgern anzuschließen, die Brüstungshöhe muss gemessen ab der Belagsoberkante 1,2 m betragen. Das Geländer muss ausreichend im Tragwerk verankert sein, um Stürzen von Radfahrenden standzuhalten.</p>
+												<p>Alle Stahlbauteile feuerverzinkt. Hauptträger, Querträger und Geländer pulverbeschichtet, Farbe: moosgrün RAL 6005</p>
+												<p/>
+												<p>Sekundärtragwerk für den Holzbohlenbelag aus Lärchenkantholz C24, Querschnitt ca 8/16 cm bzw. gemäß statischem Erfordernis, längs mit Nageldichtband o.Ä. auf die Hauptträger verlegt. Holzbohlenbelag (Pfostenbelag) aus Lärchenholz C24, Stärke 5,0 cm bzw. gemäß statischem Erfordernis, auf Gummidichtung verlegt.</p>
+												<p>Alle Holzbauteile sägerau, mit einmaligem Anstrich (Lärchenholzöl)</p>
+											</langtext>
+											<herkunftskennzeichen>Z</herkunftskennzeichen>
+											<notiz/>
+											<einheit>PA</einheit>
+											<pzzv>
+												<normalposition/>
+											</pzzv>
+											<leistungsteil>1</leistungsteil>
+											<lvmenge>1.00</lvmenge>
+											<nichtangeboten/>
+										</pos-eigenschaften>
+									</folgeposition>
+								</grundtextnr>
+							</positionen>
+						</ulg>
+					</ulg-liste>
+				</lg>
+			</lg-liste>
+		</gliederung-lg>
+	</ausschreibungs-lv>
+</onlv>

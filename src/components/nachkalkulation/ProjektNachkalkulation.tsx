@@ -49,6 +49,7 @@ interface InvoiceRaw {
   nummer: string;
   datum: string;
   netto_summe: number;
+  parent_invoice_id: string | null;
 }
 
 interface ItemRaw {
@@ -260,7 +261,11 @@ export function ProjektNachkalkulation() {
         fetchAllRows<InvoiceRaw>((f, t) =>
           supabase
             .from("invoices")
-            .select("id, project_id, typ, status, nummer, datum, netto_summe")
+            // parent_invoice_id MUSS mit: bereitsInSchlussrechnung gruppiert
+            // Anzahlung und Schlussrechnung darüber — ohne die Spalte griff
+            // die Deduplizierung nie und jede Anzahlung zählte doppelt
+            // (Audit-Befund; die Unit-Tests setzen das Feld und waren grün).
+            .select("id, project_id, typ, status, nummer, datum, netto_summe, parent_invoice_id")
             .not("project_id", "is", null)
             .in("typ", ["angebot", "auftragsbestaetigung", "rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"])
             .order("id")

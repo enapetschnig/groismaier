@@ -32,7 +32,7 @@ const titleMap: Record<DocumentType, string> = {
   reports: "Dokumente & Berichte",
   photos: "Fotos",
   chef: "🔒 Chefordner",
-  materials: "Materialdokumente",
+  materials: "Lieferschein-Fotos",
 };
 
 /** Sentinel-Wert im Ordner-Select (Radix Select verbietet leere Values). */

@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
-import { Plus, Trash2, LogOut, Home } from "lucide-react";
+import { Plus, Trash2, LogOut } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { parseDecimal } from "@/lib/num";
 
@@ -176,24 +176,12 @@ export default function FreelancerHours() {
 
   return (
     <div className="kb-page min-h-screen">
+      {/* Echte Freelancer haben keinen Zugriff auf die Startmaske —
+          der Haus-Knopf der Toolbar bleibt für sie aus. */}
       <KBToolbar
         title={userName ? `Zeiterfassung — ${userName}` : "Zeiterfassung"}
-        rightActions={
-          <>
-            {!isFreelancer && (
-              <button
-                type="button"
-                onClick={() => navigate("/")}
-                aria-label="Zur Startmaske"
-                title="Zur Startmaske"
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-              >
-                <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-              </button>
-            )}
-            <KBToolbarButton icon={LogOut} label="Abmelden" onClick={logout} />
-          </>
-        }
+        showHome={!isFreelancer}
+        rightActions={<KBToolbarButton icon={LogOut} label="Abmelden" onClick={logout} />}
       />
 
       <main className="container mx-auto max-w-2xl space-y-4 px-3 py-4 sm:px-4 sm:py-6">

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Clock, Home, Pencil, Trash2, Wallet } from "lucide-react";
+import { Clock, Pencil, Trash2, Wallet } from "lucide-react";
 import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
 import { KBToolbar } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
@@ -207,17 +207,6 @@ const MyHours = () => {
         title="Meine Stunden"
         onBack={zurueck}
         backLabel="Zurück zur Startmaske"
-        rightActions={
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            aria-label="Zur Startmaske"
-            title="Zur Startmaske"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-          >
-            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-          </button>
-        }
       />
 
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-7xl space-y-4">

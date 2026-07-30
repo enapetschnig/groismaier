@@ -406,12 +406,9 @@ export default function Invoices() {
       // Load logo (prüft Custom-Logo aus Admin, fällt zurück auf Default)
       const logoUri = await loadInvoiceLogo();
 
-      // QR code for invoices
-      let qrUri: string | undefined;
-      const { generateEpcQrCode } = await import("@/lib/invoiceHtml");
-      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && Number(inv.brutto_summe) > 0) {
-        try { qrUri = await generateEpcQrCode(Number(inv.brutto_summe), inv.nummer || "", bank); } catch {}
-      }
+      // Zahlungs-QR — dieselbe Regel wie überall (zahlungsQrFuerBeleg).
+      const { zahlungsQrFuerBeleg } = await import("@/lib/invoiceHtml");
+      const qrUri = await zahlungsQrFuerBeleg(inv.typ, Number(inv.brutto_summe), inv.nummer || "", bank);
 
       const { generateInvoicePdf } = await import("@/lib/pdfGenerator");
       const { loadDocumentTexts, applyDocumentTextsToInvoice } = await import("@/lib/documentTextsLoader");
@@ -489,13 +486,8 @@ export default function Invoices() {
 
       const logoUri = await loadInvoiceLogo();
 
-      let qrUri: string | undefined;
-      if (PAYABLE_INVOICE_TYPES.has(inv.typ) && Number(inv.brutto_summe) > 0) {
-        try {
-          const { generateEpcQrCode } = await import("@/lib/invoiceHtml");
-          qrUri = await generateEpcQrCode(Number(inv.brutto_summe), inv.nummer || "", bank);
-        } catch {}
-      }
+      const { zahlungsQrFuerBeleg } = await import("@/lib/invoiceHtml");
+      const qrUri = await zahlungsQrFuerBeleg(inv.typ, Number(inv.brutto_summe), inv.nummer || "", bank);
 
       const { generateInvoicePdf } = await import("@/lib/pdfGenerator");
       const { loadDocumentTexts, applyDocumentTextsToInvoice } = await import("@/lib/documentTextsLoader");
@@ -1422,6 +1414,11 @@ export default function Invoices() {
                                           return;
                                         }
                                         const { generateMahnungPdf } = await import("@/lib/pdfGenerator");
+                                        // Admin-Mahntexte laden — ohne sie druckte dieser
+                                        // Pfad die eingebauten Standardtexte, während der
+                                        // Beleg-Editor die konfigurierten nahm (Audit-Befund).
+                                        const { loadMahnungSettings } = await import("@/lib/mahnungSettings");
+                                        const mahnSettings = await loadMahnungSettings();
                                         const pdfBlob = generateMahnungPdf(
                                           {
                                             nummer: inv.nummer, datum: inv.datum, faellig_am: inv.faellig_am || "",
@@ -1429,9 +1426,25 @@ export default function Invoices() {
                                             kunde_plz: (inv as any).kunde_plz, kunde_ort: (inv as any).kunde_ort,
                                             brutto_summe: Number(inv.brutto_summe), bezahlt_betrag: Number(inv.bezahlt_betrag || 0),
                                           },
-                                          stufe, 0, bank, logoUri, invoiceLayout
+                                          stufe, 0, bank, logoUri, invoiceLayout, mahnSettings
                                         );
-                                        await supabase.from("invoices").update({ mahnstufe: stufe }).eq("id", inv.id);
+                                        // Nächste Mahnung laut Zahlfrist der Stufe; dazu die
+                                        // History, damit die Mahnungs-Karte im Beleg stimmt.
+                                        const fristTage = mahnSettings.stufen[Math.min(stufe, 3) - 1]?.frist_tage || 14;
+                                        const naechste = new Date();
+                                        naechste.setDate(naechste.getDate() + fristTage);
+                                        const { alsISO } = await import("@/lib/datum");
+                                        await supabase.from("invoices").update({
+                                          mahnstufe: stufe,
+                                          naechste_mahnung_am: alsISO(naechste),
+                                        } as any).eq("id", inv.id);
+                                        // RLS lässt den History-Eintrag nur für
+                                        // Administratoren zu — für andere Rollen
+                                        // scheitert er bewusst leise; die Mahnung
+                                        // selbst ist davon unabhängig.
+                                        await (supabase.from("mahnung_history" as never) as any)
+                                          .insert({ invoice_id: inv.id, mahnstufe: stufe })
+                                          .then(() => undefined, () => undefined);
                                         const url = URL.createObjectURL(pdfBlob);
                                         const a = document.createElement("a"); a.href = url;
                                         a.download = `Mahnung_${stufe}_${inv.nummer}.pdf`; a.click();
@@ -1738,17 +1751,22 @@ export default function Invoices() {
                 const newBezahlt = Math.round((bereitsGezahlt + betrag) * 100) / 100;
                 const newStatus = newBezahlt >= (inv?.brutto_summe || 0) ? "bezahlt" : "teilbezahlt";
 
+                // Vollzahlung beendet das Mahnverfahren (Audit-Befund) —
+                // derselbe Reset wie im Beleg-Editor und in den Offenen Posten.
                 const { error: updErr } = await supabase.from("invoices").update({
                   status: newStatus,
                   bezahlt_betrag: newBezahlt,
-                }).eq("id", paymentInvoiceId);
+                  ...(newStatus === "bezahlt" ? { mahnstufe: 0, naechste_mahnung_am: null } : {}),
+                } as any).eq("id", paymentInvoiceId);
                 if (updErr) {
                   toast({ variant: "destructive", title: "Status nicht aktualisiert", description: updErr.message });
                   return;
                 }
 
                 setInvoices(prev => prev.map(i =>
-                  i.id === paymentInvoiceId ? { ...i, status: newStatus, bezahlt_betrag: newBezahlt } : i
+                  i.id === paymentInvoiceId
+                    ? { ...i, status: newStatus, bezahlt_betrag: newBezahlt, ...(newStatus === "bezahlt" ? { mahnstufe: 0 } : {}) }
+                    : i
                 ));
 
                 toast({

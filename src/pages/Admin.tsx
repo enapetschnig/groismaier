@@ -1209,6 +1209,7 @@ export default function Admin() {
                   <h4 className="font-medium text-sm">Bankverbindung</h4>
                   <p className="text-sm text-muted-foreground">
                     Wird auf allen PDFs (Rechnungen, Angebote, Regieberichte) und im QR-Code verwendet.
+                    Für den Zahlungs-QR reichen Kontoinhaber und IBAN — der BIC ist optional.
                   </p>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <div className="space-y-1">
@@ -1220,7 +1221,7 @@ export default function Admin() {
                       <Input value={bankIban} onChange={(e) => setBankIban(e.target.value)} disabled={loadingSettings} placeholder="AT..." />
                     </div>
                     <div className="space-y-1">
-                      <Label>BIC</Label>
+                      <Label>BIC (optional)</Label>
                       <Input value={bankBic} onChange={(e) => setBankBic(e.target.value)} disabled={loadingSettings} placeholder="z.B. STSPAT2GXXX" />
                     </div>
                   </div>
@@ -1779,7 +1780,7 @@ export default function Admin() {
                         />
                       </div>
                       <div>
-                        <Label>BIC</Label>
+                        <Label>BIC (optional)</Label>
                         <Input
                           value={formData.bic || ""}
                           onChange={(e) => setFormData({ ...formData, bic: e.target.value })}

@@ -19,9 +19,17 @@
  *   rightActions? ReactNode — rechtsbündige Aktionen
  *   className?    string
  *   sticky?       boolean — klebt oben (default true)
+ *   showHome?     boolean — Haus-Knopf ganz rechts (Kundenwunsch: „aus jedem
+ *                 Menüpunkt zum Hauptmenü"). Default = sticky: Seiten-Toolbars
+ *                 bekommen ihn automatisch, Dialog-Toolbars (sticky={false})
+ *                 automatisch nicht.
+ *   onHome?       () => void — überschreibt das Ziel des Haus-Knopfs; nötig,
+ *                 wo ungespeicherte Eingaben zu sichern sind (Belegeditor,
+ *                 Kalkulation).
  */
 import * as React from "react";
-import { ArrowLeft } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { ArrowLeft, Home } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface KBToolbarProps {
@@ -32,6 +40,8 @@ export interface KBToolbarProps {
   rightActions?: React.ReactNode;
   className?: string;
   sticky?: boolean;
+  showHome?: boolean;
+  onHome?: () => void;
 }
 
 export function KBToolbar({
@@ -42,7 +52,13 @@ export function KBToolbar({
   rightActions,
   className,
   sticky = true,
+  showHome,
+  onHome,
 }: KBToolbarProps) {
+  const navigate = useNavigate();
+  // „Zurück" ist Browser-Verlauf und kann beliebig viele Schritte von der
+  // Startmaske entfernt sein — der Haus-Knopf ist der garantierte Heimweg.
+  const homeSichtbar = showHome ?? sticky;
   return (
     <div className={cn("kb-toolbar flex-wrap", sticky && "sticky top-0 z-40", className)}>
       {onBack && (
@@ -62,7 +78,22 @@ export function KBToolbar({
         </span>
       )}
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-      {rightActions && <div className="ml-auto flex shrink-0 items-center gap-2">{rightActions}</div>}
+      {(rightActions || homeSichtbar) && (
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {rightActions}
+          {homeSichtbar && (
+            <button
+              type="button"
+              onClick={onHome || (() => navigate("/"))}
+              aria-label="Zum Hauptmenü"
+              title="Zum Hauptmenü"
+              className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
+            >
+              <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

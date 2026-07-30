@@ -5,6 +5,7 @@ import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, F
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
+import { CustomerSelect } from "@/components/CustomerSelect";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -112,8 +113,11 @@ const ProjectOverview = () => {
       // Materialzettel). Ohne diese Karte waren die Dateien im Projekt nicht
       // auffindbar.
       type: "materials",
-      title: "Materiallisten",
-      description: "Lieferscheine und Materialzettel",
+      // Nicht mehr „Materiallisten": Das war vom Nachbar-Ordner „Materialliste"
+      // (Entnahmen/Verbrauch) nicht zu unterscheiden — der Kunde sah „den
+      // Ordner zweimal". Hier liegen DATEIEN (Lieferscheine, Zettel).
+      title: "Lieferschein-Fotos",
+      description: "Abfotografierte Lieferscheine und Materialzettel (Dateien)",
       icon: <Package className="h-8 w-8" />,
       count: 0,
     },
@@ -651,9 +655,34 @@ const ProjectOverview = () => {
                   )
                 ) : (
                   <span className="text-muted-foreground italic">
-                    kein Kunde verknüpft — über „Bearbeiten" zuordnen
+                    kein Kunde verknüpft
                   </span>
                 )}
+                {/* Kundenzuordnung für ALLE (Kundenwunsch: „der Mitarbeiter
+                    sollte im Projekt den Kunden sehen und auswählen können").
+                    Läuft über die RPC setze_projekt_kunde — Projekte bleiben
+                    für Mitarbeiter ansonsten schreibgeschützt. */}
+                <span className="ml-auto">
+                  <CustomerSelect
+                    value={(projectData as any).customer_id || null}
+                    onChange={async (id) => {
+                      const { data, error } = await supabase.rpc("setze_projekt_kunde" as never, {
+                        p_project_id: projectId,
+                        p_customer_id: id,
+                      } as never);
+                      const antwort = data as { success?: boolean; error?: string } | null;
+                      if (error || antwort?.success === false) {
+                        toast({ variant: "destructive", title: "Kunde nicht zugeordnet",
+                          description: antwort?.error || error?.message });
+                        return;
+                      }
+                      toast({ title: "Kunde zugeordnet" });
+                      fetchProjectName();
+                    }}
+                    placeholder={customerData ? "Kunden ändern…" : "Kunden zuordnen…"}
+                    className="h-9 max-w-[220px] text-xs"
+                  />
+                </span>
                 {(projectData as any).projektnummer && (
                   <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
                     Projekt-Nr. {(projectData as any).projektnummer}

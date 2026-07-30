@@ -54,12 +54,29 @@ export function waehleSollBelege(belege: NkBeleg[]): NkBeleg[] {
  */
 export function bereitsInSchlussrechnung(belege: NkBeleg[]): Set<string> {
   const lebende = (belege || []).filter(lebt);
+  // Kettenschlüssel über die WURZEL, nicht nur den direkten Elternbeleg —
+  // sonst finden Anzahlung (Eltern: AB) und Schlussrechnung (Eltern: z. B.
+  // letzte Anzahlung) bei mehrstufigen Ketten nicht zusammen und die
+  // Anzahlung zählt doppelt. Gleiche Logik wie lib/belegkette.ts.
+  const map = new Map(lebende.map((b) => [b.id, b]));
+  const wurzel = (start: NkBeleg): string => {
+    let aktuell: NkBeleg = start;
+    const gesehen = new Set<string>();
+    while (!gesehen.has(aktuell.id)) {
+      gesehen.add(aktuell.id);
+      if (!aktuell.parent_invoice_id) return aktuell.id;
+      const eltern = map.get(aktuell.parent_invoice_id);
+      if (!eltern) return aktuell.parent_invoice_id;
+      aktuell = eltern;
+    }
+    return aktuell.id;
+  };
   const ketten = new Set(
-    lebende.filter((b) => b.typ === "schlussrechnung").map((b) => b.parent_invoice_id || b.id),
+    lebende.filter((b) => b.typ === "schlussrechnung").map(wurzel),
   );
   return new Set(
     lebende
-      .filter((b) => b.typ === "anzahlungsrechnung" && ketten.has(b.parent_invoice_id || ""))
+      .filter((b) => b.typ === "anzahlungsrechnung" && ketten.has(wurzel(b)))
       .map((b) => b.id),
   );
 }

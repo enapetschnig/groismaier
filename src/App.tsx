@@ -38,6 +38,7 @@ import KalkulationHub from "./pages/KalkulationHub";
 import KalkulationEditor from "./pages/KalkulationEditor";
 import Nachkalkulation from "./pages/Nachkalkulation";
 import Finanzplanung from "./pages/Finanzplanung";
+import Ausschreibungen from "./pages/Ausschreibungen";
 import Fahrzeuge from "./pages/Fahrzeuge";
 import ScheduleBoard from "./pages/ScheduleBoard";
 import FreelancerHours from "./pages/FreelancerHours";
@@ -120,6 +121,11 @@ function AppContent() {
           <Route path="/schedule" element={<ProtectedRoute feature="plantafel"><ScheduleBoard /></ProtectedRoute>} />
           <Route path="/nachkalkulation" element={<ProtectedRoute feature="nachkalkulation"><Nachkalkulation /></ProtectedRoute>} />
           <Route path="/finanzplanung" element={<ProtectedRoute feature="finanzplanung"><Finanzplanung /></ProtectedRoute>} />
+          {/* Ausschreibungen (ÖNORM A 2063): Gate = admin, passend zur
+              Admin-only-RLS der lv_-Tabellen — mit feature="rechnungen" sah
+              ein Nicht-Admin eine leere Seite und kryptische RLS-Fehler
+              (Review-Befund). */}
+          <Route path="/ausschreibungen" element={<ProtectedRoute feature="admin"><Ausschreibungen /></ProtectedRoute>} />
           <Route path="/fahrzeuge" element={<ProtectedRoute feature="fahrzeuge"><Fahrzeuge /></ProtectedRoute>} />
         </Route>
 

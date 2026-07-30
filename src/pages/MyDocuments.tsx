@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { KBToolbar } from "@/components/kingbill";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { FileText, Eye, Trash2, Home, Upload } from "lucide-react";
+import { FileText, Eye, Trash2, Upload } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { FileViewer } from "@/components/FileViewer";
 import {
@@ -36,6 +37,8 @@ type DocType = "lohnzettel" | "krankmeldung";
  */
 export default function MyDocuments() {
   const navigate = useNavigate();
+  // Zurück über den Verlauf; beim Direkteinstieg (PWA) zur Startmaske.
+  const zurueck = useZurueck("/");
   const [payslips, setPayslips] = useState<Document[]>([]);
   const [sickNotes, setSickNotes] = useState<Document[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -182,18 +185,7 @@ export default function MyDocuments() {
     <div className="kb-page min-h-screen">
       <KBToolbar
         title="Meine Dokumente"
-        onBack={() => navigate(-1)}
-        rightActions={
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            aria-label="Zur Startmaske"
-            title="Zur Startmaske"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-          >
-            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-          </button>
-        }
+        onBack={zurueck}
       />
 
       <div className="container mx-auto max-w-3xl px-3 py-4 sm:px-4 sm:py-6">

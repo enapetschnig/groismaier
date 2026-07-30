@@ -9,7 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { QuickOfferDialog } from "@/components/QuickOfferDialog";
 import { parseDecimal, formatForInput } from "@/lib/num";
-import { Plus, Trash2, Check, Package, Home, Pencil, Zap } from "lucide-react";
+import { Plus, Trash2, Check, Package, Pencil, Zap } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -284,17 +284,6 @@ export default function OfferPackages() {
         title="Angebotspakete"
         onBack={zurueck}
         backLabel="Zurück zu Dokumenten"
-        rightActions={
-          <button
-            type="button"
-            onClick={() => navigate("/")}
-            aria-label="Zur Startmaske"
-            title="Zur Startmaske"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-kb-blue-dark bg-gradient-to-b from-white to-[hsl(213_30%_88%)] shadow-md transition-transform hover:brightness-105 active:translate-y-px"
-          >
-            <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
-          </button>
-        }
       >
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Neues Paket" onClick={openNew} />
         {/*

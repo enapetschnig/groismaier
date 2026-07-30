@@ -118,7 +118,7 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
       } catch {}
 
       const { generateInvoicePdf } = await import("@/lib/pdfGenerator");
-      const { generateEpcQrCode } = await import("@/lib/invoiceHtml");
+      const { zahlungsQrFuerBeleg } = await import("@/lib/invoiceHtml");
       const { loadDocumentTexts, applyDocumentTextsToInvoice } = await import("@/lib/documentTextsLoader");
       // Textbausteine pro Typ vorladen (Cache), damit nicht jede Rechnung neu lädt
       const docTextsByTyp: Record<string, any> = {};
@@ -138,14 +138,8 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
             .eq("invoice_id", inv.id)
             .order("position");
 
-          // QR-Code nur für zahlbare Rechnungstypen (nicht Gutschrift).
-          const _payableQR = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
-          let qrUri: string | undefined;
-          if (_payableQR.has(inv.typ) && Number(inv.brutto_summe) > 0) {
-            try {
-              qrUri = await generateEpcQrCode(Number(inv.brutto_summe), inv.nummer || "", bankData);
-            } catch {}
-          }
+          // Zahlungs-QR — dieselbe Regel wie überall (zahlungsQrFuerBeleg).
+          const qrUri = await zahlungsQrFuerBeleg(inv.typ, Number(inv.brutto_summe), inv.nummer || "", bankData);
 
           let pdfBlob: Blob;
           let fileName: string;

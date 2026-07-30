@@ -6,7 +6,7 @@ import { Download, X, Save, Printer, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import {
   buildInvoiceHtml,
-  generateEpcQrCode,
+  zahlungsQrFuerBeleg,
   DEFAULT_BANK,
   type InvoiceHtmlData,
   type InvoiceHtmlItem,
@@ -103,19 +103,14 @@ export function InvoicePdfPreview({
 
       const logoUri = await getLogoDataUri();
 
-      // QR code für alle zahlbaren Rechnungstypen (Rechnung, Anzahlungs-,
-      // Schlussrechnung). Gutschrift bewusst ausgeklammert (Auszahlung).
-      const _payableQR = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung"]);
-      let qrDataUri: string | undefined;
-      if (_payableQR.has(formDataRef.current.typ) && formDataRef.current.brutto_summe > 0) {
-        try {
-          qrDataUri = await generateEpcQrCode(
-            formDataRef.current.brutto_summe,
-            formDataRef.current.nummer || "Rechnung",
-            bankData
-          );
-        } catch {}
-      }
+      // Dieselbe QR-Regel wie beim Erstellen (zahlungsQrFuerBeleg) — die
+      // Vorschau darf nichts versprechen, was die fertige Rechnung nicht hält.
+      const qrDataUri = await zahlungsQrFuerBeleg(
+        formDataRef.current.typ,
+        Number(formDataRef.current.brutto_summe),
+        formDataRef.current.nummer || "Rechnung",
+        bankData
+      );
 
       // Editierbare Textbausteine für den Typ laden und am Invoice-Objekt
       // als custom_*_text anhängen (pdfGenerator/invoiceHtml verwenden diese
