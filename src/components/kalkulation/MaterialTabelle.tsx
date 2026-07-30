@@ -300,9 +300,18 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
           €/m³ × {fmt(num(m.insulationThickness))} cm → {fmtEuro(r.erg.vkProM2)} / m²
         </div>
       )}
-      {row.manual && r.artFrei && (
+      {/* Was ist neu? Kategorie UND Artikel getrennt benennen — vorher stand
+          hier nur „Artikel steht noch nicht im Katalog", und zwar auch nur im
+          manuellen Modus. Wer eine neue Kategorie eintippte, sah nicht, dass
+          auch sie beim Übernehmen angelegt wird. */}
+      {(r.katFrei || r.artFrei) && (
         <div className="mt-0.5 flex items-center gap-1 text-[10px] text-amber-800">
-          <NeuBadge /> steht noch nicht im Katalog
+          <NeuBadge />
+          {r.katFrei && r.artFrei
+            ? `Kategorie „${row.category}" und Artikel werden beim Übernehmen neu angelegt`
+            : r.katFrei
+              ? `Kategorie „${row.category}" wird beim Übernehmen neu angelegt`
+              : "Artikel steht noch nicht im Katalog"}
         </div>
       )}
       {/* Volumen-Artikel als €/m² Aufbauflaeche — die App kann das Volumen

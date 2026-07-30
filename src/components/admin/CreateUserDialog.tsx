@@ -72,7 +72,20 @@ function buildOnboardingText(params: {
   return lines.join("\n");
 }
 
+/** Oesterreichische Mobilnummer auf +43… normalisieren. */
+function normalisiereNummer(roh: string): string | null {
+  let p = roh.replace(/[\s/-]/g, "");
+  if (p.startsWith("00")) p = "+" + p.slice(2);
+  else if (p.startsWith("0")) p = "+43" + p.slice(1);
+  else if (!p.startsWith("+")) p = "+43" + p;
+  return /^\+\d{10,15}$/.test(p) ? p : null;
+}
+
 export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
+  // SMS-Versand der Zugangsdaten (Twilio, Edge Function send-sms-invite)
+  const [smsNummer, setSmsNummer] = useState("");
+  const [smsSendet, setSmsSendet] = useState(false);
+  const [smsGesendet, setSmsGesendet] = useState(false);
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -211,6 +224,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
         description: `${form.vorname} ${form.nachname} kann sich sofort anmelden.`,
       });
 
+      setSmsNummer(form.telefon.trim());
       setOnboardingText(
         buildOnboardingText({
           vorname: form.vorname.trim(),
@@ -252,6 +266,55 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
               {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               {copied ? "Kopiert" : "In Zwischenablage kopieren"}
             </Button>
+
+            {/* Direktversand per SMS — spart das Kopieren ins Telefon. */}
+            <div className="rounded-lg border p-3 space-y-2">
+              <Label className="text-sm">Zugangsdaten per SMS schicken</Label>
+              <div className="flex gap-2">
+                <Input
+                  value={smsNummer}
+                  onChange={(e) => setSmsNummer(e.target.value)}
+                  placeholder="+43 660 1234567"
+                  className="flex-1"
+                />
+                <Button
+                  type="button"
+                  disabled={smsSendet || !smsNummer.trim()}
+                  onClick={async () => {
+                    const nummer = normalisiereNummer(smsNummer);
+                    if (!nummer) {
+                      toast({ variant: "destructive", title: "Ungültige Nummer", description: "Bitte eine Mobilnummer angeben, z.B. +43 660 1234567." });
+                      return;
+                    }
+                    setSmsSendet(true);
+                    const { data, error } = await supabase.functions.invoke("send-sms-invite", {
+                      body: {
+                        phone: nummer,
+                        username: form.username.trim().toLowerCase(),
+                        password: form.password,
+                        vorname: form.vorname.trim(),
+                      },
+                    });
+                    setSmsSendet(false);
+                    if (error || (data as any)?.error) {
+                      toast({
+                        variant: "destructive",
+                        title: "SMS nicht gesendet",
+                        description: (data as any)?.error || error?.message || "Bitte später erneut versuchen.",
+                      });
+                      return;
+                    }
+                    setSmsGesendet(true);
+                    toast({ title: "SMS gesendet", description: `Zugangsdaten an ${nummer} verschickt.` });
+                  }}
+                >
+                  {smsSendet ? "Sendet …" : smsGesendet ? "Nochmal senden" : "SMS senden"}
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Die SMS enthält Benutzername und Passwort — bitte nur an die richtige Nummer.
+              </p>
+            </div>
           </div>
         ) : (
           <div className="space-y-5 py-2">

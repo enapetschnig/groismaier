@@ -46,6 +46,10 @@ export default function Index() {
   const [loading, setLoading] = useState(true);
   const [isActivated, setIsActivated] = useState<boolean | null>(null);
   const [pendingUsersCount, setPendingUsersCount] = useState(0);
+  /** Fahrzeuge, deren Pickerl innerhalb der eingestellten Vorlaufzeit fällig wird. */
+  const [pickerlFaellig, setPickerlFaellig] = useState<
+    { id: string; bezeichnung: string; kennzeichen: string | null; faellig: string; tage: number }[]
+  >([]);
   const [offenePostenCount, setOffenePostenCount] = useState(0);
   const { handleRestartInstallGuide } = useOnboarding();
 
@@ -87,6 +91,28 @@ export default function Index() {
         setUserName(`${user.user_metadata.vorname || ''} ${user.user_metadata.nachname || ''}`.trim() || 'Neuer Benutzer');
       }
     }
+
+    // Pickerl-Termine: Fahrzeuge, bei denen die Begutachtung ansteht.
+    // Der Vorlauf steht je Fahrzeug (Kundenwunsch: ein Monat oder zwei Wochen).
+    try {
+      const { data: fahrzeuge } = await (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen, aktiv, pickerl_faellig_am, pickerl_erinnerung_tage")
+        .not("pickerl_faellig_am", "is", null);
+      const heute = new Date(); heute.setHours(0, 0, 0, 0);
+      const anstehend = ((fahrzeuge as any[]) || [])
+        .filter((f) => f.aktiv !== false)
+        .map((f) => {
+          const faellig = new Date(f.pickerl_faellig_am + "T12:00:00");
+          const tage = Math.ceil((faellig.getTime() - heute.getTime()) / 86400000);
+          return { id: f.id, bezeichnung: f.bezeichnung, kennzeichen: f.kennzeichen,
+                   faellig: f.pickerl_faellig_am, tage,
+                   vorlauf: Number(f.pickerl_erinnerung_tage) || 30 };
+        })
+        .filter((f) => f.tage <= f.vorlauf)
+        .sort((a, b) => a.tage - b.tage)
+        .map(({ vorlauf, ...rest }) => rest);
+      setPickerlFaellig(anstehend);
+    } catch { /* Fahrzeugmodul optional — Startseite darf daran nicht scheitern */ }
 
     // Fetch pending users count for admin notification
     if (roleData?.role === "administrator") {
@@ -277,6 +303,39 @@ export default function Index() {
           </DropdownMenu>
         </div>
       </header>
+
+      {/* Pickerl-Erinnerung — für alle, die den Fuhrpark sehen dürfen */}
+      {canView("fahrzeuge") && pickerlFaellig.length > 0 && (
+        <div
+          className="cursor-pointer border-b transition-colors"
+          style={{ background: pickerlFaellig.some(f => f.tage < 0) ? "#fef2f2" : "#fffbeb" }}
+          onClick={() => navigate("/fahrzeuge")}
+        >
+          <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3">
+            <div className="flex items-center gap-3">
+              <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
+                pickerlFaellig.some(f => f.tage < 0) ? "bg-red-500" : "bg-amber-500"}`}>
+                <Truck className="h-5 w-5 text-white" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm sm:text-base text-amber-900">
+                  {pickerlFaellig.length === 1 ? "Pickerl steht an" : `${pickerlFaellig.length} Pickerl-Termine stehen an`}
+                </p>
+                <p className="text-xs text-amber-800 break-words">
+                  {pickerlFaellig.slice(0, 3).map((f) => {
+                    const wann = f.tage < 0 ? `seit ${Math.abs(f.tage)} Tagen überfällig`
+                      : f.tage === 0 ? "heute fällig"
+                      : `in ${f.tage} Tagen`;
+                    return `${f.bezeichnung}${f.kennzeichen ? ` (${f.kennzeichen})` : ""} — ${wann}`;
+                  }).join(" · ")}
+                  {pickerlFaellig.length > 3 ? " …" : ""}
+                </p>
+              </div>
+              <ArrowRight className="h-5 w-5 text-amber-600 shrink-0" />
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Pending Users Notification for Admins */}
       {isAdmin && pendingUsersCount > 0 && (

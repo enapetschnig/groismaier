@@ -54,6 +54,11 @@ interface Vehicle {
   typ: string | null;
   aktiv: boolean;
   notizen: string | null;
+  /** Nächste wiederkehrende Begutachtung (§ 57a, „Pickerl"). */
+  pickerl_faellig_am: string | null;
+  /** Vorlauf der Erinnerung auf der Startseite, in Tagen. */
+  pickerl_erinnerung_tage: number | null;
+  pickerl_letzte_pruefung: string | null;
 }
 
 interface VehicleCost {
@@ -132,6 +137,9 @@ const EMPTY_FORM = {
   typ: "pkw",
   aktiv: true,
   notizen: "",
+  pickerl_faellig_am: "",
+  pickerl_erinnerung_tage: "30",
+  pickerl_letzte_pruefung: "",
 };
 
 export default function Fahrzeuge() {
@@ -185,7 +193,7 @@ export default function Fahrzeuge() {
     setLoading(true);
     const [vehRes, empRes, usageRes, costRes] = await Promise.all([
       (supabase.from("vehicles" as never) as any)
-        .select("id, bezeichnung, kennzeichen, typ, aktiv, notizen")
+        .select("id, bezeichnung, kennzeichen, typ, aktiv, notizen, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung")
         .order("aktiv", { ascending: false })
         .order("bezeichnung"),
       // employees.standard_vehicle_id ist neu → über den untypisierten Client
@@ -346,6 +354,9 @@ export default function Fahrzeuge() {
   const openEdit = (v: Vehicle) => {
     setEditId(v.id);
     setForm({
+      pickerl_faellig_am: v.pickerl_faellig_am || "",
+      pickerl_erinnerung_tage: String(v.pickerl_erinnerung_tage ?? 30),
+      pickerl_letzte_pruefung: v.pickerl_letzte_pruefung || "",
       bezeichnung: v.bezeichnung || "",
       kennzeichen: v.kennzeichen || "",
       typ: v.typ || "pkw",
@@ -376,6 +387,9 @@ export default function Fahrzeuge() {
       typ: form.typ || null,
       aktiv: form.aktiv,
       notizen: form.notizen.trim() || null,
+      pickerl_faellig_am: form.pickerl_faellig_am || null,
+      pickerl_erinnerung_tage: Math.max(0, Number(form.pickerl_erinnerung_tage) || 30),
+      pickerl_letzte_pruefung: form.pickerl_letzte_pruefung || null,
     };
     try {
       if (editId) {
@@ -579,6 +593,40 @@ export default function Fahrzeuge() {
                 Fahrzeug aktiv
               </label>
             </div>
+            {/* ── Pickerl (§ 57a) ── */}
+            <div>
+              <label className="block text-xs font-semibold mb-1" htmlFor="fz-pickerl">Pickerl fällig am</label>
+              <input
+                id="fz-pickerl"
+                type="date"
+                className="kb-input w-full"
+                value={form.pickerl_faellig_am}
+                onChange={(e) => setForm(f => ({ ...f, pickerl_faellig_am: e.target.value }))}
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1" htmlFor="fz-vorlauf">Erinnerung (Tage vorher)</label>
+              <input
+                id="fz-vorlauf"
+                type="text"
+                inputMode="numeric"
+                className="kb-input w-full"
+                value={form.pickerl_erinnerung_tage}
+                onChange={(e) => setForm(f => ({ ...f, pickerl_erinnerung_tage: e.target.value.replace(/[^0-9]/g, "") }))}
+                placeholder="30"
+              />
+              <p className="mt-0.5 text-[11px] text-muted-foreground">z.B. 30 für einen Monat, 14 für zwei Wochen</p>
+            </div>
+            <div>
+              <label className="block text-xs font-semibold mb-1" htmlFor="fz-letzte">Letzte Überprüfung</label>
+              <input
+                id="fz-letzte"
+                type="date"
+                className="kb-input w-full"
+                value={form.pickerl_letzte_pruefung}
+                onChange={(e) => setForm(f => ({ ...f, pickerl_letzte_pruefung: e.target.value }))}
+              />
+            </div>
             <div className="sm:col-span-2">
               <label className="block text-xs font-semibold mb-1" htmlFor="fz-notiz">Notizen</label>
               <textarea
@@ -586,7 +634,7 @@ export default function Fahrzeuge() {
                 className="kb-input w-full min-h-[70px] py-2"
                 value={form.notizen}
                 onChange={(e) => setForm(f => ({ ...f, notizen: e.target.value }))}
-                placeholder="z.B. Pickerl fällig 03/2027"
+                placeholder="z.B. Winterreifen im Lager"
               />
             </div>
           </div>
