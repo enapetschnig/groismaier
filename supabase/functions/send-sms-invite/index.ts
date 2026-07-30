@@ -30,7 +30,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     const greeting = vorname ? `Hallo ${vorname}!` : "Hallo!";
-    const message = `${greeting} Du wurdest zu Holzbau Groismaier eingeladen.\n\nBenutzername: ${username}\nPasswort: ${password}\n\nBitte melde dich an und ändere dein Passwort.\nhttps://cg-holzbau.at`;
+    // Adresse der APP, nicht der Firmenwebsite. Hier stand fest verdrahtet
+    // "cg-holzbau.at" — der neue Mitarbeiter landete damit auf der
+    // Unternehmensseite und fand die Anmeldung nicht.
+    const appUrl = Deno.env.get("APP_URL") || "https://groismaier.handwerkapp.at";
+    const message = `${greeting} Du wurdest zu Holzbau Groismaier eingeladen.\n\nBenutzername: ${username}\nPasswort: ${password}\n\nBitte melde dich an und ändere dein Passwort.\n${appUrl}`;
 
     // Send via Twilio REST API
     const twilioUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -83,6 +83,14 @@ function normalisiereNummer(roh: string): string | null {
 
 export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
   // SMS-Versand der Zugangsdaten (Twilio, Edge Function send-sms-invite)
+  // Offizielle App-Adresse aus den Einstellungen — NICHT window.location.origin:
+  // Wer die App gerade ueber eine Test-/Vercel-Adresse bedient, haette dem
+  // Mitarbeiter sonst genau diese Adresse geschickt.
+  const [appUrl, setAppUrl] = useState<string>("");
+  useEffect(() => {
+    supabase.from("app_settings").select("value").eq("key", "app_url").maybeSingle()
+      .then(({ data }) => setAppUrl((data?.value || "").trim()));
+  }, []);
   const [smsNummer, setSmsNummer] = useState("");
   const [smsSendet, setSmsSendet] = useState(false);
   const [smsGesendet, setSmsGesendet] = useState(false);
@@ -230,7 +238,7 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
           vorname: form.vorname.trim(),
           username: form.username.trim().toLowerCase(),
           password: form.password,
-          appUrl: window.location.origin,
+          appUrl: appUrl || window.location.origin,
           istFreelancer: istFreelancer,
         }),
       );
