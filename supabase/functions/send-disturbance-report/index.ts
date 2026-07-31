@@ -478,10 +478,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const subject = `Regiebericht - ${disturbance.kunde_name} - ${formatDateShort(disturbance.datum)}`;
 
     console.log("Sending email with PDF attachment to:", recipients);
-
-    // Use Resend test domain if cg-holzbau.at is not verified yet
-    // Once domain is verified in Resend dashboard, change back to noreply@cg-holzbau.at
-    const fromAddress = Deno.env.get("RESEND_FROM_EMAIL") || "Holzbau Groismaier <onboarding@resend.dev>";
+        // Absender laut Kundenwunsch — die Domain handwerkapp.at ist bei Resend
+    // verifiziert. Das Secret RESEND_FROM_EMAIL kann den Wert übersteuern.
+    const fromAddress = Deno.env.get("RESEND_FROM_EMAIL") || "Holzbau Groismaier <cg-holzbau@handwerkapp.at>";
 
     console.log("Sending from:", fromAddress);
 
