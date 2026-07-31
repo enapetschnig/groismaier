@@ -214,11 +214,30 @@ export const SignatureDialog = ({
       });
 
       if (sendError || sendData?.error) {
+        // Bei non-2xx liefert supabase-js nur einen generischen Text — die
+        // echte Ursache steht im Antwort-Body (FunctionsHttpError.context).
+        let echteMeldung = sendData?.error || "";
+        if (!echteMeldung && sendError) {
+          try {
+            const ctx = (sendError as { context?: Response }).context;
+            if (ctx && typeof ctx.json === "function") {
+              const body = await ctx.json();
+              echteMeldung = body?.error || "";
+            }
+          } catch { /* Body nicht lesbar — generische Meldung reicht dann */ }
+        }
         console.error("Email send error:", sendError || sendData?.error);
         toast({
-          title: "Unterschrift gespeichert",
-          description: `E-Mail konnte nicht gesendet werden: ${sendData?.error || sendError?.message || "Unbekannter Fehler"}`,
+          title: "Unterschrift gespeichert — E-Mail nicht gesendet",
+          description: echteMeldung || sendError?.message || "Unbekannter Fehler",
           variant: "destructive",
+          duration: 9000,
+        });
+      } else if (sendData?.teilweise) {
+        toast({
+          title: "Regiebericht teilweise gesendet",
+          description: sendData.teilweise,
+          duration: 9000,
         });
       } else {
         toast({

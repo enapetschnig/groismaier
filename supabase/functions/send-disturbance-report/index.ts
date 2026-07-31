@@ -492,32 +492,41 @@ Deno.serve(async (req: Request): Promise<Response> => {
       );
     }
     const resend = new Resend(resendKey);
-    const emailResponse = await resend.emails.send({
-      from: fromAddress,
-      reply_to: officeEmail,
-      to: recipients,
-      subject: subject,
-      html: emailHtml,
-      attachments: [
-        {
-          filename: pdfFilename,
-          content: pdfBase64,
-        },
-      ],
-    });
+    // JE EMPFÄNGER einzeln senden: Im Resend-Testmodus (Domain noch nicht
+    // verifiziert) sind nur bestimmte Adressen zustellbar — ein blockierter
+    // Kunde darf die Zustellung ans Büro nicht mit verhindern.
+    const ergebnisse: { an: string; fehler: string | null }[] = [];
+    for (const an of recipients) {
+      const antwort = await resend.emails.send({
+        from: fromAddress,
+        reply_to: officeEmail,
+        to: [an],
+        subject: subject,
+        html: emailHtml,
+        attachments: [
+          {
+            filename: pdfFilename,
+            content: pdfBase64,
+          },
+        ],
+      });
+      ergebnisse.push({ an, fehler: antwort?.error ? (antwort.error.message || "unbekannter Fehler") : null });
+      console.log("Resend →", an, JSON.stringify(antwort));
+    }
 
-    console.log("Resend response:", JSON.stringify(emailResponse));
-
-    // Check for Resend errors
-    if (emailResponse?.error) {
-      console.error("Resend error:", JSON.stringify(emailResponse.error));
+    const fehlgeschlagen = ergebnisse.filter((r) => r.fehler);
+    if (fehlgeschlagen.length === recipients.length) {
+      // Gar nichts zugestellt → echter Fehler.
       return new Response(
-        JSON.stringify({ error: emailResponse.error.message || "E-Mail konnte nicht gesendet werden", details: emailResponse.error }),
+        JSON.stringify({ error: fehlgeschlagen.map((f) => `${f.an}: ${f.fehler}`).join(" · ") }),
         { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
       );
     }
+    const teilweise = fehlgeschlagen.length > 0
+      ? `Zugestellt an ${ergebnisse.filter((r) => !r.fehler).map((r) => r.an).join(", ")} — NICHT zustellbar: ${fehlgeschlagen.map((f) => `${f.an} (${f.fehler})`).join("; ")}`
+      : null;
 
-    console.log("Email sent successfully:", JSON.stringify(emailResponse));
+    console.log("Email sent:", JSON.stringify(ergebnisse));
 
     // Store PDF in Supabase Storage for project access
     try {
@@ -564,7 +573,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
 
     return new Response(
-      JSON.stringify({ success: true, emailResponse }),
+      JSON.stringify({ success: true, teilweise, ergebnisse }),
       { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders } }
     );
   } catch (error: unknown) {
