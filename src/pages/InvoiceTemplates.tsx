@@ -190,7 +190,98 @@ export default function InvoiceTemplates() {
     setLoading(false);
   };
 
-  const kategorien = [...new Set(templates.map(t => t.kategorie))].sort();
+  /** Kategorien aus Stammliste (kalkulation_kategorien) — auch leere. */
+  const [stammKategorien, setStammKategorien] = useState<{ id: string; name: string }[]>([]);
+  const [neueKategorie, setNeueKategorie] = useState("");
+  const ladeStammKategorien = async () => {
+    // NUR typ='material': Die lack-/aufpreis-Kategorien gehören zur
+    // Oberflächenbeschichtung — ihr Löschen risse per ON DELETE CASCADE den
+    // kompletten Lack-Preiskatalog mit (Review-Befund, schwer).
+    const { data } = await (supabase.from("kalkulation_kategorien" as never) as any)
+      .select("id, name").eq("aktiv", true).eq("typ", "material").order("sort");
+    setStammKategorien(((data as any[]) || []));
+  };
+  useEffect(() => { void ladeStammKategorien(); }, []);
+
+  // Vereinigung: Kategorien mit Artikeln + Stammliste (auch noch leere).
+  const kategorien = [...new Set([
+    ...templates.map(t => t.kategorie),
+    ...stammKategorien.map(k => k.name),
+  ])].filter(Boolean).sort();
+  const artikelJeKategorie = (k: string) => templates.filter(t => t.kategorie === k).length;
+
+  /** Neue Kategorie in der Stammliste anlegen (Kundenwunsch) — steht damit
+   *  sofort auch in der Kalkulation zur Auswahl. */
+  const kategorieAnlegen = async () => {
+    const name = neueKategorie.trim();
+    if (!name) return;
+    if (kategorien.some(k => k.toLowerCase() === name.toLowerCase())) {
+      toast({ variant: "destructive", title: "Gibt es schon", description: `„${name}" ist bereits vorhanden.` });
+      return;
+    }
+    const { error } = await (supabase.from("kalkulation_kategorien" as never) as any)
+      .insert({ name, typ: "material", einheit: "", sort: (stammKategorien.length + 1) * 10 });
+    if (error) {
+      toast({
+        variant: "destructive",
+        title: /duplicate|unique/i.test(error.message) ? "Gibt es schon" : "Fehler",
+        description: /duplicate|unique/i.test(error.message)
+          ? `„${name}" wurde gerade schon angelegt (evtl. in einem anderen Fenster).`
+          : error.message,
+      });
+      return;
+    }
+    toast({ title: "Kategorie angelegt", description: `„${name}" — Artikel lassen sich jetzt zuordnen.` });
+    setNeueKategorie("");
+    void ladeStammKategorien();
+  };
+
+  /** Kategorie löschen — nur wenn weder Katalog- noch Kalkulations-Artikel
+   *  daran hängen, und erst nach Rückfrage. */
+  const kategorieLoeschen = async (name: string) => {
+    const anzahl = artikelJeKategorie(name);
+    if (anzahl > 0) {
+      toast({
+        variant: "destructive",
+        title: "Kategorie ist nicht leer",
+        description: `„${name}" enthält noch ${anzahl} Artikel — zuerst die Artikel umhängen oder löschen.`,
+        duration: 6000,
+      });
+      return;
+    }
+    const eintrag = stammKategorien.find(k => k.name === name);
+    if (!eintrag) {
+      // Kategorie existiert nur noch als Wert auf (gerade gelöschten)
+      // Artikeln — nichts zu tun, die Liste bereinigt sich beim Neuladen.
+      toast({ title: "Kategorie entfernt", description: `„${name}" hatte keinen Stammlisten-Eintrag.` });
+      if (filterKategorie === name) setFilterKategorie("alle");
+      return;
+    }
+    // Auch der Kalkulations-Katalog hängt an der Kategorie (FK mit CASCADE!) —
+    // mit Altbestand darf sie nicht still verschwinden.
+    const { count } = await (supabase.from("kalkulation_artikel" as never) as any)
+      .select("id", { count: "exact", head: true })
+      .eq("kategorie_id", eintrag.id);
+    if ((count || 0) > 0) {
+      toast({
+        variant: "destructive",
+        title: "Kategorie ist nicht leer",
+        description: `„${name}" enthält noch ${count} Kalkulations-Artikel (auch inaktive zählen). Bitte zuerst dort aufräumen.`,
+        duration: 7000,
+      });
+      return;
+    }
+    if (!window.confirm(`Kategorie „${name}" endgültig löschen?`)) return;
+    const { error } = await (supabase.from("kalkulation_kategorien" as never) as any)
+      .delete().eq("id", eintrag.id);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    toast({ title: "Kategorie gelöscht", description: `„${name}" wurde entfernt.` });
+    if (filterKategorie === name) setFilterKategorie("alle");
+    void ladeStammKategorien();
+  };
   const produktgruppen = [...new Set(templates.map(t => t.produktgruppe).filter(Boolean))].sort() as string[];
   const lieferanten = [...new Set(templates.map(t => t.lieferant).filter(Boolean))].sort() as string[];
 
@@ -541,18 +632,67 @@ export default function InvoiceTemplates() {
                 onChange={(e) => setSearch(e.target.value)}
               />
 
-              {/* Kategorie filtern */}
-              <Select value={filterKategorie} onValueChange={setFilterKategorie}>
-                <SelectTrigger className="w-full h-9" aria-label="Kategorie filtern">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="alle">Alle Kategorien</SelectItem>
-                  {kategorien.map(k => (
-                    <SelectItem key={k} value={k}>{k}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              {/* Kategorien: klickbare Liste mit Artikelzahl statt verstecktem
+                  Dropdown (Kundenwunsch: übersichtlicher, erstellen + löschen). */}
+              <div className="space-y-1">
+                <p className="text-xs font-semibold">Kategorien</p>
+                <button
+                  type="button"
+                  onClick={() => setFilterKategorie("alle")}
+                  className={`flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm ${
+                    filterKategorie === "alle" ? "bg-kb-blue/15 font-medium" : "hover:bg-muted/60"
+                  }`}
+                >
+                  <span>Alle Kategorien</span>
+                  <span className="text-xs tabular-nums text-muted-foreground">{templates.length}</span>
+                </button>
+                {kategorien.map(k => (
+                  <div key={k} className="group flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setFilterKategorie(k)}
+                      className={`flex min-w-0 flex-1 items-center justify-between rounded px-2 py-1.5 text-left text-sm ${
+                        filterKategorie === k ? "bg-kb-blue/15 font-medium" : "hover:bg-muted/60"
+                      }`}
+                    >
+                      <span className="truncate">{k}</span>
+                      <span className="ml-2 shrink-0 text-xs tabular-nums text-muted-foreground">{artikelJeKategorie(k)}</span>
+                    </button>
+                    {artikelJeKategorie(k) === 0 && (
+                      <button
+                        type="button"
+                        className="shrink-0 p-1 text-destructive opacity-60 hover:opacity-100"
+                        title={`Leere Kategorie „${k}" löschen`}
+                        aria-label={`Kategorie ${k} löschen`}
+                        onClick={() => void kategorieLoeschen(k)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                <div className="flex gap-1 pt-1">
+                  <input
+                    className="kb-input h-9 min-w-0 flex-1"
+                    placeholder="Neue Kategorie…"
+                    value={neueKategorie}
+                    onChange={(e) => setNeueKategorie(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); void kategorieAnlegen(); } }}
+                  />
+                  <button
+                    type="button"
+                    className="kb-btn h-9 shrink-0 px-2"
+                    onClick={() => void kategorieAnlegen()}
+                    disabled={!neueKategorie.trim()}
+                    title="Kategorie anlegen"
+                  >
+                    <Plus className="h-4 w-4 text-kb-green" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Löschen geht nur bei leeren Kategorien; neue stehen sofort auch in der Kalkulation.
+                </p>
+              </div>
 
               {/* Anzahl-Zähler wie im KingBill-Original */}
               <div className="border-t border-border pt-2 text-sm font-bold">

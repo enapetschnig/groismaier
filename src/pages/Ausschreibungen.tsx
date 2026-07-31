@@ -19,11 +19,14 @@
  *     Datei ablehnt). Das Original-XML liegt dafür unverändert in der DB.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { parseDecimal, formatForInput } from "@/lib/num";
+import { heuteISO } from "@/lib/datum";
+import { belegSummen } from "@/lib/belegSummen";
 import {
   parseOnlv, lvSummen, positionspreis, epGesamt, istBepreisbar,
   OnlvFehler, type OnlvLV, type Positionsart,
@@ -36,7 +39,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Plus, Trash2, FileUp, ChevronDown, ChevronRight, FileText, Printer, AlertTriangle,
+  Plus, Trash2, FileUp, ChevronDown, ChevronRight, FileText, Printer, AlertTriangle, Receipt,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
@@ -53,6 +56,7 @@ interface LvKopf {
   datei_name: string | null;
   status: string;
   import_fertig?: boolean;
+  invoice_id?: string | null;
   created_at: string;
 }
 
@@ -84,6 +88,7 @@ const ART_BADGE: Record<string, { label: string; klasse: string } | undefined> =
 
 export default function Ausschreibungen() {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const zurueck = useZurueck("/");
   const dateiInput = useRef<HTMLInputElement>(null);
 
@@ -136,7 +141,7 @@ export default function Ausschreibungen() {
     setLoading(true);
     const [koepfeRes, posRes] = await Promise.all([
       ladeAlleZeilen((von) => (supabase.from("lv_ausschreibungen" as never) as any)
-        .select("id, name, vorhaben, lvbezeichnung, auftraggeber_name, auftraggeber_adresse, waehrung, schema_version, datei_name, status, import_fertig, vorbemerkungen, created_at")
+        .select("id, name, vorhaben, lvbezeichnung, auftraggeber_name, auftraggeber_adresse, waehrung, schema_version, datei_name, status, import_fertig, vorbemerkungen, invoice_id, created_at")
         .order("created_at", { ascending: false }).order("id")),
       ladeAlleZeilen((von) => (supabase.from("lv_positionen" as never) as any)
         .select("lv_id, positionsart, menge, einheit, ep_lohn, ep_sonstiges")
@@ -352,6 +357,169 @@ export default function Ausschreibungen() {
     saveKette.current = saveKette.current.then(() => speicherePreis(pos)).catch(() => {});
   };
 
+  // ── Als Angebot übernehmen (Kundenwunsch: „das wird dann ein Angebot
+  //    und kann zur Rechnung werden") ─────────────────────────────────────
+  const [erzeugeAngebot, setErzeugeAngebot] = useState(false);
+  const alsAngebotUebernehmen = async () => {
+    if (!offenesLv || erzeugeAngebot) return;
+    const bepreisteNormale = positionen.filter(
+      (p) => p.positionsart === "normal" && istBepreisbar(p) && positionspreis(p) !== null
+    );
+    if (bepreisteNormale.length === 0) {
+      toast({ variant: "destructive", title: "Nichts zu übernehmen", description: "Bitte zuerst mindestens eine Normalposition bepreisen." });
+      return;
+    }
+    const offeneNormale = positionen.filter(
+      (p) => p.positionsart === "normal" && istBepreisbar(p) && positionspreis(p) === null
+    ).length;
+    if (offeneNormale > 0 && !window.confirm(
+      `${offeneNormale} Normalposition(en) sind noch NICHT bepreist und fehlen dann im Angebot.\n\nTrotzdem übernehmen?`
+    )) return;
+
+    setErzeugeAngebot(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Nicht angemeldet.");
+
+      // Gegen den DB-Stand prüfen — ein zweiter Tab/Kollege könnte das
+      // Angebot inzwischen erstellt haben (der Knopf-Guard ist nur lokal).
+      const { data: aktuell } = await (supabase.from("lv_ausschreibungen" as never) as any)
+        .select("invoice_id").eq("id", offenesLv.id).maybeSingle();
+      if ((aktuell as { invoice_id?: string | null } | null)?.invoice_id) {
+        toast({ title: "Angebot existiert bereits", description: "Es wurde inzwischen erstellt — es öffnet sich jetzt." });
+        navigate(`/invoices/${(aktuell as { invoice_id: string }).invoice_id}`);
+        return;
+      }
+
+      // Kunde: vorhandenen mit gleichem Namen verwenden, sonst aus dem
+      // Auftraggeber der Ausschreibung anlegen.
+      let kundeId: string | null = null;
+      const agName = (offenesLv.auftraggeber_name || "").trim();
+      let kunde: { adresse?: string | null; plz?: string | null; ort?: string | null } = {};
+      if (agName) {
+        // % _ \ escapen — sonst matcht „100% Holzbau" per Wildcard auch
+        // fremde Kunden und das Angebot bekäme die falsche Adresse.
+        const agSicher = agName.replace(/[\\%_]/g, "\\$&");
+        const { data: vorhandene } = await supabase
+          .from("customers").select("id, adresse, plz, ort").ilike("name", agSicher).limit(1);
+        if (vorhandene && vorhandene.length > 0) {
+          kundeId = vorhandene[0].id;
+          kunde = vorhandene[0];
+        } else {
+          // Adresse „Straße, PLZ Ort" grob zerlegen.
+          const teile = (offenesLv.auftraggeber_adresse || "").split(",").map((t) => t.trim());
+          const plzOrt = (teile[1] || "").match(/^(\d{4,5})\s+(.+)$/);
+          kunde = { adresse: teile[0] || null, plz: plzOrt?.[1] || null, ort: plzOrt?.[2] || teile[1] || null };
+          const { data: neu, error: kundeErr } = await supabase.from("customers").insert({
+            user_id: user.id,
+            name: agName,
+            // App-weiter Wert — „firma" kennt die Kundenliste nicht.
+            kundentyp: "geschaeftskunde",
+            firmenname: agName,
+            adresse: kunde.adresse,
+            plz: kunde.plz,
+            ort: kunde.ort,
+          } as never).select("id").single();
+          if (kundeErr) {
+            toast({
+              variant: "destructive",
+              title: "Kunde nicht angelegt",
+              description: `${kundeErr.message} — das Angebot wird ohne Kundenverknüpfung erstellt, bitte danach zuordnen.`,
+              duration: 7000,
+            });
+          }
+          kundeId = (neu as { id: string } | null)?.id || null;
+        }
+      }
+
+      // Fortlaufende Angebotsnummer über denselben Zähler wie der Beleg-Editor.
+      const jahr = new Date().getFullYear();
+      const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+        p_typ: "angebot",
+        p_jahr: jahr,
+      } as never);
+      if (numError) throw numError;
+      const nummer = numData as unknown as string;
+      const laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+
+      // Positionen des Angebots — LV-Nummer wandert in die Produktnummern-
+      // Spalte, der Langtext bleibt Vertragsinhalt.
+      const items = bepreisteNormale.map((p, i) => ({
+        position: i + 1,
+        produktnummer: p.positionsnummer,
+        beschreibung: p.stichwort || p.positionsnummer,
+        langtext: (p.langtext_html || "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() || null,
+        menge: Number(p.menge) || 0,
+        einheit: p.einheit || "",
+        einzelpreis: epGesamt(p) || 0,
+        gesamtpreis: positionspreis(p) || 0,
+        rabatt_prozent: 0,
+      }));
+      const summen2 = belegSummen(
+        items.map((it) => ({ ...it, mwst_exempt: false })) as Parameters<typeof belegSummen>[0],
+        { mwst_satz: 20, rabatt_prozent: 0, rabatt_betrag: 0 } as Parameters<typeof belegSummen>[1],
+      );
+
+      const { data: angebot, error: invErr } = await supabase.from("invoices").insert({
+        user_id: user.id,
+        typ: "angebot",
+        status: "entwurf",
+        nummer,
+        laufnummer,
+        jahr,
+        datum: heuteISO(),
+        betreff: `Angebot zu Ausschreibung ${offenesLv.lvbezeichnung || offenesLv.name}${offenesLv.vorhaben ? ` — ${offenesLv.vorhaben}` : ""}`,
+        kunde_name: agName || "Auftraggeber laut Ausschreibung",
+        kunde_adresse: kunde.adresse || null,
+        kunde_plz: kunde.plz || null,
+        kunde_ort: kunde.ort || null,
+        customer_id: kundeId,
+        mwst_satz: 20,
+        netto_summe: summen2.nettoSumme,
+        mwst_betrag: summen2.mwstBetrag,
+        brutto_summe: summen2.bruttoSumme,
+      } as never).select("id").single();
+      if (invErr || !angebot) throw invErr || new Error("Angebot konnte nicht angelegt werden.");
+      const angebotId = (angebot as { id: string }).id;
+
+      for (let i = 0; i < items.length; i += 200) {
+        const { error: itemErr } = await supabase.from("invoice_items").insert(
+          items.slice(i, i + 200).map((it) => ({ ...it, invoice_id: angebotId })) as never[]
+        );
+        if (itemErr) {
+          const { error: delErr } = await supabase.from("invoices").delete().eq("id", angebotId);
+          throw new Error(delErr
+            ? `${itemErr.message} — und das halb angelegte Angebot ${nummer} konnte nicht entfernt werden, bitte in der Dokumentenliste löschen.`
+            : itemErr.message);
+        }
+      }
+
+      const { error: linkErr } = await (supabase.from("lv_ausschreibungen" as never) as any)
+        .update({ invoice_id: angebotId, status: "abgegeben" })
+        .eq("id", offenesLv.id);
+      if (linkErr) {
+        // Nicht fatal, aber laut sein: ohne Verknüpfung würde der Knopf beim
+        // nächsten Öffnen ein ZWEITES Angebot anbieten.
+        toast({
+          variant: "destructive",
+          title: "Verknüpfung nicht gespeichert",
+          description: `Das Angebot ${nummer} wurde erstellt, die Ausschreibung konnte aber nicht als „abgegeben" markiert werden — bitte nicht erneut übernehmen.`,
+          duration: 8000,
+        });
+      }
+
+      toast({
+        title: "Angebot erstellt",
+        description: `${items.length} Positionen übernommen — Angebot ${nummer} öffnet sich.`,
+      });
+      navigate(`/invoices/${angebotId}`);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Übernahme fehlgeschlagen", description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setErzeugeAngebot(false);
+    }
+  };
+
   // ── Gliederung + Summen der offenen Ausschreibung ──
   const summen = useMemo(() => lvSummen(positionen), [positionen]);
 
@@ -400,6 +568,16 @@ export default function Ausschreibungen() {
           backLabel="Zur Liste"
           title={offenesLv.name}
         >
+          <KBToolbarButton
+            icon={Receipt}
+            label={erzeugeAngebot ? "Erstellt…" : offenesLv.invoice_id ? "Angebot öffnen" : "Als Angebot übernehmen"}
+            variant="green"
+            disabled={erzeugeAngebot}
+            title={offenesLv.invoice_id
+              ? "Zum bereits erstellten Angebot wechseln"
+              : "Bepreiste Normalpositionen in ein Angebot übernehmen — von dort geht es wie gewohnt weiter bis zur Rechnung"}
+            onClick={() => offenesLv.invoice_id ? navigate(`/invoices/${offenesLv.invoice_id}`) : void alsAngebotUebernehmen()}
+          />
           <KBToolbarButton icon={Printer} label="Drucken" onClick={() => window.print()} />
           <KBToolbarButton
             icon={FileUp}
