@@ -3,7 +3,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import {
   Zap, Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Plus, PenLine,
-  Users, Receipt, Lock, Unlock, CheckCircle2, FileDown, FolderOpen, Loader2, Briefcase,
+  Users, Receipt, Lock, Unlock, CheckCircle2, FileDown, Loader2, Briefcase,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -596,21 +596,8 @@ const DisturbanceDetail = () => {
         {canEdit && (
           <KBToolbarButton icon={Edit} label="Bearbeiten" onClick={() => setShowEditForm(true)} />
         )}
-        {canEdit && !disturbance.unterschrift_kunde && (
-          <KBToolbarButton
-            icon={PenLine}
-            label="Zur Unterschrift"
-            variant="blue"
-            onClick={() => setShowSignatureDialog(true)}
-          />
-        )}
-        {canEdit && disturbance.unterschrift_kunde && (
-          <KBToolbarButton
-            icon={PenLine}
-            label="Neu unterschreiben"
-            onClick={() => setShowSignatureDialog(true)}
-          />
-        )}
+        {/* „Zur Unterschrift" steht als große Aktion unten auf der Seite
+            (Kundenwunsch: oben nicht doppelt). */}
         {isOwnerOrAdmin && !isLocked && (
           <KBToolbarButton
             icon={CheckCircle2}
@@ -629,15 +616,6 @@ const DisturbanceDetail = () => {
           disabled={openingPdf}
           onClick={handleOpenPdf}
         />
-        {disturbance.project_id && (
-          /* Projektübersicht statt /reports: nur dort ist die Karte
-             „Regiebericht-PDFs" — die Ordneransicht listet keine Unterordner. */
-          <KBToolbarButton
-            icon={FolderOpen}
-            label="Zum Projekt"
-            onClick={() => navigate(`/projects/${disturbance.project_id}`)}
-          />
-        )}
       </KBToolbar>
 
       <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-4xl space-y-4">
@@ -723,18 +701,25 @@ const DisturbanceDetail = () => {
               </div>
             )}
 
-            {/* Große Primär-Aktion für Handy (Toolbar-Buttons sind oben klein) */}
-            <div className="flex flex-col gap-2 sm:hidden pt-1">
+            {/* Große Primär-Aktionen — auf ALLEN Größen, weil die Unterschrift
+                aus der Kopfzeile entfernt wurde (Kundenwunsch: nicht doppelt). */}
+            <div className="flex flex-col gap-2 pt-1 sm:flex-row">
               {canEdit && !disturbance.unterschrift_kunde && (
-                <Button className="h-12 text-base w-full" onClick={() => setShowSignatureDialog(true)}>
+                <Button className="h-12 text-base w-full sm:w-auto" onClick={() => setShowSignatureDialog(true)}>
                   <PenLine className="h-5 w-5 mr-2" />
                   Zur Unterschrift
+                </Button>
+              )}
+              {canEdit && disturbance.unterschrift_kunde && !isLocked && (
+                <Button variant="outline" className="h-12 text-base w-full sm:w-auto" onClick={() => setShowSignatureDialog(true)}>
+                  <PenLine className="h-5 w-5 mr-2" />
+                  Neu unterschreiben
                 </Button>
               )}
               {isOwnerOrAdmin && !isLocked && (
                 <Button
                   variant="outline"
-                  className="h-12 text-base w-full"
+                  className="h-12 text-base w-full sm:w-auto"
                   disabled={finishing}
                   onClick={handleAbschliessen}
                 >

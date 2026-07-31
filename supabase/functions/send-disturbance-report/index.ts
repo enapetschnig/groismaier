@@ -2,7 +2,10 @@ import { Resend } from "https://esm.sh/resend@2.0.0";
 import { jsPDF } from "https://esm.sh/jspdf@2.5.2";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
+// Bewusst NICHT auf Modulebene instanziieren: ohne RESEND_API_KEY wirft der
+// Konstruktor und der Edge-Worker bootet gar nicht — jede Anfrage scheiterte
+// dann ohne CORS-Header und ohne lesbare Fehlermeldung.
+const resendKey = Deno.env.get("RESEND_API_KEY");
 
 // Supabase Admin Client for reading settings
 const supabaseAdmin = createClient(
@@ -364,7 +367,7 @@ async function generatePDF(data: ReportRequest & { technicians: string[] }, phot
   return doc.output("datauristring").split(",")[1];
 }
 
-function generateEmailHtml(data: ReportRequest & { technicians: string[] }): string {
+function generateEmailHtml(data: ReportRequest & { technicians: string[] }, officeEmail: string): string {
   const { disturbance, technicians } = data;
   const technicianDisplay = technicians.length === 1 ? technicians[0] : technicians.join(", ");
 
@@ -387,7 +390,7 @@ function generateEmailHtml(data: ReportRequest & { technicians: string[] }): str
       <div class="container">
         <div class="header">Holzbau Groismaier GmbH</div>
         <div class="header-large">Zimmerei & Holzbau</div>
-        <div class="header-sub">Dallein 43 · 3753 Dallein · +43 (0) 664 4520 758 · office@cg-holzbau.at</div>
+        <div class="header-sub">Dallein 43 · 3753 Dallein · +43 (0) 664 4520 758 · ${officeEmail}</div>
         <div class="red-bar"></div>
         <h2>Regiebericht</h2>
 
@@ -450,8 +453,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const pdfBase64 = await generatePDF({ disturbance, materials, technicians, photos }, photoImages);
 
     // Generate simple email HTML
-    const emailHtml = generateEmailHtml({ disturbance, materials, technicians });
-
     // Fetch office email from settings with fallback
     const { data: setting } = await supabaseAdmin
       .from("app_settings")
@@ -460,6 +461,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       .maybeSingle();
 
     const officeEmail = setting?.value || "office@cg-holzbau.at";
+    const emailHtml = generateEmailHtml({ disturbance, materials, technicians }, officeEmail);
     console.log("Using office email:", officeEmail);
 
     // Prepare recipients - office email for all reports
@@ -483,6 +485,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
     console.log("Sending from:", fromAddress);
 
+    if (!resendKey) {
+      return new Response(
+        JSON.stringify({ error: "RESEND_API_KEY ist nicht konfiguriert — bitte in den Supabase-Secrets hinterlegen." }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+    const resend = new Resend(resendKey);
     const emailResponse = await resend.emails.send({
       from: fromAddress,
       reply_to: officeEmail,

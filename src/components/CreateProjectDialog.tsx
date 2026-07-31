@@ -858,41 +858,16 @@ export function CreateProjectDialog({
                   placeholder="z.B. Badezimmer Sanierung Müller"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label>Projektnummer</Label>
-                  <Input
-                    disabled
-                    value="(wird automatisch vergeben)"
-                    className="text-muted-foreground"
-                  />
-                </div>
-                <div>
-                  <Label>Status</Label>
-                  <Select
-                    value={status || "none"}
-                    onValueChange={(v) => setStatus(v === "none" ? "" : v)}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Status wählen..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {projectStatuses.length > 0 ? (
-                        projectStatuses.map((s) => (
-                          <SelectItem key={s.id} value={s.name}>
-                            {s.name}
-                          </SelectItem>
-                        ))
-                      ) : (
-                        <>
-                          <SelectItem value="Anfrage">Anfrage</SelectItem>
-                          <SelectItem value="In Arbeit">In Arbeit</SelectItem>
-                          <SelectItem value="Abgeschlossen">Abgeschlossen</SelectItem>
-                        </>
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
+              {/* Status-Feld entfernt (Kundenwunsch): Neue Projekte starten
+                  automatisch mit dem Standard-Status; geändert wird er später
+                  in der Projektübersicht. */}
+              <div>
+                <Label>Projektnummer</Label>
+                <Input
+                  disabled
+                  value="(wird automatisch vergeben)"
+                  className="text-muted-foreground"
+                />
               </div>
               <div>
                 <Label>Datum der Erfassung</Label>

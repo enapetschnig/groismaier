@@ -79,6 +79,8 @@ const ProjectOverview = () => {
   // Gebuchte Stunden GESAMT (inkl. hidden User) — die sichtbare Personenliste
   // filtert hidden, die Abgleich-Zahl darf aber keine Stunden unterschlagen.
   const [gebuchtGesamt, setGebuchtGesamt] = useState(0);
+  /** Anteil der gebuchten Stunden, der aus Regieberichten stammt. */
+  const [regieAnteil, setRegieAnteil] = useState(0);
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
@@ -216,7 +218,7 @@ const ProjectOverview = () => {
     if (data && projectId) {
       const { data: entries } = await supabase
         .from("time_entries")
-        .select("user_id, stunden")
+        .select("user_id, stunden, disturbance_id")
         .eq("project_id", projectId);
 
       if (entries) {
@@ -225,6 +227,13 @@ const ProjectOverview = () => {
 
         const userIds = Object.keys(grouped);
         setGebuchtGesamt(Math.round(Object.values(grouped).reduce((s: number, v: any) => s + Number(v), 0) * 10) / 10);
+        // Regiestunden getrennt ausweisen (Kundenwunsch: „1.200 gesamt ·
+        // davon 300 Regie") — erkennbar an der disturbance_id der Buchung.
+        setRegieAnteil(Math.round(
+          entries
+            .filter((e: any) => e.disturbance_id)
+            .reduce((s2: number, e: any) => s2 + Number(e.stunden), 0) * 10
+        ) / 10);
         if (userIds.length > 0) {
           const { data: profiles } = await (supabase.from("profiles" as never) as any)
             .select("id, vorname, nachname, hidden").in("id", userIds);
@@ -760,7 +769,15 @@ const ProjectOverview = () => {
                       </div>
                       <div className="rounded-lg border bg-muted/30 p-3 text-center">
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)}</div>
-                        <div className="text-[11px] text-muted-foreground">Std. gebucht</div>
+                        <div className="text-[11px] text-muted-foreground">
+                          Std. gebucht
+                          {regieAnteil > 0 && (
+                            /* Mannstunden aus Regie-Buchungen — die Karte
+                               „Regieberichte" unten zählt dagegen die
+                               Berichtsdauer (einmal je Bericht). */
+                            <> · <span className="font-medium text-amber-700" title="Mannstunden aus Regieberichten (je Mitarbeiter gezählt)">davon {regieAnteil.toFixed(1)} Regie</span></>
+                          )}
+                        </div>
                       </div>
                       <div className={`rounded-lg border p-3 text-center ${ueber ? "border-destructive/50 bg-destructive/5" : knapp ? "border-amber-300 bg-amber-50" : "border-green-500/40 bg-green-50"}`}>
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : knapp ? "text-amber-700" : "text-green-700"}`}>
@@ -943,7 +960,7 @@ const ProjectOverview = () => {
                 <p className="font-medium">Regieberichte</p>
                 <p className="text-xs text-muted-foreground">
                   {regieCount} Bericht{regieCount === 1 ? "" : "e"}
-                  {regieStunden > 0 && <> · <b className="text-foreground">{regieStunden.toLocaleString("de-AT")} Regiestunden</b></>}
+                  {regieStunden > 0 && <> · <b className="text-foreground" title="Dauer laut Bericht, einmal je Bericht — der Stundenabgleich oben zählt Mannstunden je Mitarbeiter">{regieStunden.toLocaleString("de-AT")} Std. Berichtsdauer</b></>}
                 </p>
               </div>
             </CardContent>

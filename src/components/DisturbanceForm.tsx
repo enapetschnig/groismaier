@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, Save, Lock } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, Save, Lock, Camera, Upload } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -82,12 +82,29 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<{id: string; name: string; customer_id: string | null}[]>([]);
+  /** Fotos, die beim Speichern mit hochgeladen werden (Kundenwunsch: direkt
+   *  beim Erstellen fotografieren oder aus den Dateien wählen). Die
+   *  Vorschau-URL wird EINMAL beim Hinzufügen erzeugt — createObjectURL im
+   *  JSX erzeugte bei jedem Tastendruck neue Blob-URLs (Review-Befund). */
+  const [neueFotos, setNeueFotos] = useState<{ datei: File; url: string }[]>([]);
+  const leereFotos = () => {
+    setNeueFotos((prev) => {
+      prev.forEach((f) => URL.revokeObjectURL(f.url));
+      return [];
+    });
+  };
+  const fotoKameraRef = useRef<HTMLInputElement>(null);
+  /** user_id des Berichts-Erstellers (is_main in disturbance_workers). */
+  const [erstellerId, setErstellerId] = useState<string | null>(null);
+  const fotoDateiRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) {
       setSelectedCustomerId(null);
       setSelectedProjectId(null);
+      leereFotos();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   useEffect(() => {
@@ -179,6 +196,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       // Only load non-main workers (main is the creator)
       const additionalWorkers = data.filter(w => !w.is_main).map(w => w.user_id);
       setSelectedEmployees(additionalWorkers);
+      // Ersteller merken: Beim Bearbeiten durch den Admin dürfen die
+      // Zeiteinträge NICHT auf den Admin umgebucht werden (Review-Befund —
+      // der Monteur verlor seine Stunden).
+      setErstellerId(data.find(w => w.is_main)?.user_id || null);
     }
   };
 
@@ -327,8 +348,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       await updateMaterials(editData.id, user.id);
 
       // Zeiteinträge für alle Mitarbeiter synchronisieren
-      // Alte Einträge für diesen Regiebericht über Edge Function löschen + neu anlegen
-      const allWorkerIds = [user.id, ...selectedEmployees];
+      // Alte Einträge für diesen Regiebericht über Edge Function löschen + neu anlegen.
+      // Hauptperson = der ERSTELLER des Berichts, nicht wer gerade bearbeitet.
+      const hauptId = erstellerId || user.id;
+      const allWorkerIds = [hauptId, ...selectedEmployees.filter((id) => id !== hauptId)];
       const timeEntries = allWorkerIds.map(workerId => ({
         user_id: workerId,
         datum: formData.datum,
@@ -338,7 +361,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
-        project_id: null,
+        // Regiestunden laufen aufs gewählte Projekt (Kundenwunsch) — das
+        // Projekt weist sie über disturbance_id getrennt als Regie aus.
+        project_id: selectedProjectId || null,
         disturbance_id: editData.id,
         notizen: `Regie-Zuordnung: ${editData.id}`,
       }));
@@ -348,6 +373,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       });
       warnIfTimeEntriesFailed(teRes);
 
+      if (neueFotos.length > 0) {
+        await ladeFotosHoch(editData.id, user.id);
+      }
       toast({ title: "Erfolg", description: "Regiebericht wurde aktualisiert" });
     } else {
       // Create new disturbance
@@ -405,7 +433,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         stunden,
         taetigkeit: `Regiearbeit: ${formData.beschreibung.trim().substring(0, 100)}`,
         location_type: "baustelle",
-        project_id: null,
+        // Regiestunden laufen aufs gewählte Projekt (Kundenwunsch) — das
+        // Projekt weist sie über disturbance_id getrennt als Regie aus.
+        project_id: selectedProjectId || null,
         disturbance_id: newDisturbance.id,
         notizen: `Regie-Zuordnung: ${newDisturbance.id}`,
       }));
@@ -414,6 +444,11 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
         body: { entries: timeEntries },
       });
       warnIfTimeEntriesFailed(teRes);
+
+      // Beim Erstellen mitgegebene Fotos jetzt hochladen (Kundenwunsch).
+      if (neueFotos.length > 0) {
+        await ladeFotosHoch(newDisturbance.id, user.id);
+      }
 
       toast({
         title: "Gespeichert",
@@ -432,6 +467,40 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
     setSaving(false);
     onSuccess();
+  };
+
+  /**
+   * Ausgewählte Fotos zum gespeicherten Bericht hochladen — derselbe Weg wie
+   * auf der Detailseite (Bucket disturbance-photos + Tabelle disturbance_photos).
+   * Fehler brechen das Speichern NICHT ab; der Bericht ist wichtiger.
+   */
+  const ladeFotosHoch = async (disturbanceId: string, userId: string) => {
+    let ok = 0;
+    for (const { datei } of neueFotos) {
+      if (!datei.type.startsWith("image/")) continue;
+      if (datei.size > 10 * 1024 * 1024) {
+        toast({ variant: "destructive", title: "Foto zu groß", description: `${datei.name} ist größer als 10 MB und wurde übersprungen.` });
+        continue;
+      }
+      const pfad = `${disturbanceId}/${Date.now()}_${datei.name}`;
+      const { error: upErr } = await supabase.storage.from("disturbance-photos").upload(pfad, datei);
+      if (upErr) continue;
+      const { error: dbErr } = await supabase.from("disturbance_photos").insert({
+        disturbance_id: disturbanceId,
+        user_id: userId,
+        file_path: pfad,
+        file_name: datei.name,
+      });
+      if (dbErr) {
+        await supabase.storage.from("disturbance-photos").remove([pfad]);
+        continue;
+      }
+      ok++;
+    }
+    if (neueFotos.length > 0 && ok < neueFotos.length) {
+      toast({ variant: "destructive", title: "Nicht alle Fotos hochgeladen", description: `${ok} von ${neueFotos.length} Fotos gespeichert — Rest bitte auf der Berichtsseite nachholen.` });
+    }
+    leereFotos();
   };
 
   const updateDisturbanceWorkers = async (disturbanceId: string, mainUserId: string, newWorkerIds: string[]) => {
@@ -496,7 +565,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg max-h-[90vh] flex flex-col overflow-hidden">
+      {/* Am Handy fast bildschirmfüllend — der Regiebericht wird
+          draußen am Bau ausgefüllt (Kundenwunsch: fürs Handy ausgelegt). */}
+      <DialogContent className="max-w-lg h-[96dvh] max-h-[96dvh] w-[calc(100vw-0.75rem)] sm:h-auto sm:max-h-[90vh] sm:w-auto p-4 sm:p-6 flex flex-col overflow-hidden">
         <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <FileText className="h-5 w-5" />
@@ -734,6 +805,52 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                 />
               </div>
             </div>
+          </div>
+
+          {/* Fotos — direkt beim Erfassen aufnehmen oder aus den Dateien
+              wählen (Kundenwunsch). Hochgeladen wird beim Speichern; danach
+              sind sie auf der Berichtsseite unter „Fotos" zu sehen. */}
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium flex items-center gap-2">
+                <Camera className="h-4 w-4" />
+                Fotos (optional)
+                {neueFotos.length > 0 && (
+                  <span className="text-sm font-normal text-muted-foreground">({neueFotos.length})</span>
+                )}
+              </h3>
+              <div className="flex gap-2">
+                <Button type="button" className="h-11" onClick={() => fotoKameraRef.current?.click()} disabled={isLocked}>
+                  <Camera className="h-4 w-4 mr-1" /> Foto
+                </Button>
+                <Button type="button" variant="outline" className="h-11 w-11 p-0" aria-label="Fotos aus Dateien wählen"
+                  onClick={() => fotoDateiRef.current?.click()} disabled={isLocked}>
+                  <Upload className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            <input ref={fotoKameraRef} type="file" accept="image/*" capture="environment" className="hidden"
+              onChange={(e) => { const neue = Array.from(e.target.files || []).map((d) => ({ datei: d, url: URL.createObjectURL(d) })); setNeueFotos((prev) => [...prev, ...neue]); e.target.value = ""; }} />
+            <input ref={fotoDateiRef} type="file" accept="image/*" multiple className="hidden"
+              onChange={(e) => { const neue = Array.from(e.target.files || []).map((d) => ({ datei: d, url: URL.createObjectURL(d) })); setNeueFotos((prev) => [...prev, ...neue]); e.target.value = ""; }} />
+            {neueFotos.length > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                {neueFotos.map((f, i) => (
+                  <div key={f.url} className="relative aspect-square">
+                    <img src={f.url} alt={f.datei.name} className="h-full w-full rounded-md object-cover" />
+                    <Button type="button" variant="destructive" size="icon" aria-label="Foto entfernen"
+                      className="absolute bottom-1 right-1 h-9 w-9 opacity-90"
+                      onClick={() => setNeueFotos((prev) => {
+                        URL.revokeObjectURL(f.url);
+                        return prev.filter((_, j) => j !== i);
+                      })}>
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">Die Fotos werden beim Speichern zum Bericht hochgeladen.</p>
           </div>
 
           {/* Materials Section */}
