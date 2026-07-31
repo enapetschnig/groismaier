@@ -11,7 +11,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Trash2, Save, Loader2, Car } from "lucide-react";
+import { Plus, Trash2, Save, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
@@ -44,17 +44,8 @@ export interface AdminTimeEntryDialogProps {
 }
 
 interface ProjectOpt { id: string; name: string; adresse?: string | null }
-interface VehicleOpt { id: string; bezeichnung: string; kennzeichen?: string | null }
+interface VehicleOpt { id: string; bezeichnung: string; kennzeichen?: string | null; art?: string }
 interface KostenstelleOpt { wert: string; label: string }
-interface KfzRow {
-  id?: string;
-  vehicle_id: string;
-  modus: "gefahren" | "start_ende";
-  km_gefahren: string;
-  km_start: string;
-  km_ende: string;
-}
-
 const LOCATION_OPTIONS = [
   { value: "baustelle", label: "Baustelle" },
   { value: "werkstatt", label: "Werkstatt" },
@@ -88,6 +79,10 @@ export function AdminTimeEntryDialog({
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<ProjectOpt[]>([]);
   const [vehicles, setVehicles] = useState<VehicleOpt[]>([]);
+  /** Gerät bei Kostenstelle fuhrpark/maschinen — Stunden laufen in den KFZ-Manager. */
+  const [geraetId, setGeraetId] = useState("");
+  /** Kostenstelle beim Laden — steuert, ob Gerätezuordnungen zu ersetzen sind. */
+  const [urspruenglicheKs, setUrspruenglicheKs] = useState("");
   const [kostenstellen, setKostenstellen] = useState<KostenstelleOpt[]>(KOSTENSTELLEN_FALLBACK);
   const [isAbsence, setIsAbsence] = useState(false);
 
@@ -107,8 +102,6 @@ export function AdminTimeEntryDialog({
     wetterschicht_stunden: "",
     notizen: "",
   });
-  const [kfzRows, setKfzRows] = useState<KfzRow[]>([]);
-  const [originalKfzIds, setOriginalKfzIds] = useState<string[]>([]);
 
   // Stammdaten + ggf. Eintrag laden
   useEffect(() => {
@@ -119,7 +112,7 @@ export function AdminTimeEntryDialog({
         const [projRes, vehRes, ksRes] = await Promise.all([
           supabase.from("projects").select("id, name, adresse").not("status", "eq", "Abgeschlossen").order("name"),
           // Spalte heißt `aktiv` (nicht is_active) — sonst bleibt die Auswahl leer.
-          (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen").eq("aktiv", true).order("bezeichnung"),
+          (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen, art").eq("aktiv", true).order("bezeichnung"),
           // Gleiche Quelle wie die Zeiterfassung der Mitarbeiter.
           (supabase.from("admin_config_options" as never) as any)
             .select("wert, label, sort_order")
@@ -154,16 +147,8 @@ export function AdminTimeEntryDialog({
               notizen: d.notizen || "",
             });
             setIsAbsence(ABWESENHEITS_TAETIGKEITEN.has((d.taetigkeit || "").trim()));
-            const kfz = ((d.time_entry_vehicles as any[]) || []).map((k: any) => ({
-              id: k.id,
-              vehicle_id: k.vehicle_id,
-              modus: k.modus || "gefahren",
-              km_gefahren: k.km_gefahren != null ? String(k.km_gefahren) : "",
-              km_start: k.km_start != null ? String(k.km_start) : "",
-              km_ende: k.km_ende != null ? String(k.km_ende) : "",
-            }));
-            setKfzRows(kfz);
-            setOriginalKfzIds(kfz.map(k => k.id).filter(Boolean) as string[]);
+            setUrspruenglicheKs(d.kostenstelle || "baustelle");
+            setGeraetId((((d.time_entry_vehicles as any[]) || [])[0]?.vehicle_id as string) || "");
           }
         } else {
           // Reset auf create-Defaults
@@ -180,9 +165,9 @@ export function AdminTimeEntryDialog({
             wetterschicht_stunden: "",
             notizen: "",
           });
-          setKfzRows([]);
-          setOriginalKfzIds([]);
           setIsAbsence(false);
+          setUrspruenglicheKs("");
+          setGeraetId("");
         }
       } finally {
         setLoading(false);
@@ -217,16 +202,6 @@ export function AdminTimeEntryDialog({
     });
   };
 
-  const addKfzRow = () => {
-    setKfzRows(prev => [...prev, { vehicle_id: "", modus: "gefahren", km_gefahren: "", km_start: "", km_ende: "" }]);
-  };
-  const updateKfzRow = (idx: number, patch: Partial<KfzRow>) => {
-    setKfzRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
-  };
-  const removeKfzRow = (idx: number) => {
-    setKfzRows(prev => prev.filter((_, i) => i !== idx));
-  };
-
   const handleSave = async () => {
     if (!userId) return;
     if (isAbsence) {
@@ -244,6 +219,14 @@ export function AdminTimeEntryDialog({
     }
     if (form.location_type === "baustelle" && !form.project_id) {
       toast({ variant: "destructive", title: "Projekt fehlt", description: "Bei Baustelle ist ein Projekt erforderlich." });
+      return;
+    }
+    if ((form.kostenstelle === "fuhrpark" || form.kostenstelle === "maschinen") && !geraetId) {
+      toast({
+        variant: "destructive",
+        title: form.kostenstelle === "fuhrpark" ? "Fahrzeug fehlt" : "Maschine fehlt",
+        description: "Bitte das Gerät wählen, auf das die Stunden laufen.",
+      });
       return;
     }
     if (!form.kostenstelle) {
@@ -288,40 +271,6 @@ export function AdminTimeEntryDialog({
 
     // KM-Plausibilität VOR dem Speichern prüfen — die DB lehnt
     // km_ende < km_start seit Migration 20260721090000 hart ab
-    // (CHECK tev_km_plausibel); der rohe Postgres-Fehler ist unlesbar.
-    for (let i = 0; i < kfzRows.length; i++) {
-      const k = kfzRows[i];
-      if (!k.vehicle_id) continue;
-      const zeile = `Fahrzeug-Zeile ${i + 1}`;
-      if (k.modus === "start_ende") {
-        const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
-        const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
-        if ((k.km_start.trim() && s === null) || (k.km_ende.trim() && e === null)) {
-          toast({ variant: "destructive", title: "km-Stand ungültig", description: `${zeile}: Bitte nur Zahlen eintragen.` });
-          return;
-        }
-        if ((s !== null && s < 0) || (e !== null && e < 0)) {
-          toast({ variant: "destructive", title: "km-Stand ungültig", description: `${zeile}: Kilometerstände können nicht negativ sein.` });
-          return;
-        }
-        if (s !== null && e !== null && e < s) {
-          toast({
-            variant: "destructive",
-            title: "km-Stand unplausibel",
-            description: `${zeile}: Der km-Stand am Ende (${formatForInput(e)}) ist kleiner als am Start (${formatForInput(s)}). Bitte korrigieren.`,
-            duration: 7000,
-          });
-          return;
-        }
-      } else {
-        const g = k.km_gefahren.trim() ? parseDecimal(k.km_gefahren) : null;
-        if (k.km_gefahren.trim() && (g === null || g < 0)) {
-          toast({ variant: "destructive", title: "km ungültig", description: `${zeile}: Gefahrene Kilometer können nicht negativ sein.` });
-          return;
-        }
-      }
-    }
-
     setSaving(true);
     try {
       const { data: { user: caller } } = await supabase.auth.getUser();
@@ -362,37 +311,27 @@ export function AdminTimeEntryDialog({
         targetId = (ins as any).id;
       }
 
-      // KFZ-Sync: entferne gelöschte, insert/update die restlichen
-      if (targetId) {
-        const currentIds = kfzRows.map(k => k.id).filter(Boolean) as string[];
-        const toDelete = originalKfzIds.filter(id => !currentIds.includes(id));
-        if (toDelete.length > 0) {
-          await (supabase.from("time_entry_vehicles" as never) as any).delete().in("id", toDelete);
-        }
-        for (const k of kfzRows) {
-          if (!k.vehicle_id) continue;
-          // parseDecimal statt parseInt: „1.250" (Tausenderpunkt) wurde von
-          // parseInt zu 1 verstümmelt.
-          const gef = k.km_gefahren.trim() ? parseDecimal(k.km_gefahren) : null;
-          const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
-          const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
-          const row: any = {
-            vehicle_id: k.vehicle_id,
-            modus: k.modus,
-            km_gefahren: k.modus === "gefahren"
-              ? (gef !== null ? Math.round(gef) : null)
-              : (s !== null && e !== null ? Math.round(e - s) : null),
-            km_start: k.modus === "start_ende" && s !== null ? Math.round(s) : null,
-            km_ende:  k.modus === "start_ende" && e !== null ? Math.round(e) : null,
-          };
-          if (k.id) {
-            await (supabase.from("time_entry_vehicles" as never) as any).update(row).eq("id", k.id);
-          } else {
-            await (supabase.from("time_entry_vehicles" as never) as any).insert({ ...row, time_entry_id: targetId });
-          }
-        }
+      // Gerätezuordnung synchron halten (Review-Befund: Admin-Korrekturen
+      // ließen tev.stunden auf dem alten Wert stehen):
+      //  - Kostenstelle fuhrpark/maschinen → genau EINE tev-Zeile mit dem
+      //    gewählten Gerät und den NEUEN Stunden (alte Zeilen ersetzen).
+      //  - Wechsel WEG von fuhrpark/maschinen → Gerätezeilen entfernen.
+      //  - Sonst (Alt-Einträge mit km-Daten): unangetastet lassen.
+      const geraeteKs = form.kostenstelle === "fuhrpark" || form.kostenstelle === "maschinen";
+      const warGeraeteKs = urspruenglicheKs === "fuhrpark" || urspruenglicheKs === "maschinen";
+      if (targetId && geraeteKs) {
+        await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", targetId);
+        const { error: tevErr } = await (supabase.from("time_entry_vehicles" as never) as any).insert({
+          time_entry_id: targetId,
+          vehicle_id: geraetId,
+          modus: "gefahren",
+          km_gefahren: null,
+          stunden: stundenNum,
+        });
+        if (tevErr) console.error("Gerätestunden nicht gespeichert:", tevErr);
+      } else if (targetId && warGeraeteKs && !geraeteKs) {
+        await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", targetId);
       }
-
       toast({ title: isEdit ? "Eintrag aktualisiert" : "Eintrag nachgetragen" });
       onSaved();
       onClose();
@@ -511,7 +450,7 @@ export function AdminTimeEntryDialog({
                 <Label>Kostenstelle *</Label>
                 <Select
                   value={form.kostenstelle}
-                  onValueChange={(v) => setForm(f => ({
+                  onValueChange={(v) => { setGeraetId(""); setForm(f => ({
                     ...f,
                     kostenstelle: v,
                     // Grobe Einordnung nachziehen (Baustelle vs. Firma) —
@@ -520,7 +459,7 @@ export function AdminTimeEntryDialog({
                       ? f.location_type
                       : (v === "baustelle" ? "baustelle" : "werkstatt"),
                     project_id: v === "baustelle" ? f.project_id : "",
-                  }))}
+                  })); }}
                   disabled={isAbsence}
                 >
                   <SelectTrigger data-testid="ate-kostenstelle"><SelectValue placeholder="Wählen..." /></SelectTrigger>
@@ -530,6 +469,26 @@ export function AdminTimeEntryDialog({
                 </Select>
                 <p className="text-[10px] text-muted-foreground mt-0.5">Steuert die Kostenstellen-Auswertung.</p>
               </div>
+              {/* Gerätewahl bei Fuhrpark/Maschinen — wie in der Zeiterfassung:
+                  ohne Gerät liefen die Stunden am KFZ-Manager vorbei. */}
+              {(form.kostenstelle === "fuhrpark" || form.kostenstelle === "maschinen") && (
+                <div>
+                  <Label>{form.kostenstelle === "fuhrpark" ? "Fahrzeug *" : "Maschine *"}</Label>
+                  <Select value={geraetId || "_"} onValueChange={(v) => setGeraetId(v === "_" ? "" : v)} disabled={isAbsence}>
+                    <SelectTrigger><SelectValue placeholder="Wählen..." /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_">—</SelectItem>
+                      {vehicles
+                        .filter(v => (form.kostenstelle === "fuhrpark" ? v.art !== "maschine" : v.art === "maschine"))
+                        .map(v => (
+                          <SelectItem key={v.id} value={v.id}>
+                            {v.bezeichnung}{v.kennzeichen ? ` (${v.kennzeichen})` : ""}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -609,87 +568,6 @@ export function AdminTimeEntryDialog({
                 />
               </div>
             )}
-
-            {/* KFZ-Zeilen */}
-            <div className="border rounded-lg p-3 bg-muted/10 space-y-2">
-              <div className="flex items-center justify-between">
-                <Label className="flex items-center gap-1.5"><Car className="w-4 h-4" /> Fahrzeuge (optional)</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addKfzRow} disabled={isAbsence || vehicles.length === 0}>
-                  <Plus className="w-3.5 h-3.5 mr-1" /> KFZ
-                </Button>
-              </div>
-              {kfzRows.length === 0 ? (
-                <p className="text-xs text-muted-foreground italic">Keine Fahrzeuge erfasst.</p>
-              ) : (
-                kfzRows.map((k, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_110px_1fr_auto] gap-2 items-end">
-                    <div>
-                      <Label className="text-[10px]">Fahrzeug</Label>
-                      <Select value={k.vehicle_id || "_"} onValueChange={(v) => updateKfzRow(idx, { vehicle_id: v === "_" ? "" : v })}>
-                        <SelectTrigger className="h-8"><SelectValue placeholder="Wählen" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_">—</SelectItem>
-                          {vehicles.map(v => <SelectItem key={v.id} value={v.id}>{v.bezeichnung}{v.kennzeichen ? ` (${v.kennzeichen})` : ""}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div>
-                      <Label className="text-[10px]">Modus</Label>
-                      <Select value={k.modus} onValueChange={(v) => updateKfzRow(idx, { modus: v as any })}>
-                        <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="gefahren">km gefahren</SelectItem>
-                          <SelectItem value="start_ende">Start/Ende</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex gap-1">
-                      {k.modus === "gefahren" ? (
-                        <Input type="text" inputMode="decimal" placeholder="km"
-                          value={k.km_gefahren}
-                          onChange={(e) => updateKfzRow(idx, { km_gefahren: e.target.value })}
-                          className="h-8"
-                        />
-                      ) : (
-                        <>
-                          <Input type="text" inputMode="decimal" placeholder="Start"
-                            value={k.km_start}
-                            onChange={(e) => updateKfzRow(idx, { km_start: e.target.value })}
-                            className="h-8"
-                            aria-label={`km Start Zeile ${idx + 1}`}
-                          />
-                          <Input type="text" inputMode="decimal" placeholder="Ende"
-                            value={k.km_ende}
-                            onChange={(e) => updateKfzRow(idx, { km_ende: e.target.value })}
-                            className="h-8"
-                            aria-label={`km Ende Zeile ${idx + 1}`}
-                          />
-                        </>
-                      )}
-                    </div>
-                    <Button type="button" variant="ghost" size="icon" className="h-8 w-8" onClick={() => removeKfzRow(idx)}>
-                      <Trash2 className="w-3.5 h-3.5 text-destructive" />
-                    </Button>
-                    {/* Sofort-Hinweis: die DB lehnt km_ende < km_start ab. */}
-                    {k.modus === "start_ende" && (() => {
-                      const s = k.km_start.trim() ? parseDecimal(k.km_start) : null;
-                      const e = k.km_ende.trim() ? parseDecimal(k.km_ende) : null;
-                      if (s === null || e === null) return null;
-                      if (e < s) {
-                        return (
-                          <p className="col-span-4 text-[11px] font-medium text-destructive">
-                            km-Stand Ende ({formatForInput(e)}) ist kleiner als Start ({formatForInput(s)}) — bitte korrigieren.
-                          </p>
-                        );
-                      }
-                      return (
-                        <p className="col-span-4 text-[11px] text-muted-foreground">Gefahren: {formatForInput(e - s)} km</p>
-                      );
-                    })()}
-                  </div>
-                ))
-              )}
-            </div>
 
             <div>
               <Label>Notizen</Label>

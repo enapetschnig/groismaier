@@ -37,7 +37,26 @@ type TimeEntry = {
 const MyHours = () => {
   const navigate = useNavigate();
   // Kostenstellen-Beschriftungen (Fuhrpark, Maschinen …) statt nur „Firma".
-  const { anzeige: kostenstelleAnzeigen } = useKostenstellen();
+  const { anzeige: kostenstelleAnzeigen, kostenstellen } = useKostenstellen();
+  /** Fahrzeuge/Maschinen für die Gerätewahl bei Kostenstelle fuhrpark/maschinen. */
+  const [geraete, setGeraete] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
+  const [geraetId, setGeraetId] = useState("");
+  const [urspruenglicheKs, setUrspruenglicheKs] = useState("");
+  /** Aktive Projekte für die Projektwahl im Bearbeiten-Dialog. */
+  const [projektListe, setProjektListe] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("projects")
+        .select("id, name")
+        .not("status", "eq", "Abgeschlossen")
+        .order("name");
+      setProjektListe(((data as { id: string; name: string }[]) || []));
+      const { data: fzg } = await (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen, art").eq("aktiv", true).order("bezeichnung");
+      setGeraete(((fzg as any[]) || []));
+    })();
+  }, []);
   const zurueck = useZurueck("/");
   const { toast } = useToast();
   const [entries, setEntries] = useState<TimeEntry[]>([]);
@@ -120,6 +139,17 @@ const MyHours = () => {
     return entryDate.getFullYear() === year && entryDate.getMonth() + 1 === month;
   };
 
+  /** Bearbeiten öffnen — lädt die Gerätezuordnung (fuhrpark/maschinen) mit. */
+  const oeffneBearbeiten = async (entry: TimeEntry) => {
+    setEditingEntry(entry);
+    setUrspruenglicheKs((entry as any).kostenstelle || "baustelle");
+    setGeraetId("");
+    setShowEditDialog(true);
+    const { data } = await (supabase.from("time_entry_vehicles" as never) as any)
+      .select("vehicle_id").eq("time_entry_id", entry.id).limit(1);
+    setGeraetId(((data as any[]) || [])[0]?.vehicle_id || "");
+  };
+
   const handleUpdateEntry = async () => {
     if (!editingEntry || savingEdit) return;
 
@@ -134,6 +164,21 @@ const MyHours = () => {
       calculatedHours = Math.max(0, totalMin / 60);
     }
 
+    const kostenstelle = (editingEntry as any).kostenstelle || "baustelle";
+    // Kostenstelle Baustelle verlangt ein Projekt — dieselbe Regel wie beim
+    // Buchen in der Zeiterfassung.
+    if (kostenstelle === "baustelle" && !editingEntry.project_id) {
+      toast({ variant: "destructive", title: "Projekt fehlt", description: "Für die Kostenstelle Baustelle bitte ein Projekt wählen." });
+      setSavingEdit(false);
+      return;
+    }
+    const geraeteKs = kostenstelle === "fuhrpark" || kostenstelle === "maschinen";
+    if (geraeteKs && !geraetId) {
+      toast({ variant: "destructive", title: kostenstelle === "fuhrpark" ? "Fahrzeug fehlt" : "Maschine fehlt",
+        description: "Bitte das Gerät wählen, auf das die Stunden laufen." });
+      setSavingEdit(false);
+      return;
+    }
     const { error } = await supabase
       .from("time_entries")
       .update({
@@ -143,7 +188,12 @@ const MyHours = () => {
         pause_minutes: editingEntry.pause_minutes || 0,
         notizen: editingEntry.notizen,
         stunden: Math.max(0, calculatedHours),
-      })
+        // Vollständige Bearbeitung (Kundenwunsch): auch Kostenstelle und
+        // Projekt sind änderbar, nicht nur Zeiten und Text.
+        kostenstelle,
+        project_id: geraeteKs ? null : (editingEntry.project_id || null),
+        location_type: kostenstelle === "baustelle" ? "baustelle" : "werkstatt",
+      } as any)
       .eq("id", editingEntry.id);
 
     if (error) {
@@ -153,6 +203,22 @@ const MyHours = () => {
         description: "Eintrag konnte nicht aktualisiert werden",
       });
     } else {
+      // Gerätezuordnung synchron halten — wie im Admin-Dialog: bei
+      // fuhrpark/maschinen genau EINE tev-Zeile mit den NEUEN Stunden,
+      // bei Wechsel weg davon die Zeilen entfernen, sonst nicht anfassen.
+      const warGeraeteKs = urspruenglicheKs === "fuhrpark" || urspruenglicheKs === "maschinen";
+      if (geraeteKs) {
+        await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", editingEntry.id);
+        await (supabase.from("time_entry_vehicles" as never) as any).insert({
+          time_entry_id: editingEntry.id,
+          vehicle_id: geraetId,
+          modus: "gefahren",
+          km_gefahren: null,
+          stunden: Math.round(Math.max(0, calculatedHours) * 100) / 100,
+        });
+      } else if (warGeraeteKs) {
+        await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", editingEntry.id);
+      }
       toast({
         title: "Erfolg",
         description: "Eintrag wurde aktualisiert",
@@ -361,7 +427,7 @@ const MyHours = () => {
                             type="button"
                             aria-label="Eintrag bearbeiten"
                             className="kb-btn h-11 w-11 shrink-0 justify-center"
-                            onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }}
+                            onClick={() => void oeffneBearbeiten(entry)}
                             disabled={!isCurrentMonth(entry.datum)}
                           >
                             <Pencil className="h-4 w-4" />
@@ -439,7 +505,7 @@ const MyHours = () => {
                                 ) : null}
                               </TableCell>
                               <TableCell>
-                                <Button size="sm" variant="ghost" onClick={() => { setEditingEntry(entry); setShowEditDialog(true); }} disabled={!isCurrentMonth(entry.datum)} className="h-7 w-7 p-0">
+                                <Button size="sm" variant="ghost" onClick={() => void oeffneBearbeiten(entry)} disabled={!isCurrentMonth(entry.datum)} className="h-7 w-7 p-0">
                                   <Pencil className="h-3.5 w-3.5" />
                                 </Button>
                               </TableCell>
@@ -509,6 +575,69 @@ const MyHours = () => {
           </DialogHeader>
           {editingEntry && (
             <div className="space-y-4">
+              <div>
+                <Label>Kostenstelle</Label>
+                <div className="mt-1 grid grid-cols-2 gap-2">
+                  {(kostenstellen.length > 0 ? kostenstellen : [{ wert: "baustelle", label: "Baustelle" }, { wert: "werkstatt", label: "Werkstatt" }]).map((ks) => {
+                    const aktiv = ((editingEntry as any).kostenstelle || "baustelle") === ks.wert;
+                    return (
+                      <Button
+                        key={ks.wert}
+                        type="button"
+                        variant={aktiv ? "default" : "outline"}
+                        size="sm"
+                        className="h-10"
+                        onClick={() => { setGeraetId(""); setEditingEntry({ ...(editingEntry as any), kostenstelle: ks.wert }); }}
+                      >
+                        {ks.label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
+              {(((editingEntry as any).kostenstelle === "fuhrpark") || ((editingEntry as any).kostenstelle === "maschinen")) && (
+                <div>
+                  <Label>{(editingEntry as any).kostenstelle === "fuhrpark" ? "Fahrzeug *" : "Maschine *"}</Label>
+                  <Select value={geraetId || "_"} onValueChange={(v) => setGeraetId(v === "_" ? "" : v)}>
+                    <SelectTrigger className="h-11"><SelectValue placeholder="Gerät wählen…" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="_">—</SelectItem>
+                      {geraete
+                        .filter((g) => ((editingEntry as any).kostenstelle === "fuhrpark" ? g.art !== "maschine" : g.art === "maschine"))
+                        .map((g) => (
+                          <SelectItem key={g.id} value={g.id}>{g.bezeichnung}{g.kennzeichen ? ` (${g.kennzeichen})` : ""}</SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Die Stunden erscheinen im KFZ-Manager bei diesem Gerät.</p>
+                </div>
+              )}
+              {!(((editingEntry as any).kostenstelle === "fuhrpark") || ((editingEntry as any).kostenstelle === "maschinen")) && (
+              <div>
+                <Label>
+                  Projekt{((editingEntry as any).kostenstelle || "baustelle") === "baustelle" ? " *" : " (optional)"}
+                </Label>
+                <Select
+                  value={editingEntry.project_id || "__keins__"}
+                  onValueChange={(v) => setEditingEntry({ ...editingEntry, project_id: v === "__keins__" ? null : v })}
+                >
+                  <SelectTrigger className="h-11"><SelectValue placeholder="Projekt wählen…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__keins__">Kein Projekt</SelectItem>
+                    {projektListe.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                    {/* Projekt des Eintrags mit anzeigen, falls es inzwischen
+                        abgeschlossen ist und deshalb oben fehlt. */}
+                    {editingEntry.project_id && !projektListe.some((p) => p.id === editingEntry.project_id) && (
+                      <SelectItem value={editingEntry.project_id}>
+                        {entries.find((e) => e.id === editingEntry.id)?.projects?.name || "Bisheriges Projekt"}
+                      </SelectItem>
+                    )}
+                  </SelectContent>
+                </Select>
+              </div>
+              )}
               <div>
                 <Label htmlFor="edit-taetigkeit">Tätigkeit</Label>
                 <Input

@@ -26,7 +26,7 @@ export function WelcomeVideoDialog({
         <DialogHeader>
           <DialogTitle>
             {isReplay 
-              ? "App zum Startbildschirm hinzufügen" 
+              ? "App installieren" 
               : "Willkommen bei Holzbau Groismaier"}
           </DialogTitle>
           <DialogDescription>

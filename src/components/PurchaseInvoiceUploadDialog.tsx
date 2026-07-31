@@ -80,6 +80,8 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  /** Fahrzeuge & Maschinen — Zuordnung schickt die Kosten in den KFZ-Manager. */
+  const [geraete, setGeraete] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [kategorien, setKategorien] = useState<{ value: string; label: string }[]>(FALLBACK_KATEGORIEN);
   // KI-extrahierte Positionen + Projekt-Zuordnung je Position (index → project_id)
@@ -152,6 +154,9 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
       // Load projects — vorausgewähltes Projekt (?project=) immer aufnehmen,
       // auch wenn es abgeschlossen ist, sonst zeigt das Select fälschlich
       // "Kein Projekt" obwohl die Zuordnung gesetzt ist.
+      (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen, art").eq("aktiv", true).order("art").order("bezeichnung")
+        .then(({ data }: any) => setGeraete((data as any[]) || []));
       supabase.from("projects").select("id, name").not("status", "eq", "Abgeschlossen").order("name").then(async ({ data }) => {
         let list = data || [];
         if (prefillProjectId && !list.some(p => p.id === prefillProjectId)) {
@@ -613,6 +618,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           .insert({
             created_by: user.id,
             project_id: form.project_id || null,
+            vehicle_id: (form as any).vehicle_id || null,
             lieferant: form.lieferant.trim(),
             rechnungsnummer: form.rechnungsnummer.trim() || null,
             rechnungsdatum: form.rechnungsdatum || null,
@@ -1189,6 +1195,22 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                 <SelectContent>
                   <SelectItem value="none">Kein Projekt</SelectItem>
                   {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div>
+              {/* Kundenwunsch: ER einem Auto/einer Maschine zuordnen — Kosten
+                  erscheinen automatisch im KFZ-Manager. */}
+              <Label>Fahrzeug / Maschine (optional)</Label>
+              <Select value={(form as any).vehicle_id || "none"} onValueChange={v => update("vehicle_id" as any, v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Keine Zuordnung" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Keine Zuordnung</SelectItem>
+                  {geraete.map(g => (
+                    <SelectItem key={g.id} value={g.id}>
+                      {g.art === "maschine" ? "⚙️ " : "🚚 "}{g.bezeichnung}{g.kennzeichen ? ` (${g.kennzeichen})` : ""}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>

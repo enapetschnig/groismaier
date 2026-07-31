@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
@@ -45,17 +45,6 @@ type ExistingEntry = {
   pause_start: string | null;
 };
 
-interface KfzEntry {
-  key: string;              // lokale UI-Kennung
-  vehicleId: string;
-  modus: "gefahren" | "start_ende";
-  kmGefahren: string;
-  kmStart: string;
-  kmEnde: string;
-  stunden: string;          // Fahrzeugstunden (leer = Stunden des Zeitblocks)
-  stundenTouched: boolean;  // true, sobald manuell verändert
-}
-
 /** Kostenstelle aus admin_config_options (kategorie='kostenstelle'). */
 interface KostenstelleOption {
   wert: string;
@@ -87,8 +76,9 @@ interface TimeBlock {
   disturbanceId: string;
   selectedDisturbanceIds: string[];
   wetterschichtStunden: string; // Regenstunden, nur Info — leer wenn nicht relevant
-  kfzOpen: boolean;         // KFZ-Block aufgeklappt?
-  kfzEntries: KfzEntry[];   // mehrere Fahrzeuge pro Zeiteintrag
+  /** Fahrzeug/Maschine bei Kostenstelle fuhrpark/maschinen — Stunden laufen
+   *  automatisch in den KFZ-Manager (time_entry_vehicles). */
+  geraetId: string;
 }
 
 type Disturbance = {
@@ -117,31 +107,15 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   disturbanceId: "",
   selectedDisturbanceIds: [],
   wetterschichtStunden: "",
-  kfzOpen: false,
-  kfzEntries: [],
-});
-
-const createEmptyKfzEntry = (vehicleId = ""): KfzEntry => ({
-  key: crypto.randomUUID(),
-  vehicleId,
-  modus: "gefahren",
-  kmGefahren: "",
-  kmStart: "",
-  kmEnde: "",
-  stunden: "",
-  stundenTouched: false,
+  geraetId: "",
 });
 
 const TimeTracking = () => {
   const { toast } = useToast();
   const [projects, setProjects] = useState<Project[]>([]);
-  const [vehicles, setVehicles] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null }[]>([]);
+  const [vehicles, setVehicles] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
   const [taetigkeitOptions, setTaetigkeitOptions] = useState<string[]>([]);
   const [kostenstellen, setKostenstellen] = useState<KostenstelleOption[]>(KOSTENSTELLEN_FALLBACK);
-  // Standard-Fahrzeug des eingeloggten Mitarbeiters (employees.standard_vehicle_id).
-  // Zusätzlich als Ref, damit Block-Erzeugung ohne Stale-Closure funktioniert.
-  const [standardVehicleId, setStandardVehicleId] = useState<string>("");
-  const standardVehicleIdRef = useRef<string>("");
   const [loading, setLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -176,13 +150,10 @@ const TimeTracking = () => {
 
   // Neuer Zeitblock inkl. Vorschlag des Standard-Fahrzeugs (entfernbar).
   const buildBlock = (startTime = "", endTime = "", pauseStart = "", pauseEnd = "", pauseDuration = 0): TimeBlock => {
-    const block = createDefaultBlock(startTime, endTime, pauseStart, pauseEnd, pauseDuration);
-    const vid = standardVehicleIdRef.current;
-    if (vid) {
-      block.kfzOpen = true;
-      block.kfzEntries = [createEmptyKfzEntry(vid)];
-    }
-    return block;
+    // Kein Auto-Aufklappen des früheren KFZ-Blocks mehr — die km-Erfassung
+    // ist auf Kundenwunsch entfallen; Gerätestunden laufen über die
+    // Kostenstellen Fuhrpark/Maschinen.
+    return createDefaultBlock(startTime, endTime, pauseStart, pauseEnd, pauseDuration);
   };
 
   // Fetch existing entries for selected date
@@ -265,7 +236,7 @@ const TimeTracking = () => {
     (async () => {
       const [{ data: vehData }, { data: taetData }, { data: ksData }] = await Promise.all([
         (supabase.from("vehicles" as never) as any)
-          .select("id, bezeichnung, kennzeichen")
+          .select("id, bezeichnung, kennzeichen, art")
           .eq("aktiv", true)
           .order("bezeichnung"),
         (supabase.from("admin_config_options" as never) as any)
@@ -287,20 +258,6 @@ const TimeTracking = () => {
     })();
 
     // Standard-Fahrzeug des eingeloggten Mitarbeiters laden
-    (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data: emp } = await (supabase.from("employees" as never) as any)
-        .select("standard_vehicle_id")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      const vid = (emp as any)?.standard_vehicle_id as string | null | undefined;
-      if (vid) {
-        standardVehicleIdRef.current = vid;
-        setStandardVehicleId(vid);
-      }
-    })();
-
     // Check if user is admin
     (async () => {
       const { data: { user } } = await supabase.auth.getUser();
@@ -322,18 +279,6 @@ const TimeTracking = () => {
     };
   }, []);
 
-  // Das Standard-Fahrzeug kommt asynchron — Blöcke, die vorher erzeugt
-  // wurden, bekommen den Vorschlag einmalig nachgereicht.
-  const standardVehicleAppliedRef = useRef(false);
-  useEffect(() => {
-    if (!standardVehicleId || standardVehicleAppliedRef.current) return;
-    standardVehicleAppliedRef.current = true;
-    setTimeBlocks(prev => prev.map(b =>
-      b.kfzEntries.length === 0
-        ? { ...b, kfzOpen: true, kfzEntries: [createEmptyKfzEntry(standardVehicleId)] }
-        : b
-    ));
-  }, [standardVehicleId]);
 
   const handleCreateNewProject = async () => {
     if (creatingProject) return;
@@ -744,60 +689,17 @@ const TimeTracking = () => {
         return;
       }
 
-      // KM-Plausibilität VOR dem Speichern prüfen. Die DB lehnt
-      // km_ende < km_start seit Migration 20260721090000 ab (CHECK
-      // tev_km_plausibel) — ohne diese Prüfung landet der rohe
-      // Postgres-Fehler in der Konsole und der Eintrag verschwindet stumm.
-      if (block.kfzOpen) {
-        for (let k = 0; k < block.kfzEntries.length; k++) {
-          const kfz = block.kfzEntries[k];
-          if (!kfz.vehicleId) continue;
-          const wo = `Block ${blockNum}, Fahrzeug ${k + 1}`;
-          if (kfz.modus === "start_ende") {
-            const s = kfz.kmStart.trim() ? parseDecimal(kfz.kmStart) : null;
-            const e = kfz.kmEnde.trim() ? parseDecimal(kfz.kmEnde) : null;
-            if ((kfz.kmStart.trim() && s === null) || (kfz.kmEnde.trim() && e === null)) {
-              toast({ variant: "destructive", title: "km-Stand ungültig", description: `${wo}: Bitte nur Zahlen eintragen.` });
-              setSaving(false);
-              return;
-            }
-            if ((s !== null && s < 0) || (e !== null && e < 0)) {
-              toast({ variant: "destructive", title: "km-Stand ungültig", description: `${wo}: Kilometerstände können nicht negativ sein.` });
-              setSaving(false);
-              return;
-            }
-            if (s !== null && e !== null && e < s) {
-              toast({
-                variant: "destructive",
-                title: "km-Stand unplausibel",
-                description: `${wo}: Der km-Stand am Ende (${formatForInput(e)}) ist kleiner als am Start (${formatForInput(s)}). Bitte korrigieren.`,
-                duration: 7000,
-              });
-              setSaving(false);
-              return;
-            }
-          } else {
-            const g = kfz.kmGefahren.trim() ? parseDecimal(kfz.kmGefahren) : null;
-            if (kfz.kmGefahren.trim() && (g === null || g < 0)) {
-              toast({ variant: "destructive", title: "km ungültig", description: `${wo}: Gefahrene Kilometer können nicht negativ sein.` });
-              setSaving(false);
-              return;
-            }
-          }
-          // Fahrzeugstunden plausibilisieren (0 … 24 h)
-          if (kfz.stundenTouched && kfz.stunden.trim()) {
-            const h = parseDecimal(kfz.stunden);
-            if (h === null || h < 0 || h > 24) {
-              toast({
-                variant: "destructive",
-                title: "Fahrzeugstunden unplausibel",
-                description: `${wo}: Bitte einen Wert zwischen 0 und 24 Stunden eintragen.`,
-              });
-              setSaving(false);
-              return;
-            }
-          }
-        }
+      // Gerätepflicht: Bei Kostenstelle Fuhrpark/Maschinen muss ein
+      // Fahrzeug bzw. eine Maschine gewählt sein — sonst laufen die
+      // Stunden ins Leere statt in den KFZ-Manager.
+      if ((block.kostenstelle === "fuhrpark" || block.kostenstelle === "maschinen") && !block.geraetId) {
+        toast({
+          variant: "destructive",
+          title: block.kostenstelle === "fuhrpark" ? "Fahrzeug fehlt" : "Maschine fehlt",
+          description: `Block ${blockNum}: Bitte das Gerät wählen, auf das die Stunden laufen.`,
+        });
+        setSaving(false);
+        return;
       }
     }
 
@@ -897,7 +799,13 @@ const TimeTracking = () => {
       // Projekt darf bei jeder Kostenstelle mitgegeben werden (bei
       // "baustelle" Pflicht, sonst optional → NULL erlaubt). Regie bleibt
       // wie bisher ohne Projekt.
-      const projectIdVal = block.locationType === "regie" ? null : (block.projectId || null);
+      // Fuhrpark/Maschinen: das Gerät ersetzt das Projekt — ein evtl. noch im
+      // Zustand hängendes Projekt darf NICHT mitgespeichert werden, sonst
+      // tauchen Fuhrparkstunden in der Projekt-Nachkalkulation auf.
+      const geraeteKostenstelle = block.kostenstelle === "fuhrpark" || block.kostenstelle === "maschinen";
+      const projectIdVal = block.locationType === "regie" || geraeteKostenstelle
+        ? null
+        : (block.projectId || null);
 
       const mainEntry = {
         user_id: user.id,
@@ -972,58 +880,26 @@ const TimeTracking = () => {
         if (ksErr) console.error("Kostenstelle konnte nicht gesetzt werden:", ksErr);
       }
 
-      // KFZ-Einträge in time_entry_vehicles schreiben (nur für den
-      // Haupt-User-Entry; Team-Member-Entries bekommen keine KFZ-Daten).
-      if (mainId && block.kfzOpen && block.kfzEntries.length > 0) {
-        const kfzRows = block.kfzEntries
-          .filter(k => k.vehicleId)
-          .map(k => {
-            // parseDecimal statt parseInt: „1.250" (Tausenderpunkt) wurde
-            // von parseInt zu 1 verstümmelt, „12,5" zu 12.
-            const gefN = k.kmGefahren.trim() ? parseDecimal(k.kmGefahren) : null;
-            const sN = k.kmStart.trim() ? parseDecimal(k.kmStart) : null;
-            const eN = k.kmEnde.trim() ? parseDecimal(k.kmEnde) : null;
-            const gef = gefN !== null ? Math.round(gefN) : null;
-            const s = sN !== null ? Math.round(sN) : null;
-            const e = eN !== null ? Math.round(eN) : null;
-            // Fahrzeugstunden: manuell gesetzter Wert (inkl. explizite 0!),
-            // sonst die Stunden des Zeitblocks (Vorbelegung).
-            // WICHTIG: 0 muss als 0 gespeichert werden. Wurde 0 als NULL
-            // abgelegt, hat die Auswertung mit der vollen Arbeitszeit
-            // aufgefüllt („Fahrzeug 8 h unterwegs", obwohl 0 erfasst war).
-            const manuell = k.stundenTouched && k.stunden.trim() ? parseDecimal(k.stunden) : null;
-            const fahrzeugStunden = manuell !== null && manuell >= 0 ? manuell : blockHours;
-            // NULL nur, wenn der Anwender das Feld bewusst geleert hat
-            // („nicht erfasst" → Auswertung füllt mit der Arbeitszeit auf).
-            const stundenWert = k.stundenTouched && !k.stunden.trim()
-              ? null
-              : Number(fahrzeugStunden.toFixed(2));
-            return {
-              time_entry_id: mainId,
-              vehicle_id: k.vehicleId,
-              modus: k.modus,
-              km_gefahren: k.modus === "gefahren" ? gef : (s != null && e != null ? e - s : null),
-              km_start: k.modus === "start_ende" ? s : null,
-              km_ende: k.modus === "start_ende" ? e : null,
-              stunden: stundenWert,
-            };
+      // Gerätestunden in time_entry_vehicles schreiben: Bei Kostenstelle
+      // Fuhrpark/Maschinen laufen die Stunden des Blocks automatisch auf das
+      // gewählte Gerät (Auswertung im KFZ-Manager). Die frühere manuelle
+      // km-Erfassung ist auf Kundenwunsch entfallen.
+      if (mainId && block.geraetId &&
+          (block.kostenstelle === "fuhrpark" || block.kostenstelle === "maschinen")) {
+        const { error: geraetErr } = await (supabase.from("time_entry_vehicles" as never) as any).insert({
+          time_entry_id: mainId,
+          vehicle_id: block.geraetId,
+          modus: "gefahren",
+          km_gefahren: null,
+          stunden: Number(blockHours.toFixed(2)),
+        });
+        if (geraetErr) {
+          console.error("Gerätestunden konnten nicht gespeichert werden:", geraetErr);
+          toast({
+            variant: "destructive",
+            title: "Gerätestunden nicht gespeichert",
+            description: "Die Zeit wurde gebucht, die Zuordnung zum Gerät schlug fehl.",
           });
-        if (kfzRows.length > 0) {
-          const { error: kfzErr } = await (supabase.from("time_entry_vehicles" as never) as any).insert(kfzRows);
-          if (kfzErr) {
-            console.error("KFZ-Einträge konnten nicht gespeichert werden:", kfzErr);
-            // Bisher nur console.error → der Mitarbeiter glaubte, die
-            // Fahrzeugdaten wären mitgespeichert.
-            const raw = String(kfzErr.message || "");
-            toast({
-              variant: "destructive",
-              title: "Fahrzeugdaten nicht gespeichert",
-              description: /tev_km_plausibel/i.test(raw)
-                ? "Der km-Stand am Ende darf nicht kleiner sein als am Start. Die Arbeitszeit wurde gespeichert, die Fahrzeugdaten nicht."
-                : `Die Arbeitszeit wurde gespeichert, die Fahrzeugdaten nicht: ${raw}`,
-              duration: 9000,
-            });
-          }
         }
       }
 
@@ -1207,6 +1083,13 @@ const TimeTracking = () => {
                                   aria-pressed={active}
                                   onClick={() => updateBlock(block.id, {
                                     kostenstelle: ks.wert,
+                                    // Gerätewahl zurücksetzen: Ein Fahrzeug darf nicht
+                                    // unter „Maschinen" (oder Baustelle) hängen bleiben.
+                                    geraetId: "",
+                                    // Bei Fuhrpark/Maschinen ersetzt das Gerät das Projekt —
+                                    // ein zuvor gewähltes Projekt darf nicht unsichtbar
+                                    // mitgespeichert werden (Review-Befund).
+                                    ...(ks.wert === "fuhrpark" || ks.wert === "maschinen" ? { projectId: "" } : {}),
                                     // location_type ist per DB-CHECK auf
                                     // 'baustelle'/'werkstatt' begrenzt und bleibt
                                     // die grobe Einordnung. Die feine Zuordnung
@@ -1230,8 +1113,9 @@ const TimeTracking = () => {
                           </div>
                         </div>
 
-                        {/* Projekt — Pflicht bei Kostenstelle "Baustelle", sonst optional */}
-                        {block.locationType !== "regie" && (
+                        {/* Projekt — Pflicht bei Kostenstelle "Baustelle", sonst optional.
+                            Bei Fuhrpark/Maschinen ersetzt die Gerätewahl unten das Projekt. */}
+                        {block.locationType !== "regie" && block.kostenstelle !== "fuhrpark" && block.kostenstelle !== "maschinen" && (
                           <div className="space-y-2">
                             <Label>
                               Projekt{" "}
@@ -1339,229 +1223,44 @@ const TimeTracking = () => {
                           </div>
                         )}
 
-                        {/* KFZ + Kilometerstände — eingeklappt, erst mit + aktivierbar */}
-                        {vehicles.length > 0 && (
-                          <div className="rounded-md border bg-muted/20">
-                            {!block.kfzOpen ? (
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(block.id, {
-                                  kfzOpen: true,
-                                  kfzEntries: block.kfzEntries.length > 0
-                                    ? block.kfzEntries
-                                    : [createEmptyKfzEntry(standardVehicleId)],
-                                } as any)}
-                                className="w-full min-h-[48px] flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground hover:bg-muted transition-colors"
-                              >
-                                <Plus className="h-4 w-4" /> KFZ &amp; Kilometerstand erfassen
-                              </button>
-                            ) : (
-                              <div className="p-3 space-y-3">
-                                <div className="flex items-center justify-between">
-                                  <Label className="text-sm">KFZ &amp; Kilometerstand</Label>
-                                  <button
-                                    type="button"
-                                    onClick={() => updateBlock(block.id, { kfzOpen: false, kfzEntries: [] } as any)}
-                                    className="min-h-[44px] px-2 text-xs text-muted-foreground hover:text-destructive"
-                                  >
-                                    Entfernen
-                                  </button>
-                                </div>
-                                {block.kfzEntries.map((kfz, kfzIdx) => (
-                                  <div key={kfz.key} className="rounded border bg-background p-2 space-y-2">
-                                    <div className="flex items-center gap-2">
-                                      <div className="flex-1">
-                                        <Label className="text-xs">Fahrzeug</Label>
-                                        <Select
-                                          value={kfz.vehicleId || "none"}
-                                          onValueChange={(v) => {
-                                            const next = [...block.kfzEntries];
-                                            next[kfzIdx] = { ...kfz, vehicleId: v === "none" ? "" : v };
-                                            updateBlock(block.id, { kfzEntries: next } as any);
-                                          }}
-                                        >
-                                          <SelectTrigger className="h-12"><SelectValue placeholder="Fahrzeug wählen..." /></SelectTrigger>
-                                          <SelectContent>
-                                            <SelectItem value="none">Kein Fahrzeug</SelectItem>
-                                            {vehicles.map((v) => (
-                                              <SelectItem key={v.id} value={v.id}>
-                                                {v.bezeichnung}{v.kennzeichen ? ` (${v.kennzeichen})` : ""}
-                                              </SelectItem>
-                                            ))}
-                                          </SelectContent>
-                                        </Select>
-                                      </div>
-                                      <button
-                                        type="button"
-                                        title="Fahrzeugzeile entfernen"
-                                        onClick={() => {
-                                          const next = block.kfzEntries.filter((_, i) => i !== kfzIdx);
-                                          updateBlock(block.id, {
-                                            kfzEntries: next,
-                                            kfzOpen: next.length > 0,
-                                          } as any);
-                                        }}
-                                        className="mt-5 h-12 w-12 shrink-0 rounded border text-lg text-destructive hover:bg-destructive/10"
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                    {/* Modus-Toggle */}
-                                    <div className="flex gap-1 text-xs">
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const next = [...block.kfzEntries];
-                                          next[kfzIdx] = { ...kfz, modus: "gefahren" };
-                                          updateBlock(block.id, { kfzEntries: next } as any);
-                                        }}
-                                        className={`flex-1 min-h-[44px] px-2 py-1 rounded border ${kfz.modus === "gefahren" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
-                                      >
-                                        Gefahrene km
-                                      </button>
-                                      <button
-                                        type="button"
-                                        onClick={() => {
-                                          const next = [...block.kfzEntries];
-                                          next[kfzIdx] = { ...kfz, modus: "start_ende" };
-                                          updateBlock(block.id, { kfzEntries: next } as any);
-                                        }}
-                                        className={`flex-1 min-h-[44px] px-2 py-1 rounded border ${kfz.modus === "start_ende" ? "bg-primary text-primary-foreground border-primary" : "bg-background hover:bg-muted"}`}
-                                      >
-                                        km Start / Ende
-                                      </button>
-                                    </div>
-                                    {/* Eingabefelder je nach Modus */}
-                                    {kfz.modus === "gefahren" ? (
-                                      <div>
-                                        <Label className="text-xs">Gefahrene km</Label>
-                                        <Input
-                                          type="text"
-                                          inputMode="decimal"
-                                          className="h-12"
-                                          value={kfz.kmGefahren}
-                                          onChange={(e) => {
-                                            const next = [...block.kfzEntries];
-                                            next[kfzIdx] = { ...kfz, kmGefahren: e.target.value };
-                                            updateBlock(block.id, { kfzEntries: next } as any);
-                                          }}
-                                          placeholder="z.B. 57"
-                                          disabled={!kfz.vehicleId}
-                                        />
-                                      </div>
-                                    ) : (
-                                      <>
-                                        <div className="grid grid-cols-2 gap-2">
-                                          <div>
-                                            <Label className="text-xs">km Start</Label>
-                                            <Input
-                                              type="text"
-                                              inputMode="decimal"
-                                              className="h-12"
-                                              data-testid={`km-start-${block.id}-${kfzIdx}`}
-                                              value={kfz.kmStart}
-                                              onChange={(e) => {
-                                                const next = [...block.kfzEntries];
-                                                next[kfzIdx] = { ...kfz, kmStart: e.target.value };
-                                                updateBlock(block.id, { kfzEntries: next } as any);
-                                              }}
-                                              placeholder="42130"
-                                              disabled={!kfz.vehicleId}
-                                            />
-                                          </div>
-                                          <div>
-                                            <Label className="text-xs">km Ende</Label>
-                                            <Input
-                                              type="text"
-                                              inputMode="decimal"
-                                              className="h-12"
-                                              data-testid={`km-ende-${block.id}-${kfzIdx}`}
-                                              value={kfz.kmEnde}
-                                              onChange={(e) => {
-                                                const next = [...block.kfzEntries];
-                                                next[kfzIdx] = { ...kfz, kmEnde: e.target.value };
-                                                updateBlock(block.id, { kfzEntries: next } as any);
-                                              }}
-                                              placeholder="42187"
-                                              disabled={!kfz.vehicleId}
-                                            />
-                                          </div>
-                                        </div>
-                                        {/* Sofort-Hinweis statt Postgres-Fehler beim Speichern */}
-                                        {(() => {
-                                          const s = kfz.kmStart.trim() ? parseDecimal(kfz.kmStart) : null;
-                                          const e = kfz.kmEnde.trim() ? parseDecimal(kfz.kmEnde) : null;
-                                          if (s === null || e === null) return null;
-                                          if (e < s) {
-                                            return (
-                                              <p className="text-xs font-medium text-destructive" data-testid="km-warnung">
-                                                km-Stand Ende ({formatForInput(e)}) ist kleiner als Start ({formatForInput(s)}) — bitte korrigieren.
-                                              </p>
-                                            );
-                                          }
-                                          return <p className="text-xs text-muted-foreground">Gefahren: {formatForInput(e - s)} km</p>;
-                                        })()}
-                                      </>
-                                    )}
-                                    {/* Fahrzeugstunden — vorbelegt mit den Stunden des Zeitblocks */}
-                                    <div>
-                                      <Label className="text-xs">Fahrzeugstunden</Label>
-                                      <div className="flex items-center gap-2">
-                                        <Input
-                                          type="text"
-                                          inputMode="decimal"
-                                          className="h-12"
-                                          data-testid={`kfz-stunden-${block.id}-${kfzIdx}`}
-                                          value={kfz.stundenTouched ? kfz.stunden : formatForInput(calculateBlockHours(block), 2)}
-                                          onChange={(e) => {
-                                            const next = [...block.kfzEntries];
-                                            next[kfzIdx] = { ...kfz, stunden: e.target.value, stundenTouched: true };
-                                            updateBlock(block.id, { kfzEntries: next } as any);
-                                          }}
-                                          onBlur={() => {
-                                            if (!kfz.stundenTouched || !kfz.stunden.trim()) return;
-                                            const n = parseDecimal(kfz.stunden);
-                                            if (n === null) return;
-                                            const next = [...block.kfzEntries];
-                                            next[kfzIdx] = { ...kfz, stunden: formatForInput(clamp(n, 0, 24)) };
-                                            updateBlock(block.id, { kfzEntries: next } as any);
-                                          }}
-                                          disabled={!kfz.vehicleId}
-                                        />
-                                        <span className="text-xs text-muted-foreground">h</span>
-                                        {kfz.stundenTouched && (
-                                          <button
-                                            type="button"
-                                            onClick={() => {
-                                              const next = [...block.kfzEntries];
-                                              next[kfzIdx] = { ...kfz, stunden: "", stundenTouched: false };
-                                              updateBlock(block.id, { kfzEntries: next } as any);
-                                            }}
-                                            className="text-xs text-muted-foreground hover:text-foreground whitespace-nowrap"
-                                          >
-                                            Zurücksetzen
-                                          </button>
-                                        )}
-                                      </div>
-                                      {kfz.stundenTouched && parseDecimal(kfz.stunden) === 0 && (
-                                        <p className="text-xs text-muted-foreground mt-0.5">
-                                          0 h wird als „nicht gefahren“ gespeichert (nicht als volle Arbeitszeit).
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                ))}
-                                <button
-                                  type="button"
-                                  onClick={() => updateBlock(block.id, {
-                                    kfzEntries: [...block.kfzEntries, createEmptyKfzEntry()],
-                                  } as any)}
-                                  className="w-full min-h-[44px] flex items-center justify-center gap-2 text-sm text-muted-foreground hover:text-foreground py-1.5 border border-dashed rounded"
-                                >
-                                  <Plus className="h-3.5 w-3.5" /> Weiteres Fahrzeug
-                                </button>
-                              </div>
+                        {/* Gerätewahl bei Kostenstelle Fuhrpark/Maschinen
+                            (Kundenwunsch): STATT eines Projekts wird das
+                            Fahrzeug bzw. die Maschine gewählt; die Stunden
+                            laufen automatisch in den KFZ-Manager. Die frühere
+                            „+ KFZ & Kilometerstand"-Erfassung ist entfallen. */}
+                        {(block.kostenstelle === "fuhrpark" || block.kostenstelle === "maschinen") && (
+                          <div className="space-y-2">
+                            <Label>
+                              {block.kostenstelle === "fuhrpark" ? "Fahrzeug" : "Maschine"}{" "}
+                              <span className="text-primary">*</span>
+                            </Label>
+                            {vehicles.filter((v) => (block.kostenstelle === "fuhrpark" ? v.art !== "maschine" : v.art === "maschine")).length === 0 && (
+                              <p className="rounded border border-amber-300 bg-amber-50 px-2 py-1.5 text-xs text-amber-900">
+                                {block.kostenstelle === "fuhrpark"
+                                  ? "Noch kein Fahrzeug angelegt — der Administrator kann im KFZ-Manager eines anlegen."
+                                  : "Noch keine Maschine angelegt — der Administrator kann im KFZ-Manager eine anlegen."}
+                              </p>
                             )}
+                            <Select
+                              value={block.geraetId || ""}
+                              onValueChange={(v) => updateBlock(block.id, { geraetId: v } as any)}
+                            >
+                              <SelectTrigger className="h-12">
+                                <SelectValue placeholder={block.kostenstelle === "fuhrpark" ? "Fahrzeug wählen…" : "Maschine wählen…"} />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {vehicles
+                                  .filter((v) => (block.kostenstelle === "fuhrpark" ? v.art !== "maschine" : v.art === "maschine"))
+                                  .map((v) => (
+                                    <SelectItem key={v.id} value={v.id}>
+                                      {v.bezeichnung}{v.kennzeichen ? ` (${v.kennzeichen})` : ""}
+                                    </SelectItem>
+                                  ))}
+                              </SelectContent>
+                            </Select>
+                            <p className="text-xs text-muted-foreground">
+                              Die Stunden erscheinen im KFZ-Manager bei diesem Gerät.
+                            </p>
                           </div>
                         )}
 

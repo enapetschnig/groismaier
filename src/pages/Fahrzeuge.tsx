@@ -30,7 +30,6 @@ import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { matchesSearch } from "@/lib/searchUtils";
-import { parseDecimal } from "@/lib/num";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
@@ -87,6 +86,8 @@ interface VehicleCost {
   betrag: number;
   kategorie: string;
   beschreibung: string | null;
+  /** 'manuell' = Alt-Zeile aus vehicle_costs, 'er' = zugeordnete Eingangsrechnung. */
+  quelle: "manuell" | "er";
 }
 
 /** Ein Fahrzeug-Einsatz = Zeile aus time_entry_vehicles + Datum/Person des Zeiteintrags. */
@@ -158,7 +159,8 @@ const typLabel = (typ: string | null) =>
   TYP_OPTIONS.find(o => o.value === typ)?.label || typ || "–";
 
 const kategorieLabel = (k: string) =>
-  KATEGORIE_OPTIONS.find(o => o.value === k)?.label || k;
+  KATEGORIE_OPTIONS.find(o => o.value === k)?.label
+  || k.charAt(0).toUpperCase() + k.slice(1).replace(/_/g, " ");
 
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -227,15 +229,12 @@ export default function Fahrzeuge() {
   // Kosten-Tab
   const [costs, setCosts] = useState<VehicleCost[]>([]);
   const [costsLoading, setCostsLoading] = useState(false);
-  const [newCost, setNewCost] = useState({
-    datum: format(new Date(), "yyyy-MM-dd"),
-    kategorie: "reparatur",
-    betrag: "",
-    beschreibung: "",
-  });
 
   // Einsätze-Tab
   const [usages, setUsages] = useState<VehicleUsage[]>([]);
+  /** Stunden je Mitarbeiter über ALLE geladenen Einsätze (Kundenwunsch:
+   *  „welche Mitarbeiter wie viele Stunden darauf geschrieben haben"). */
+  const [stundenJeMitarbeiter, setStundenJeMitarbeiter] = useState<{ name: string; stunden: number; einsaetze: number }[]>([]);
   const [usagesLoading, setUsagesLoading] = useState(false);
 
   const jahr = new Date().getFullYear();
@@ -245,7 +244,7 @@ export default function Fahrzeuge() {
   // ── Laden: Fahrzeuge + Jahres-Kennzahlen + Standard-Fahrer ──
   const fetchAll = useCallback(async () => {
     setLoading(true);
-    const [vehRes, empRes, usageRes, costRes] = await Promise.all([
+    const [vehRes, empRes, usageRes, costRes, erRes] = await Promise.all([
       (supabase.from("vehicles" as never) as any)
         .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung")
         .order("art")
@@ -265,6 +264,12 @@ export default function Fahrzeuge() {
         .select("vehicle_id, betrag")
         .gte("datum", jahrStart)
         .lte("datum", jahrEnde),
+      // Zugeordnete Eingangsrechnungen zählen automatisch als Gerätekosten
+      // (Kundenwunsch) — abgelehnte nicht.
+      (supabase.from("purchase_invoices" as never) as any)
+        .select("vehicle_id, betrag_netto, rechnungsdatum, status")
+        .not("vehicle_id", "is", null)
+        .neq("status", "abgelehnt"),
     ]);
 
     if (vehRes.error) {
@@ -295,6 +300,12 @@ export default function Fahrzeuge() {
     });
     ((costRes?.data as any[]) || []).forEach((r: any) => {
       bucket(r.vehicle_id).kosten += Number(r.betrag) || 0;
+    });
+    ((erRes?.data as any[]) || []).forEach((r: any) => {
+      const d = String(r.rechnungsdatum || "");
+      if (d >= jahrStart && d <= jahrEnde) {
+        bucket(r.vehicle_id).kosten += Number(r.betrag_netto) || 0;
+      }
     });
     setStats(agg);
     setLoading(false);
@@ -357,15 +368,37 @@ export default function Fahrzeuge() {
   // ── Kosten des offenen Fahrzeugs ──
   const fetchCosts = async (vehicleId: string) => {
     setCostsLoading(true);
-    const { data, error } = await (supabase.from("vehicle_costs" as never) as any)
-      .select("id, vehicle_id, datum, betrag, kategorie, beschreibung")
-      .eq("vehicle_id", vehicleId)
-      .order("datum", { ascending: false });
+    const [{ data, error }, { data: erDaten }] = await Promise.all([
+      (supabase.from("vehicle_costs" as never) as any)
+        .select("id, vehicle_id, datum, betrag, kategorie, beschreibung")
+        .eq("vehicle_id", vehicleId)
+        .order("datum", { ascending: false }),
+      (supabase.from("purchase_invoices" as never) as any)
+        .select("id, rechnungsdatum, betrag_netto, kategorie, lieferant, rechnungsnummer, status")
+        .eq("vehicle_id", vehicleId)
+        .neq("status", "abgelehnt")
+        .order("rechnungsdatum", { ascending: false }),
+    ]);
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: "Kosten konnten nicht geladen werden" });
       setCosts([]);
     } else {
-      setCosts((data as VehicleCost[]) || []);
+      // Hinweis: purchase_invoices sind per RLS nur für Admin/Vorarbeiter
+      // vollständig lesbar — für reine Mitarbeiter fehlen die ER-Kosten hier
+      // rollenbedingt (der KFZ-Manager ist praktisch eine Chef-Maske).
+      const manuell: VehicleCost[] = (((data as any[]) || [])).map((c) => ({ ...c, quelle: "manuell" as const }));
+      // Zugeordnete Eingangsrechnungen — automatisch, netto, nicht löschbar
+      // (gelöst wird die Zuordnung in der Eingangsrechnung selbst).
+      const er: VehicleCost[] = (((erDaten as any[]) || [])).map((r) => ({
+        id: r.id,
+        vehicle_id: vehicleId,
+        datum: r.rechnungsdatum || "",
+        betrag: Number(r.betrag_netto) || 0,
+        kategorie: r.kategorie || "eingangsrechnung",
+        beschreibung: [r.lieferant, r.rechnungsnummer].filter(Boolean).join(" · ") || "Eingangsrechnung",
+        quelle: "er" as const,
+      }));
+      setCosts([...manuell, ...er].sort((a, b) => (b.datum || "").localeCompare(a.datum || "")));
     }
     setCostsLoading(false);
   };
@@ -376,6 +409,9 @@ export default function Fahrzeuge() {
     const { data, error } = await (supabase.from("time_entry_vehicles" as never) as any)
       .select("id, modus, stunden, km_gefahren, km_start, km_ende, time_entries!inner(datum, user_id)")
       .eq("vehicle_id", vehicleId)
+      // Neueste zuerst: ohne Sortierung wäre das 500er-Fenster eine
+      // willkürliche Teilmenge (Review-Befund).
+      .order("created_at", { ascending: false })
       .limit(500);
 
     if (error) {
@@ -407,7 +443,7 @@ export default function Fahrzeuge() {
 
     // Sortierung/Limit lokal: „order" auf einer eingebetteten Tabelle ist
     // fehleranfällig, die Zeilenzahl je Fahrzeug ist unkritisch klein.
-    const mapped: VehicleUsage[] = rows
+    const alleEinsaetze: VehicleUsage[] = rows
       .map(r => ({
         id: r.id,
         datum: r.time_entries?.datum || "",
@@ -416,10 +452,24 @@ export default function Fahrzeuge() {
         km: kmOfUsage(r) || null,
         kmStand: Number.isFinite(Number(r.km_ende)) ? Number(r.km_ende) : null,
       }))
-      .sort((a, b) => (b.datum || "").localeCompare(a.datum || ""))
-      .slice(0, 50);
+      .sort((a, b) => (b.datum || "").localeCompare(a.datum || ""));
 
-    setUsages(mapped);
+    // Aggregation über ALLE geladenen Einsätze — die Detailliste darunter
+    // zeigt nur die letzten 50.
+    const jeMitarbeiter = new Map<string, { stunden: number; einsaetze: number }>();
+    for (const u of alleEinsaetze) {
+      const e = jeMitarbeiter.get(u.mitarbeiter) || { stunden: 0, einsaetze: 0 };
+      e.stunden += u.stunden || 0;
+      e.einsaetze += 1;
+      jeMitarbeiter.set(u.mitarbeiter, e);
+    }
+    setStundenJeMitarbeiter(
+      [...jeMitarbeiter.entries()]
+        .map(([name, w]) => ({ name, ...w, stunden: Math.round(w.stunden * 100) / 100 }))
+        .sort((a, b) => b.stunden - a.stunden)
+    );
+
+    setUsages(alleEinsaetze.slice(0, 50));
     setUsagesLoading(false);
   };
 
@@ -474,7 +524,6 @@ export default function Fahrzeuge() {
       notizen: v.notizen || "",
     });
     setTab("kosten");
-    setNewCost({ datum: format(new Date(), "yyyy-MM-dd"), kategorie: "reparatur", betrag: "", beschreibung: "" });
     setDialogOpen(true);
     fetchCosts(v.id);
     fetchUsages(v.id);
@@ -548,78 +597,10 @@ export default function Fahrzeuge() {
     fetchAll();
   };
 
-  // ── Kosten anlegen / löschen ──
-  const addCost = async () => {
-    if (!editId) return;
-    // parseDecimal versteht „249,90" UND „1.249,90" — parseFloat machte aus
-    // „1.249,90" die Zahl 1,25.
-    const betrag = parseDecimal(newCost.betrag);
-    if (betrag === null) {
-      toast({ variant: "destructive", title: "Betrag fehlt", description: "Bitte einen gültigen Betrag eingeben (z. B. 249,90)." });
-      return;
-    }
-    // Die DB lehnt seit Migration 20260721090000 Beträge <= 0 ab
-    // (CHECK betrag > 0). Vorher wurde nur `betrag === 0` geprüft, ein
-    // negativer Betrag lief in den rohen Postgres-Fehler.
-    if (betrag <= 0) {
-      toast({
-        variant: "destructive",
-        title: "Betrag unplausibel",
-        description: "Fahrzeugkosten müssen größer als 0 sein. Für eine Gutschrift bitte die ursprüngliche Kostenzeile löschen.",
-        duration: 7000,
-      });
-      return;
-    }
-    if (!newCost.datum) {
-      toast({ variant: "destructive", title: "Datum fehlt", description: "Bitte ein Datum wählen." });
-      return;
-    }
-    // Datum plausibilisieren — ein Tippfehler im Jahr („2206") verfälscht
-    // sonst dauerhaft die Jahres-Auswertung.
-    const datumWert = new Date(`${newCost.datum}T00:00:00`);
-    if (Number.isNaN(datumWert.getTime())) {
-      toast({ variant: "destructive", title: "Datum ungültig", description: "Bitte ein gültiges Datum wählen." });
-      return;
-    }
-    const maxDatum = new Date();
-    maxDatum.setFullYear(maxDatum.getFullYear() + 1);
-    const minDatum = new Date("2000-01-01T00:00:00");
-    if (datumWert > maxDatum || datumWert < minDatum) {
-      toast({
-        variant: "destructive",
-        title: "Datum unplausibel",
-        description: `Das Datum ${format(datumWert, "dd.MM.yyyy", { locale: de })} liegt zu weit in der Zukunft bzw. Vergangenheit. Bitte prüfen (erlaubt: 01.01.2000 bis ${format(maxDatum, "dd.MM.yyyy", { locale: de })}).`,
-        duration: 8000,
-      });
-      return;
-    }
-    const { data: { user } } = await supabase.auth.getUser();
-    const { error } = await (supabase.from("vehicle_costs" as never) as any).insert({
-      vehicle_id: editId,
-      datum: newCost.datum,
-      betrag: Math.round(betrag * 100) / 100,
-      kategorie: newCost.kategorie,
-      beschreibung: newCost.beschreibung.trim() || null,
-      created_by: user?.id || null,
-    });
-    if (error) {
-      // DB-CHECK in Klartext übersetzen statt Postgres-Meldung durchreichen.
-      const raw = String(error.message || "");
-      toast({
-        variant: "destructive",
-        title: "Fehler",
-        description: /betrag/i.test(raw) && /check constraint/i.test(raw)
-          ? "Der Betrag muss größer als 0 sein."
-          : raw,
-      });
-      return;
-    }
-    toast({ title: "Kosten gebucht", description: `${kategorieLabel(newCost.kategorie)}: € ${eur(betrag)}` });
-    setNewCost({ datum: format(new Date(), "yyyy-MM-dd"), kategorie: "reparatur", betrag: "", beschreibung: "" });
-    fetchCosts(editId);
-    fetchAll();
-  };
-
+  // Kosten kommen jetzt aus zugeordneten Eingangsrechnungen (Kundenwunsch:
+  // „dann brauchen wir das im KFZ-Manager nicht, weil das automatisch
+  // zugeordnet wird"). Löschen gibt es nur noch für Alt-Zeilen aus der
+  // früheren Handerfassung.
   const deleteCost = async (id: string) => {
     const { error } = await (supabase.from("vehicle_costs" as never) as any).delete().eq("id", id);
     if (error) {
@@ -636,12 +617,16 @@ export default function Fahrzeuge() {
   const costSumJahr = costs
     .filter(c => (c.datum || "").slice(0, 4) === String(jahr))
     .reduce((s, c) => s + (Number(c.betrag) || 0), 0);
-  const costsNachKategorie = KATEGORIE_OPTIONS
-    .map(o => ({
-      label: o.label,
-      betrag: costs.filter(c => c.kategorie === o.value).reduce((s, c) => s + (Number(c.betrag) || 0), 0),
+  // Über die tatsächlich vorkommenden Kategorien iterieren — ER-Zeilen tragen
+  // eingangsrechnung_kategorie-Werte, die in der alten Festliste fehlten;
+  // ihre Beträge tauchten dann in der Summe, aber in keinem Chip auf.
+  const costsNachKategorie = [...new Set(costs.map(c => c.kategorie))]
+    .map(kat => ({
+      label: kategorieLabel(kat),
+      betrag: costs.filter(c => c.kategorie === kat).reduce((s, c) => s + (Number(c.betrag) || 0), 0),
     }))
-    .filter(k => k.betrag > 0);
+    .filter(k => k.betrag > 0)
+    .sort((a, b) => b.betrag - a.betrag);
 
   // ── Editor-Dialog (KingBill-Look: Toolbar-Kopf + grünes „Speichern & Schließen") ──
   const editorDialog = (
@@ -860,68 +845,10 @@ export default function Fahrzeuge() {
               {/* ── Tab „Kosten": Reparatur-/Service-/Treibstoffkosten buchen ── */}
               {tab === "kosten" && (
                 <div className="pt-3 space-y-3">
-                  {/* Neue Kostenzeile */}
-                  <div className="kb-panel p-3 grid grid-cols-1 sm:grid-cols-12 gap-2 items-end">
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-semibold mb-1" htmlFor="k-datum">Datum</label>
-                      <input
-                        id="k-datum"
-                        type="date"
-                        className="kb-input w-full"
-                        value={newCost.datum}
-                        onChange={(e) => setNewCost(c => ({ ...c, datum: e.target.value }))}
-                      />
-                    </div>
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-semibold mb-1">Kategorie</label>
-                      <Select value={newCost.kategorie} onValueChange={(v) => setNewCost(c => ({ ...c, kategorie: v }))}>
-                        <SelectTrigger className="h-9" aria-label="Kostenkategorie"><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          {KATEGORIE_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="sm:col-span-2">
-                      <label className="block text-xs font-semibold mb-1" htmlFor="k-betrag">Betrag (€)</label>
-                      {/* type="text": bei type="number" verwirft der Browser das
-                          Komma — „249,90" wäre nicht eintippbar. */}
-                      <input
-                        id="k-betrag"
-                        type="text"
-                        inputMode="decimal"
-                        data-testid="k-betrag"
-                        className="kb-input w-full"
-                        value={newCost.betrag}
-                        onChange={(e) => {
-                          const v = e.target.value.replace(/[^0-9.,-]/g, "");
-                          setNewCost(c => ({ ...c, betrag: v }));
-                        }}
-                        onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addCost(); } }}
-                        placeholder="0,00"
-                      />
-                      {/* Sofort-Hinweis: die DB lässt nur Beträge > 0 zu. */}
-                      {newCost.betrag.trim() !== "" && (parseDecimal(newCost.betrag) ?? 0) <= 0 && (
-                        <p className="mt-0.5 text-[11px] font-medium text-destructive" data-testid="k-betrag-warnung">
-                          Betrag muss größer als 0 sein.
-                        </p>
-                      )}
-                    </div>
-                    <div className="sm:col-span-3">
-                      <label className="block text-xs font-semibold mb-1" htmlFor="k-text">Beschreibung</label>
-                      <input
-                        id="k-text"
-                        className="kb-input w-full"
-                        value={newCost.beschreibung}
-                        onChange={(e) => setNewCost(c => ({ ...c, beschreibung: e.target.value }))}
-                        placeholder="z.B. Bremsen hinten"
-                      />
-                    </div>
-                    <div className="sm:col-span-1">
-                      <button type="button" className="kb-btn w-full justify-center" onClick={addCost} title="Kosten buchen">
-                        <Plus className="h-4 w-4 text-kb-green" />
-                      </button>
-                    </div>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Kosten kommen automatisch aus Eingangsrechnungen, die diesem
+                    Gerät zugeordnet sind (Eingangsrechnungen → „Fahrzeug / Maschine").
+                  </p>
 
                   {/* Kostenliste */}
                   <div className="overflow-x-auto">
@@ -946,19 +873,26 @@ export default function Fahrzeuge() {
                               <TableCell className="whitespace-nowrap">
                                 {c.datum ? format(parseISO(c.datum), "dd.MM.yyyy", { locale: de }) : "–"}
                               </TableCell>
-                              <TableCell>{kategorieLabel(c.kategorie)}</TableCell>
+                              <TableCell>
+                                {kategorieLabel(c.kategorie)}
+                                {c.quelle === "er" && (
+                                  <span className="ml-1.5 rounded border border-border bg-muted px-1 text-[10px] text-muted-foreground">ER</span>
+                                )}
+                              </TableCell>
                               <TableCell className="text-right font-medium whitespace-nowrap">€ {eur(Number(c.betrag) || 0)}</TableCell>
                               <TableCell className="max-w-[260px] truncate">{c.beschreibung || "–"}</TableCell>
                               <TableCell className="w-10">
-                                <button
-                                  type="button"
-                                  className="text-destructive hover:opacity-70"
-                                  onClick={() => deleteCost(c.id)}
-                                  title="Kostenzeile löschen"
-                                  aria-label="Kostenzeile löschen"
-                                >
-                                  <Trash2 className="h-4 w-4" />
-                                </button>
+                                {c.quelle === "manuell" && (
+                                  <button
+                                    type="button"
+                                    className="text-destructive hover:opacity-70"
+                                    onClick={() => deleteCost(c.id)}
+                                    title="Alt-Kostenzeile löschen"
+                                    aria-label="Alt-Kostenzeile löschen"
+                                  >
+                                    <Trash2 className="h-4 w-4" />
+                                  </button>
+                                )}
                               </TableCell>
                             </TableRow>
                           ))
@@ -979,6 +913,9 @@ export default function Fahrzeuge() {
                       <span className="text-xs font-normal text-muted-foreground">davon {jahr}: € {eur(costSumJahr)}</span>
                       <span>Summe: € {eur(costSum)}</span>
                     </div>
+                    <p className="text-right text-[11px] text-muted-foreground">
+                      Eingangsrechnungen zählen netto; Alt-Einträge wie seinerzeit erfasst.
+                    </p>
                   </div>
                 </div>
               )}
@@ -1005,6 +942,23 @@ export default function Fahrzeuge() {
                       <p className="text-base font-bold">{(stats[editId || ""]?.stunden || 0).toFixed(2)} h</p>
                     </div>
                   </div>
+
+                  {/* Stunden je Mitarbeiter — auf einen Blick, ohne die
+                      Einzelliste durchzählen zu müssen. */}
+                  {stundenJeMitarbeiter.length > 0 && (
+                    <div className="kb-panel p-3">
+                      <p className="mb-1.5 text-xs font-semibold">Stunden je Mitarbeiter <span className="font-normal text-muted-foreground">(letzte 500 Einsätze)</span></p>
+                      <div className="divide-y divide-border/60 text-sm">
+                        {stundenJeMitarbeiter.map((m) => (
+                          <div key={m.name} className="flex items-center justify-between py-1">
+                            <span className="min-w-0 truncate">{m.name}</span>
+                            <span className="shrink-0 text-xs text-muted-foreground mr-3">{m.einsaetze} Einsätze</span>
+                            <span className="shrink-0 font-bold tabular-nums">{m.stunden.toFixed(2)} h</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Mobil: Karten — am Handy ist die 5-Spalten-Tabelle unlesbar */}
                   <div className="space-y-2 sm:hidden">

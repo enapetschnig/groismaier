@@ -56,6 +56,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<any>(null);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
+  /** Fahrzeuge & Maschinen für die Zuordnung (Kosten laufen in den KFZ-Manager). */
+  const [geraete, setGeraete] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [kategorien, setKategorien] = useState(FALLBACK_KATEGORIEN);
   // Verrechnen-Picker
@@ -114,11 +116,26 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const loadData = async () => {
     if (!invoiceId) return;
     setLoading(true);
-    const [{ data: inv, error: invError }, { data: projs }] = await Promise.all([
+    const [{ data: inv, error: invError }, { data: projs }, { data: fzg }] = await Promise.all([
       supabase.from("purchase_invoices").select("*").eq("id", invoiceId).single(),
       supabase.from("projects").select("id, name").order("name"),
+      (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen, art").eq("aktiv", true).order("art").order("bezeichnung"),
       loadAllocations(invoiceId),
     ]);
+    {
+      // Zugeordnetes Gerät auch dann anzeigen, wenn es inzwischen inaktiv
+      // ist — sonst behauptet das Select „Keine Zuordnung", obwohl eine
+      // existiert (Review-Befund; analog zum Projekt-Fix im Upload-Dialog).
+      const liste = ((fzg as any[]) || []);
+      const zugeordnet = (inv as any)?.vehicle_id;
+      if (zugeordnet && !liste.some((g: any) => g.id === zugeordnet)) {
+        const { data: fehltes } = await (supabase.from("vehicles" as never) as any)
+          .select("id, bezeichnung, kennzeichen, art").eq("id", zugeordnet).maybeSingle();
+        if (fehltes) liste.push({ ...(fehltes as any), bezeichnung: `${(fehltes as any).bezeichnung} (inaktiv)` });
+      }
+      setGeraete(liste);
+    }
     if (invError) {
       toast({ variant: "destructive", title: "Fehler", description: "Eingangsrechnung konnte nicht geladen werden." });
       setLoading(false);
@@ -440,6 +457,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       ust_satz: ustSatz,
       kategorie: form.kategorie,
       project_id: form.project_id || null,
+      vehicle_id: form.vehicle_id || null,
       status: form.status,
       zahlungsart: form.zahlungsart || null,
       notizen: form.notizen || null,
@@ -872,6 +890,22 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                   <SelectContent>
                     <SelectItem value="none">Kein Projekt</SelectItem>
                     {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                {/* Kundenwunsch: Rechnung einem Auto/einer Maschine zuordnen —
+                    die Kosten erscheinen dann automatisch im KFZ-Manager. */}
+                <Label>Fahrzeug / Maschine</Label>
+                <Select value={form.vehicle_id || "none"} onValueChange={v => update("vehicle_id", v === "none" ? null : v)}>
+                  <SelectTrigger><SelectValue placeholder="Keine Zuordnung" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Keine Zuordnung</SelectItem>
+                    {geraete.map(g => (
+                      <SelectItem key={g.id} value={g.id}>
+                        {g.art === "maschine" ? "⚙️ " : "🚚 "}{g.bezeichnung}{g.kennzeichen ? ` (${g.kennzeichen})` : ""}
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
