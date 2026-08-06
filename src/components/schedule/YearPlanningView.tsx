@@ -11,6 +11,7 @@ import {
 } from "date-fns";
 import { de } from "date-fns/locale";
 import { getEinsatzColor } from "./scheduleUtils";
+import { JahresWandkalender } from "./JahresWandkalender";
 import { supabase } from "@/integrations/supabase/client";
 import type {
   Profile,
@@ -88,6 +89,8 @@ export function YearPlanningView({
   //    brauchen"). Ein Manntag = 10 h (Regelarbeitszeit Mo–Do). ──
   const STUNDEN_PRO_MANNTAG = 10;
   const [sollManntage, setSollManntage] = useState<Map<string, number>>(new Map());
+  /** Darstellung: Wandkalender (Kundenvorlage) oder Wochenraster mit Auslastung. */
+  const [ansicht, setAnsicht] = useState<"wandkalender" | "wochen">("wandkalender");
   useEffect(() => {
     const ids = boardProjects.map((bp) => bp.project_id);
     if (ids.length === 0) { setSollManntage(new Map()); return; }
@@ -257,6 +260,39 @@ export function YearPlanningView({
 
   return (
     <div className="mt-3 space-y-2">
+      {/* Ansicht-Umschalter (nur Desktop — am Handy bleibt die KW-Liste) */}
+      <div className="hidden gap-1 md:flex">
+        <button
+          type="button"
+          className={ansicht === "wandkalender" ? "kb-tab-active" : "kb-tab"}
+          onClick={() => setAnsicht("wandkalender")}
+        >
+          Wandkalender
+        </button>
+        <button
+          type="button"
+          className={ansicht === "wochen" ? "kb-tab-active" : "kb-tab"}
+          onClick={() => setAnsicht("wochen")}
+        >
+          Wochenraster & Auslastung
+        </button>
+      </div>
+
+      {/* ── Wandkalender (Kundenvorlage, KingBill-Blau) ── */}
+      {ansicht === "wandkalender" && (
+        <div className="hidden md:block">
+          <JahresWandkalender
+            year={year}
+            boardProjects={boardProjects}
+            projects={projects}
+            einsaetze={einsaetze}
+            holidays={holidays}
+            sollManntage={sollManntage}
+            stundenProManntag={STUNDEN_PRO_MANNTAG}
+          />
+        </div>
+      )}
+
       {/* ── Handy-Ansicht ── */}
       <div className="space-y-2 md:hidden">
         {mobileWeeks.map(({ w, wi, available, leaveDays, planned, pct, projectsInWeek }) => (
@@ -302,6 +338,7 @@ export function YearPlanningView({
         ))}
       </div>
 
+      {ansicht === "wochen" && (
       <div className="kb-panel hidden overflow-x-auto md:block">
         {/* Monats-Header */}
         <div
@@ -468,8 +505,10 @@ export function YearPlanningView({
           </div>
         )}
       </div>
+      )}
 
-      {/* Legende */}
+      {/* Legende (Wochenraster) */}
+      {ansicht === "wochen" && (
       <div className="kb-panel flex flex-wrap items-center gap-x-4 gap-y-1 p-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Auslastung:</span>
         <span className="flex items-center gap-1.5">
@@ -496,6 +535,7 @@ export function YearPlanningView({
           Zellenwert = verplante Manntage je KW (Mo–Fr, ohne Feiertage)
         </span>
       </div>
+      )}
     </div>
   );
 }
