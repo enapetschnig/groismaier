@@ -297,7 +297,8 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       )}
       {r.istDaemm && row.product && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
-          €/m³ × {fmt(num(m.insulationThickness))} cm → {fmtEuro(r.erg.vkProM2)} / m²
+          Preis je m³ × {fmt(num(m.insulationThickness))} cm Dämmstärke → {fmtEuro(r.erg.vkProM2)} / m²
+          <span className="text-muted-foreground"> · Tipp: €/m² je cm × 100 = €/m³</span>
         </div>
       )}
       {/* Was ist neu? Kategorie UND Artikel getrennt benennen — vorher stand
@@ -386,11 +387,14 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
 
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <label className="block text-[11px] text-muted-foreground">
-                  EK {row.calc || r.istRiegel ? "€/m³" : row.manual ? "€ gesamt" : "€/m²"}
+                  {/* Dämmstoffe rechnet die Engine als €/m³ × Dämmstärke —
+                      die frühere Beschriftung „€/m²" führte exakt zum
+                      Faktor-100-Fehler des Kunden (0,16 statt 16 €/m²). */}
+                  EK {row.calc || r.istRiegel || r.istDaemm ? "€/m³" : row.manual ? "€ gesamt" : "€/m²"}
                   <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, { ekPrice: n ?? 0 })} className="h-11" />
                 </label>
                 <label className="block text-[11px] text-muted-foreground">
-                  VK {row.manual ? "€ gesamt" : "€/m²"}
+                  VK {row.manual ? "€ gesamt" : r.istDaemm ? "€/m³" : "€/m²"}
                   {row.calc ? (
                     <div className="flex h-11 items-center justify-end pr-2 tabular-nums">{fmt(r.erg.vkAbsolut)}</div>
                   ) : r.istRiegel ? (
@@ -483,7 +487,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   )}
                   <td className="py-1 pr-1">
                     <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, { ekPrice: n ?? 0 })} className="h-7 sm:h-7"
-                      title={row.calc || r.istRiegel ? "€ / m³" : row.manual ? "absoluter €-Betrag" : "€ / m²"} />
+                      title={row.calc || r.istRiegel || r.istDaemm ? "€ / m³" : row.manual ? "absoluter €-Betrag" : "€ / m²"} />
                   </td>
                   <td className="py-1 pr-1">
                     {row.calc ? (
@@ -492,7 +496,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                       <div className="pt-1.5 text-right tabular-nums" title="EK = VK (Riegelkonstruktion ohne Aufschlag)">{fmt(r.erg.vkProM2)}</div>
                     ) : (
                       <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, { vkPrice: n ?? 0 })} className="h-7 sm:h-7"
-                        title={row.manual ? "absoluter €-Betrag" : "€ / m²"} />
+                        title={row.manual ? "absoluter €-Betrag" : r.istDaemm ? "€ / m³" : "€ / m²"} />
                     )}
                   </td>
                   <td className="py-1">

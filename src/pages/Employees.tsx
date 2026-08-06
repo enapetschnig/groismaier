@@ -19,7 +19,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "@/hooks/use-toast";
-import { User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt, Trash2, EyeOff, Eye } from "lucide-react";
+import { Plus, User, FileText, Clock, Mail, Phone, MapPin, FileSpreadsheet, Shirt, Trash2, EyeOff, Eye } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { format } from "date-fns";
 import { parseDecimal, formatForInput } from "@/lib/num";
@@ -154,6 +154,52 @@ export default function Employees() {
       setEmployees((data || []).filter((e: any) => !e.user_id || !hiddenIds.has(e.user_id)));
     }
     setLoading(false);
+  };
+
+  // ── Kleidergrößen je Hersteller (Kundenwunsch: Strauß/FHB/Würth …) ──
+  interface HerstellerGroesse { id?: string; hersteller: string; kleidungsstueck: string; groesse: string }
+  const [herstellerGroessen, setHerstellerGroessen] = useState<HerstellerGroesse[]>([]);
+  const [geloeschteGroessen, setGeloeschteGroessen] = useState<string[]>([]);
+
+  /** Für die Größen-Übersicht: alle Hersteller-Größen auf einmal. */
+  const [alleHerstellerGroessen, setAlleHerstellerGroessen] = useState<Record<string, HerstellerGroesse[]>>({});
+  const ladeAlleHerstellerGroessen = async () => {
+    const { data } = await (supabase.from("employee_groessen" as never) as any)
+      .select("id, employee_id, hersteller, kleidungsstueck, groesse")
+      .order("hersteller");
+    const map: Record<string, HerstellerGroesse[]> = {};
+    (((data as any[]) || [])).forEach((g) => (map[g.employee_id] ||= []).push(g));
+    setAlleHerstellerGroessen(map);
+  };
+
+  const ladeHerstellerGroessen = async (employeeId: string) => {
+    const { data } = await (supabase.from("employee_groessen" as never) as any)
+      .select("id, hersteller, kleidungsstueck, groesse")
+      .eq("employee_id", employeeId)
+      .order("hersteller");
+    setHerstellerGroessen(((data as HerstellerGroesse[]) || []));
+    setGeloeschteGroessen([]);
+  };
+
+  const speichereHerstellerGroessen = async (employeeId: string) => {
+    if (geloeschteGroessen.length > 0) {
+      await (supabase.from("employee_groessen" as never) as any)
+        .delete().in("id", geloeschteGroessen);
+    }
+    for (const g of herstellerGroessen) {
+      if (!g.hersteller.trim() || !g.groesse.trim()) continue;
+      const zeile = {
+        employee_id: employeeId,
+        hersteller: g.hersteller.trim(),
+        kleidungsstueck: g.kleidungsstueck || "hose",
+        groesse: g.groesse.trim(),
+      };
+      if (g.id) {
+        await (supabase.from("employee_groessen" as never) as any).update(zeile).eq("id", g.id);
+      } else {
+        await (supabase.from("employee_groessen" as never) as any).insert(zeile);
+      }
+    }
   };
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
@@ -298,7 +344,7 @@ export default function Employees() {
           icon={Shirt}
           label="Größen"
           title="Arbeitskleidung- & Schuhgrößen-Übersicht"
-          onClick={() => setShowSizesDialog(true)}
+          onClick={() => { setShowSizesDialog(true); void ladeAlleHerstellerGroessen(); }}
         />
         {inactiveCount > 0 && (
           <KBToolbarButton
@@ -739,6 +785,68 @@ export default function Employees() {
                     </div>
                   </div>
 
+                  {/* Größen je Hersteller (Kundenwunsch): dieselbe Hose fällt
+                      bei Strauß, FHB und Würth unterschiedlich aus. */}
+                  <div className="mt-4">
+                    <div className="mb-2 flex items-center justify-between">
+                      <Label className="font-semibold">Größen je Hersteller</Label>
+                      <Button type="button" variant="outline" size="sm" className="h-9"
+                        onClick={() => setHerstellerGroessen((prev) => [...prev, { hersteller: "", kleidungsstueck: "hose", groesse: "" }])}>
+                        <Plus className="mr-1 h-4 w-4" /> Hersteller
+                      </Button>
+                    </div>
+                    {herstellerGroessen.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        Noch keine Hersteller-Größen — z. B. Hose bei Strauß Gr. 52, bei FHB Gr. 54.
+                      </p>
+                    ) : (
+                      <div className="space-y-2">
+                        {herstellerGroessen.map((g, i2) => (
+                          <div key={g.id || `neu-${i2}`} className="grid grid-cols-[1fr_120px_90px_auto] items-center gap-2">
+                            <Input
+                              className="h-10"
+                              placeholder="Hersteller (Strauß, FHB, Würth …)"
+                              list="hersteller-vorschlaege"
+                              value={g.hersteller}
+                              onChange={(e) => setHerstellerGroessen((prev) => prev.map((x, j) => j === i2 ? { ...x, hersteller: e.target.value } : x))}
+                            />
+                            <Select
+                              value={g.kleidungsstueck}
+                              onValueChange={(v) => setHerstellerGroessen((prev) => prev.map((x, j) => j === i2 ? { ...x, kleidungsstueck: v } : x))}
+                            >
+                              <SelectTrigger className="h-10"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="hose">Hose</SelectItem>
+                                <SelectItem value="jacke">Jacke</SelectItem>
+                                <SelectItem value="shirt">Shirt/Pulli</SelectItem>
+                                <SelectItem value="schuhe">Schuhe</SelectItem>
+                                <SelectItem value="sonstiges">Sonstiges</SelectItem>
+                              </SelectContent>
+                            </Select>
+                            <Input
+                              className="h-10"
+                              placeholder="Größe"
+                              value={g.groesse}
+                              onChange={(e) => setHerstellerGroessen((prev) => prev.map((x, j) => j === i2 ? { ...x, groesse: e.target.value } : x))}
+                            />
+                            <Button type="button" variant="ghost" size="icon" className="h-10 w-10"
+                              aria-label="Zeile entfernen"
+                              onClick={() => {
+                                if (g.id) setGeloeschteGroessen((prev) => [...prev, g.id!]);
+                                setHerstellerGroessen((prev) => prev.filter((_, j) => j !== i2));
+                              }}>
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <datalist id="hersteller-vorschlaege">
+                      <option value="Strauß" /><option value="FHB" /><option value="Würth" />
+                      <option value="Engelbert Strauss" /><option value="Blakläder" />
+                    </datalist>
+                  </div>
+
                   <Separator />
 
                   <div>
@@ -828,6 +936,7 @@ export default function Employees() {
                     <th className="px-4 py-3 text-left font-semibold">Position</th>
                     <th className="px-4 py-3 text-center font-semibold">Kleidungsgröße</th>
                     <th className="px-4 py-3 text-center font-semibold">Schuhgröße</th>
+                    <th className="px-4 py-3 text-left font-semibold">Je Hersteller</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -864,6 +973,20 @@ export default function Employees() {
                             <span className="inline-flex items-center justify-center w-12 h-8 rounded-md bg-secondary/50 text-secondary-foreground font-semibold">
                               {emp.schuhgroesse}
                             </span>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {/* z. B. „Strauß Hose 52 · FHB Hose 54" — fürs Bestellen. */}
+                          {(alleHerstellerGroessen[emp.id] || []).length > 0 ? (
+                            <div className="flex flex-wrap gap-1">
+                              {(alleHerstellerGroessen[emp.id] || []).map((g) => (
+                                <span key={g.id} className="rounded border border-border bg-muted px-1.5 py-0.5 text-xs">
+                                  {g.hersteller} {g.kleidungsstueck !== "hose" ? `${g.kleidungsstueck} ` : ""}{g.groesse}
+                                </span>
+                              ))}
+                            </div>
                           ) : (
                             <span className="text-muted-foreground text-sm">-</span>
                           )}

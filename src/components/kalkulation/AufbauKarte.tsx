@@ -195,7 +195,9 @@ export function AufbauKarte({
               <div className="rounded border bg-muted/20 p-2">
                 <div className="mb-1 text-xs font-semibold">Eingekaufte Dienstleistungen</div>
                 <div className="grid grid-cols-2 gap-2">
-                  <Feld label={`Kranstunden (${fmtEuro(erg.craneCosts)})`}>
+                  {/* Stunden UND Euro (Kundenwunsch: „bitte die Kranstunden
+                      auch in h anzeigen — aktuell sind es nur €"). */}
+                  <Feld label={`Kranstunden (${fmt(num(m.craneHours))} h · ${fmtEuro(erg.craneCosts)})`}>
                     <NumInput min={0} value={m.craneHours} onCommit={(n) => onPatch({ craneHours: n ?? 0 })} className={FELD_H} />
                   </Feld>
                   <Feld label="Speditionskosten €">

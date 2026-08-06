@@ -10,7 +10,7 @@
 // beschränkt; der Katalog ist für alle Mitarbeiter editierbar.
 // ============================================================================
 import { useEffect, useState } from "react";
-import { Plus, Save, Trash2 } from "lucide-react";
+import { Plus, Save, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { round4 } from "@/lib/kalkulationEngine";
@@ -89,6 +89,9 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const [werte, setWerte] = useState<Record<string, string>>({});
   const [savingBd, setSavingBd] = useState(false);
   const [neueKategorie, setNeueKategorie] = useState<Record<string, string>>({});
+  /** Kategorie-Filter oben (Kundenwunsch 3.2): eine Kategorie wählen statt
+   *  durch alle zu scrollen. */
+  const [katFilter, setKatFilter] = useState<string>("alle");
 
   // Die DB speichert Zahlen immer mit Punkt; im Feld steht die österreichische
   // Schreibweise mit Komma (sonst liest der Anwender "0.85" als 85 Cent falsch
@@ -182,6 +185,31 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     if (!kat.id.startsWith("pg:")) {
       const { error } = await katTable().delete().eq("id", kat.id);
       if (error) { fehler(error.message); return; }
+    }
+    katalog.reload();
+  };
+
+  /**
+   * Artikel eine Position nach oben/unten (Kundenwunsch 3.1) — tauscht die
+   * sort-Werte mit dem Nachbarn. Artikel aus dem Artikelstamm schreiben in
+   * invoice_templates.sort, Alt-Artikel in kalkulation_artikel.sort.
+   */
+  const verschiebeArtikel = async (kat: KatalogKategorie, idx: number, richtung: -1 | 1) => {
+    const nachbarIdx = idx + richtung;
+    if (nachbarIdx < 0 || nachbarIdx >= kat.artikel.length) return;
+    const a = kat.artikel[idx];
+    const b = kat.artikel[nachbarIdx];
+    // Gleiche sort-Werte (Altbestand) sauber auseinanderziehen.
+    const sortA = a.sort === b.sort ? b.sort + (richtung === -1 ? -1 : 1) : b.sort;
+    const sortB = a.sort === b.sort ? a.sort : a.sort;
+    const schreibe = async (art: KatalogArtikel, sort: number) =>
+      art.quelle === "template"
+        ? (supabase.from("invoice_templates").update({ sort } as never).eq("id", art.id) as any)
+        : artTable().update({ sort }).eq("id", art.id);
+    const [{ error: e1 }, { error: e2 }] = await Promise.all([schreibe(a, sortA), schreibe(b, sortB)]);
+    if (e1 || e2) {
+      fehler((e1 || e2)!.message);
+      return;
     }
     katalog.reload();
   };
@@ -316,9 +344,31 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
         </div>
       </div>
 
+      {/* Kategorie-Filter (Kundenwunsch 3.2): direkt zur gesuchten Kategorie
+          springen statt durch alle Blöcke zu scrollen. */}
+      <div className="kb-panel flex flex-wrap items-center gap-2 p-3">
+        <span className="text-sm font-semibold">Kategorie anzeigen:</span>
+        <select
+          className="kb-input h-9 min-h-0 max-w-xs px-2 text-sm"
+          value={katFilter}
+          onChange={(e) => setKatFilter(e.target.value)}
+        >
+          <option value="alle">Alle Kategorien</option>
+          {katalog.kategorien.map((k) => (
+            <option key={k.id} value={k.id}>{k.name} ({k.artikel.length})</option>
+          ))}
+        </select>
+        {katFilter !== "alle" && (
+          <button type="button" className="kb-btn h-9 min-h-0 px-2 text-xs" onClick={() => setKatFilter("alle")}>
+            Filter aufheben
+          </button>
+        )}
+      </div>
+
       {/* Katalog je Typ */}
       {TYP_BLOCKS.map((block) => {
-        const kats = katalog.kategorien.filter((k) => k.typ === block.typ);
+        const kats = katalog.kategorien.filter((k) => k.typ === block.typ && (katFilter === "alle" || k.id === katFilter));
+        if (kats.length === 0 && katFilter !== "alle") return null;
         return (
           <div key={block.typ} className="kb-panel">
             <div className="border-b px-4 py-2.5 text-sm font-bold">{block.titel}</div>
@@ -347,6 +397,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                   <table className="w-full min-w-[420px] text-xs">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
+                        <th className="w-14 px-1 py-1" />
                         <th className="px-2 py-1 font-semibold">Bezeichnung</th>
                         {block.typ !== "aufpreis" && <th className="w-28 px-2 py-1 text-right font-semibold">{block.ekLabel}</th>}
                         <th className="w-28 px-2 py-1 text-right font-semibold">{block.vkLabel}</th>
@@ -356,10 +407,25 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                     </thead>
                     <tbody>
                       {kat.artikel.length === 0 && (
-                        <tr><td colSpan={5} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
+                        <tr><td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
                       )}
-                      {kat.artikel.map((a) => (
+                      {kat.artikel.map((a, aIdx) => (
                         <tr key={a.id} className="border-b last:border-b-0">
+                          <td className="w-14 px-1 py-1">
+                            {/* Reihenfolge verschieben (Kundenwunsch 3.1) */}
+                            <span className="flex">
+                              <button type="button" aria-label="Nach oben" disabled={aIdx === 0}
+                                className="flex h-7 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-25"
+                                onClick={() => verschiebeArtikel(kat, aIdx, -1)}>
+                                <ArrowUp className="h-3.5 w-3.5" />
+                              </button>
+                              <button type="button" aria-label="Nach unten" disabled={aIdx === kat.artikel.length - 1}
+                                className="flex h-7 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-25"
+                                onClick={() => verschiebeArtikel(kat, aIdx, 1)}>
+                                <ArrowDown className="h-3.5 w-3.5" />
+                              </button>
+                            </span>
+                          </td>
                           <td className="px-2 py-1">
                             <BlurInput value={a.name} onCommit={(v) => v.trim() && updateArtikel(a.id, { name: v.trim() }, a.quelle)}
                               className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />

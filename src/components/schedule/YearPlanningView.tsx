@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   endOfYear,
   startOfISOWeek,
@@ -11,6 +11,7 @@ import {
 } from "date-fns";
 import { de } from "date-fns/locale";
 import { getEinsatzColor } from "./scheduleUtils";
+import { supabase } from "@/integrations/supabase/client";
 import type {
   Profile,
   Project,
@@ -81,6 +82,56 @@ export function YearPlanningView({
     () => new Map(projects.map((p) => [p.id, p])),
     [projects],
   );
+
+  // ── Solltage aus den kalkulierten Stunden des Angebots (Kundenwunsch:
+  //    „die Kalendertage belegen, die sie anhand der kalkulierten Stunden
+  //    brauchen"). Ein Manntag = 10 h (Regelarbeitszeit Mo–Do). ──
+  const STUNDEN_PRO_MANNTAG = 10;
+  const [sollManntage, setSollManntage] = useState<Map<string, number>>(new Map());
+  useEffect(() => {
+    const ids = boardProjects.map((bp) => bp.project_id);
+    if (ids.length === 0) { setSollManntage(new Map()); return; }
+    let abgebrochen = false;
+    (async () => {
+      // Referenz-Angebot je Projekt: gleiche Rangfolge wie in der
+      // Projektübersicht (angenommen vor verrechnet vor offen vor Entwurf).
+      const { data: angebote } = await supabase
+        .from("invoices")
+        .select("id, project_id, status, datum")
+        .in("project_id", ids)
+        .eq("typ", "angebot")
+        .not("status", "in", '("storniert","abgelehnt")')
+        .or("archiviert.is.null,archiviert.eq.false");
+      const rang = (st: string) =>
+        st === "angenommen" ? 0
+        : ["verrechnet", "bezahlt", "teilbezahlt"].includes(st) ? 1
+        : ["offen", "gesendet"].includes(st) ? 2 : 3;
+      const beste = new Map<string, { id: string; r: number; datum: string }>();
+      for (const a of ((angebote as { id: string; project_id: string; status: string; datum: string }[]) || [])) {
+        const b = beste.get(a.project_id);
+        const r = rang(a.status);
+        if (!b || r < b.r || (r === b.r && a.datum > b.datum)) beste.set(a.project_id, { id: a.id, r, datum: a.datum });
+      }
+      const invoiceIds = [...beste.values()].map((b) => b.id);
+      if (invoiceIds.length === 0) { if (!abgebrochen) setSollManntage(new Map()); return; }
+      const { data: items } = await supabase
+        .from("invoice_items")
+        .select("invoice_id, menge, arbeitszeit_minuten")
+        .in("invoice_id", invoiceIds);
+      const stundenJeInvoice = new Map<string, number>();
+      for (const it of ((items as { invoice_id: string; menge: number | null; arbeitszeit_minuten: number | null }[]) || [])) {
+        const h = ((Number(it.arbeitszeit_minuten) || 0) / 60) * (Number(it.menge) || 0);
+        stundenJeInvoice.set(it.invoice_id, (stundenJeInvoice.get(it.invoice_id) || 0) + h);
+      }
+      const map = new Map<string, number>();
+      for (const [projektId, b] of beste) {
+        const stunden = stundenJeInvoice.get(b.id) || 0;
+        if (stunden > 0) map.set(projektId, Math.ceil(stunden / STUNDEN_PRO_MANNTAG));
+      }
+      if (!abgebrochen) setSollManntage(map);
+    })();
+    return () => { abgebrochen = true; };
+  }, [boardProjects]);
 
   const holidaySet = useMemo(
     () => new Set(holidays.map((h) => h.datum)),
@@ -254,14 +305,14 @@ export function YearPlanningView({
       <div className="kb-panel hidden overflow-x-auto md:block">
         {/* Monats-Header */}
         <div
-          className="grid sticky top-0 z-20 bg-white border-b"
+          className="grid sticky top-0 z-20 border-b bg-[hsl(210_60%_96%)]"
           style={{
             gridTemplateColumns: `minmax(160px, 220px) ${monthGroups
               .map((g) => `repeat(${g.span}, minmax(26px, 1fr))`)
               .join(" ")}`,
           }}
         >
-          <div className="p-1 border-r sticky left-0 bg-white z-30 text-xs font-semibold flex items-center px-2">
+          <div className="p-1 border-r sticky left-0 z-30 flex items-center bg-[hsl(210_60%_96%)] px-2 text-xs font-bold text-kb-blue-dark">
             {year}
           </div>
           {monthGroups.map((g, i) => (
@@ -277,10 +328,10 @@ export function YearPlanningView({
 
         {/* KW-Header */}
         <div
-          className="grid sticky top-[26px] z-20 bg-white border-b"
+          className="grid sticky top-[26px] z-20 border-b bg-[hsl(210_50%_98%)]"
           style={{ gridTemplateColumns: gridCols }}
         >
-          <div className="p-1 px-2 border-r text-xs text-muted-foreground sticky left-0 bg-white z-30">
+          <div className="p-1 px-2 border-r text-xs text-kb-blue-dark sticky left-0 z-30 bg-[hsl(210_50%_98%)]">
             KW
           </div>
           {weeks.map((w, wi) => (
@@ -288,7 +339,7 @@ export function YearPlanningView({
               key={wi}
               className={`text-[10px] text-center py-0.5 border-r ${
                 isCurrentWeek(w)
-                  ? "bg-foreground text-background font-semibold rounded-sm"
+                  ? "bg-kb-blue text-white font-semibold rounded-sm"
                   : w.holidayCount > 0
                     ? "bg-gray-100 text-muted-foreground"
                     : "text-muted-foreground"
@@ -346,12 +397,30 @@ export function YearPlanningView({
               className="grid border-b"
               style={{ gridTemplateColumns: gridCols }}
             >
-              <div className="px-2 py-1.5 border-r text-xs font-medium truncate sticky left-0 bg-white z-10 flex items-center gap-1.5">
+              <div className="px-2 py-1.5 border-r text-xs font-medium sticky left-0 bg-white z-10 flex items-center gap-1.5">
                 <div
                   className="w-2.5 h-2.5 rounded-sm shrink-0"
                   style={{ backgroundColor: colorHex }}
                 />
-                <span className="truncate">{name}</span>
+                <span className="min-w-0 truncate">{name}</span>
+                {(() => {
+                  // Solltage aus den kalkulierten Angebotsstunden gegen die
+                  // tatsächlich verplanten Manntage (Kundenwunsch).
+                  const soll = sollManntage.get(bp.project_id);
+                  if (!soll) return null;
+                  const verplant = (counts || []).reduce((a, b) => a + b, 0);
+                  const fertig = verplant >= soll;
+                  return (
+                    <span
+                      className={`ml-auto shrink-0 rounded px-1 py-0.5 text-[9px] font-bold tabular-nums ${
+                        fertig ? "bg-green-100 text-green-800" : "bg-amber-100 text-amber-800"
+                      }`}
+                      title={`Laut Angebot kalkuliert: ${soll} Manntage (à ${STUNDEN_PRO_MANNTAG} h) — davon ${verplant} auf der Plantafel verplant`}
+                    >
+                      {verplant}/{soll} MT
+                    </span>
+                  );
+                })()}
               </div>
               {weeks.map((w, wi) => {
                 const count = counts?.[wi] ?? 0;
@@ -416,8 +485,12 @@ export function YearPlanningView({
           über {AUSLASTUNG_GELB_BIS} % – voll / überbucht
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="inline-block w-3 h-3 rounded-sm bg-foreground" />
+          <span className="inline-block w-3 h-3 rounded-sm bg-kb-blue" />
           aktuelle KW
+        </span>
+        <span className="flex items-center gap-1.5">
+          <span className="inline-block rounded bg-amber-100 px-1 text-[9px] font-bold text-amber-800">3/8 MT</span>
+          verplant / laut Angebot kalkuliert (à 10 h)
         </span>
         <span className="ml-auto">
           Zellenwert = verplante Manntage je KW (Mo–Fr, ohne Feiertage)

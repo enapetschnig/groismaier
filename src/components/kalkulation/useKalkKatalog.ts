@@ -77,7 +77,7 @@ export function useKalkKatalog(): KalkKatalog {
       artTable().select("id, kategorie_id, name, ek, vk, einheit, sort, aktiv").order("sort"),
       supabase
         .from("invoice_templates")
-        .select("id, name, kurzbezeichnung, produktgruppe, einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv, ist_set")
+        .select("id, name, kurzbezeichnung, produktgruppe, einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv, ist_set, ist_kalkuliert, sort")
         .order("produktgruppe")
         .order("kurzbezeichnung"),
       supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
@@ -143,13 +143,21 @@ export function useKalkKatalog(): KalkKatalog {
         ek: t.ek_netto === null || t.ek_netto === undefined ? null : Number(t.ek_netto),
         vk: vk === null || vk === undefined ? null : Number(vk),
         einheit: t.einheit || null,
-        sort: altIdx >= 0 ? kat.artikel[altIdx].sort : (kat.artikel.length + 1) * 10,
+        // Persistierte Reihenfolge aus dem Artikelstamm (Kundenwunsch 3.1);
+        // Fallback bleibt die bisherige synthetische Ordnung.
+        sort: t.sort != null ? Number(t.sort)
+          : altIdx >= 0 ? kat.artikel[altIdx].sort : (kat.artikel.length + 1) * 10,
         aktiv: true,
         quelle: "template",
       };
       if (altIdx >= 0) kat.artikel[altIdx] = neu;
       else kat.artikel.push(neu);
     }
+
+    // Nach dem Einmischen je Kategorie nach sort ordnen — erst damit wirkt
+    // die verschiebbare Reihenfolge (Kundenwunsch 3.1) auch gemischt aus
+    // Artikelstamm- und Alt-Artikeln.
+    for (const kat of kats) kat.artikel.sort((a, b) => (a.sort || 0) - (b.sort || 0));
 
     const s: Record<string, string> = {};
     for (const row of setRes.data || []) s[row.key] = row.value;

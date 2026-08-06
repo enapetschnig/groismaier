@@ -36,12 +36,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { AlertTriangle, FileCheck2, FileText, LayoutTemplate, Loader2, PackagePlus, Plus, Save } from "lucide-react";
+import { AlertTriangle, FileCheck2, FileText, LayoutTemplate, Loader2, PackagePlus, Plus, Save, Trash2 } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { CustomerSelect } from "@/components/CustomerSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -137,6 +137,72 @@ export default function KalkulationEditor() {
   const standRef = useRef<string | null>(null);
   const [konflikt, setKonflikt] = useState(false);
   const konfliktRef = useRef(false); konfliktRef.current = konflikt;
+
+  // Aufbau-Vorlagen (einzelner Aufbau als Baustein, Kundenwunsch)
+  const [aufbauVorlagenOpen, setAufbauVorlagenOpen] = useState(false);
+  const [aufbauVorlagen, setAufbauVorlagen] = useState<{ id: string; name: string; daten: unknown }[]>([]);
+  const [aufbauVorlageName, setAufbauVorlageName] = useState("");
+  const [aufbauVorlageQuelle, setAufbauVorlageQuelle] = useState<string>("");
+
+  const ladeAufbauVorlagen = async () => {
+    const { data } = await (supabase.from("aufbau_vorlagen" as never) as any)
+      .select("id, name, daten").order("name");
+    setAufbauVorlagen(((data as any[]) || []));
+  };
+
+  const oeffneAufbauVorlagen = () => {
+    setAufbauVorlageName("");
+    setAufbauVorlageQuelle(state.modules.length > 0 ? String(state.modules[0].id) : "");
+    setAufbauVorlagenOpen(true);
+    void ladeAufbauVorlagen();
+  };
+
+  const speichereAufbauVorlage = async () => {
+    const quelle = state.modules.find((x) => String(x.id) === aufbauVorlageQuelle);
+    const name = aufbauVorlageName.trim() || quelle?.name?.trim();
+    if (!quelle || !name) {
+      toast({ variant: "destructive", title: "Angaben fehlen", description: "Bitte Aufbau wählen und einen Namen vergeben." });
+      return;
+    }
+    // Tiefe Kopie ohne die laufende id — die vergibt das Einfügen neu.
+    const daten = JSON.parse(JSON.stringify({ ...quelle, id: 0 }));
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await (supabase.from("aufbau_vorlagen" as never) as any)
+      .insert({ name, daten, created_by: user?.id || null });
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    toast({ title: "Aufbau-Vorlage gespeichert", description: `„${name}“ steht jetzt in jeder Kalkulation zum Einfügen bereit.` });
+    setAufbauVorlageName("");
+    void ladeAufbauVorlagen();
+  };
+
+  const fuegeAufbauVorlageEin = (vorlage: { name: string; daten: unknown }) => {
+    if (state.modules.length >= MAX_MODULE) {
+      toast({ variant: "destructive", title: "Maximum erreicht", description: `Maximal ${MAX_MODULE} Aufbauten.` });
+      return;
+    }
+    update((s) => {
+      // Über die Lade-Normalisierung ziehen: Vorlagen aus älteren Ständen
+      // bekommen so fehlende Felder mit Vorgabewerten aufgefüllt.
+      const basis = newModule(nextId(s.modules));
+      const roh = (vorlage.daten || {}) as Record<string, unknown>;
+      s.modules.push({ ...basis, ...JSON.parse(JSON.stringify(roh)), id: basis.id });
+    });
+    setAufbauVorlagenOpen(false);
+    toast({ title: "Aufbau eingefügt", description: `„${vorlage.name}“ — unten anpassbar wie jeder andere Aufbau.` });
+  };
+
+  const loescheAufbauVorlage = async (id: string, name: string) => {
+    if (!window.confirm(`Aufbau-Vorlage „${name}“ löschen?`)) return;
+    const { error } = await (supabase.from("aufbau_vorlagen" as never) as any).delete().eq("id", id);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    void ladeAufbauVorlagen();
+  };
 
   // Vorlage-Dialog
   const [vorlageOpen, setVorlageOpen] = useState(false);
@@ -859,9 +925,16 @@ export default function KalkulationEditor() {
               />
             ))}
 
-            <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
-              icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
-              onClick={addModule} disabled={state.modules.length >= MAX_MODULE} />
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
+                icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
+                onClick={addModule} disabled={state.modules.length >= MAX_MODULE} />
+              {/* Vorgespeicherte Aufbauten einfügen (Kundenwunsch) */}
+              <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
+                icon={LayoutTemplate} label="Aufbau-Vorlagen"
+                title="Gespeicherte Aufbauten einfügen oder den aktuellen Aufbau als Vorlage speichern"
+                onClick={oeffneAufbauVorlagen} />
+            </div>
           </div>
         )}
 
@@ -993,6 +1066,71 @@ export default function KalkulationEditor() {
       </Dialog>
 
       {/* Als Vorlage speichern */}
+      {/* ── Aufbau-Vorlagen: einfügen + speichern ── */}
+      <Dialog open={aufbauVorlagenOpen} onOpenChange={setAufbauVorlagenOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Aufbau-Vorlagen</DialogTitle>
+            <DialogDescription>
+              Gespeicherte Aufbauten in diese Kalkulation einfügen — oder einen
+              Aufbau dieser Kalkulation als Vorlage ablegen.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div>
+              <p className="mb-1.5 text-sm font-semibold">Vorlage einfügen</p>
+              {aufbauVorlagen.length === 0 ? (
+                <p className="rounded border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+                  Noch keine Aufbau-Vorlagen gespeichert — unten den ersten Aufbau ablegen.
+                </p>
+              ) : (
+                <div className="max-h-56 divide-y overflow-y-auto rounded border">
+                  {aufbauVorlagen.map((v) => (
+                    <div key={v.id} className="flex items-center gap-2 px-2 py-1.5">
+                      <span className="min-w-0 flex-1 truncate text-sm">{v.name}</span>
+                      <Button size="sm" className="h-9" onClick={() => fuegeAufbauVorlageEin(v)}>Einfügen</Button>
+                      <button
+                        type="button"
+                        className="flex h-9 w-9 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        title="Vorlage löschen"
+                        aria-label={`Vorlage ${v.name} löschen`}
+                        onClick={() => void loescheAufbauVorlage(v.id, v.name)}
+                      ><Trash2 className="h-4 w-4" /></button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="border-t pt-3">
+              <p className="mb-1.5 text-sm font-semibold">Aufbau aus dieser Kalkulation als Vorlage speichern</p>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <select
+                  className="kb-input h-10 min-h-0 flex-1 px-2 text-sm"
+                  value={aufbauVorlageQuelle}
+                  onChange={(e) => setAufbauVorlageQuelle(e.target.value)}
+                >
+                  {state.modules.length === 0 && <option value="">Kein Aufbau vorhanden</option>}
+                  {state.modules.map((mod, i) => (
+                    <option key={mod.id} value={String(mod.id)}>{mod.name || `Aufbau ${i + 1}`}</option>
+                  ))}
+                </select>
+                <input
+                  className="kb-input h-10 min-h-0 flex-1 px-2 text-sm"
+                  placeholder="Name der Vorlage (leer = Aufbauname)"
+                  value={aufbauVorlageName}
+                  onChange={(e) => setAufbauVorlageName(e.target.value)}
+                />
+                <Button className="h-10" onClick={() => void speichereAufbauVorlage()} disabled={state.modules.length === 0}>
+                  Speichern
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={vorlageOpen} onOpenChange={setVorlageOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>Als Vorlage speichern</DialogTitle></DialogHeader>
