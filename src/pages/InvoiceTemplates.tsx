@@ -56,6 +56,7 @@ interface Template {
   aufschlag_prozent: number;
   vk_preis_manuell: boolean;
   ist_kalkuliert: boolean;
+  kalk_bausteine: { bezeichnung: string; betrag: number }[];
   verschnitt_prozent: number;
   befestigung_preis: number;
   sonstiges_preis: number;
@@ -82,6 +83,7 @@ export default function InvoiceTemplates() {
     aufschlag_prozent: 0,
     vk_preis_manuell: false,
     ist_kalkuliert: false,
+    kalk_bausteine: [],
     verschnitt_prozent: 0,
     befestigung_preis: 0,
     sonstiges_preis: 0,
@@ -161,6 +163,7 @@ export default function InvoiceTemplates() {
           aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
           vk_preis_manuell: !!(t as any).vk_preis_manuell,
           ist_kalkuliert: !!(t as any).ist_kalkuliert,
+          kalk_bausteine: Array.isArray((t as any).kalk_bausteine) ? (t as any).kalk_bausteine : [],
           verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
           befestigung_preis: Number((t as any).befestigung_preis) || 0,
           sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
@@ -310,7 +313,7 @@ export default function InvoiceTemplates() {
       ist_lagerartikel: false, lieferant: "", produktgruppe: "",
       foto_path: null, ist_set: false,
       ek_netto: 0, vk_netto: 0, bezugseinheit: "", aufschlag_prozent: 0, vk_preis_manuell: false,
-      ist_kalkuliert: false, verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
+      ist_kalkuliert: false, kalk_bausteine: [], verschnitt_prozent: 0, befestigung_preis: 0, sonstiges_preis: 0, arbeitszeit_minuten: 0, stundensatz: 52,
     });
     setSetComponents([]);
     setOriginalComponentIds([]);
@@ -337,6 +340,7 @@ export default function InvoiceTemplates() {
       ist_kalkuliert: t.ist_kalkuliert,
       verschnitt_prozent: t.verschnitt_prozent,
       befestigung_preis: t.befestigung_preis,
+      kalk_bausteine: (t as any).kalk_bausteine || [],
       sonstiges_preis: t.sonstiges_preis,
       arbeitszeit_minuten: t.arbeitszeit_minuten,
       stundensatz: t.stundensatz || 52,
@@ -436,6 +440,7 @@ export default function InvoiceTemplates() {
       sonstiges_preis: Number(form.sonstiges_preis) || 0,
       arbeitszeit_minuten: Number(form.arbeitszeit_minuten) || 0,
       stundensatz: Number(form.stundensatz) || 52,
+      bausteine: form.kalk_bausteine,
     });
     const vkEffective = form.ist_kalkuliert ? kalkVk : (Number(form.vk_netto) || Number(form.netto_preis) || 0);
     // Kein stilles EK:=VK mehr — ein leerer EK bleibt leer (null). Sonst
@@ -477,6 +482,10 @@ export default function InvoiceTemplates() {
       sonstiges_preis: form.ist_kalkuliert ? Number(form.sonstiges_preis) || 0 : 0,
       arbeitszeit_minuten: form.ist_kalkuliert ? Number(form.arbeitszeit_minuten) || 0 : 0,
       stundensatz: Number(form.stundensatz) || 52,
+      // Benannte Kostenbausteine (Kundenwunsch 3.4) — nur sinnvolle Zeilen.
+      kalk_bausteine: form.ist_kalkuliert
+        ? form.kalk_bausteine.filter((b) => b.bezeichnung.trim() || Number(b.betrag))
+        : [],
     };
 
     let templateId = editId;
@@ -1006,6 +1015,7 @@ export default function InvoiceTemplates() {
                             aufschlag_prozent: f.aufschlag_prozent, befestigung_preis: f.befestigung_preis,
                             sonstiges_preis: f.sonstiges_preis, arbeitszeit_minuten: f.arbeitszeit_minuten,
                             stundensatz: f.stundensatz || 52,
+                            bausteine: f.kalk_bausteine,
                           });
                           next.vk_netto = vk; next.netto_preis = vk;
                           next.brutto_preis = Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100;
@@ -1022,6 +1032,7 @@ export default function InvoiceTemplates() {
                         aufschlag_prozent: form.aufschlag_prozent, befestigung_preis: form.befestigung_preis,
                         sonstiges_preis: form.sonstiges_preis, arbeitszeit_minuten: form.arbeitszeit_minuten,
                         stundensatz: form.stundensatz || 52,
+                        bausteine: form.kalk_bausteine,
                       }}
                       onChange={(v) => setForm(f => {
                         const vk = calcEinzelpreis(v);
@@ -1031,6 +1042,7 @@ export default function InvoiceTemplates() {
                           aufschlag_prozent: v.aufschlag_prozent, befestigung_preis: v.befestigung_preis,
                           sonstiges_preis: v.sonstiges_preis, arbeitszeit_minuten: v.arbeitszeit_minuten,
                           stundensatz: v.stundensatz,
+                          kalk_bausteine: v.bausteine || [],
                           vk_netto: vk, netto_preis: vk,
                           brutto_preis: Math.round(vk * (1 + f.ust_satz / 100) * 100) / 100,
                         };

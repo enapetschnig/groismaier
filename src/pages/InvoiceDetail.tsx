@@ -2163,12 +2163,17 @@ export default function InvoiceDetail() {
     // Kalkuliertes Material → Kalkulation in die Position übernehmen, damit
     // Aufschlag/Stundensatz im Angebot anpassbar sind (Excel-Modell).
     const isKalk = !!(t as any).ist_kalkuliert;
+    // Benannte Kostenbausteine des Artikels (Produktkalkulation) fließen als
+    // Summe in „Sonstiges" der Position — der Positions-Editor rechnet damit
+    // exakt denselben Einzelpreis, ohne die Bausteinliste zu kennen.
+    const bausteineSumme = (Array.isArray((t as any).kalk_bausteine) ? (t as any).kalk_bausteine : [])
+      .reduce((sBs: number, b: { betrag?: number }) => sBs + (Number(b?.betrag) || 0), 0);
     const kalk: KalkulationInput | null = isKalk ? {
       ek_preis: Number((t as any).ek_netto) || 0,
       verschnitt_prozent: Number((t as any).verschnitt_prozent) || 0,
       aufschlag_prozent: Number((t as any).aufschlag_prozent) || 0,
       befestigung_preis: Number((t as any).befestigung_preis) || 0,
-      sonstiges_preis: Number((t as any).sonstiges_preis) || 0,
+      sonstiges_preis: round2((Number((t as any).sonstiges_preis) || 0) + bausteineSumme),
       arbeitszeit_minuten: Number((t as any).arbeitszeit_minuten) || 0,
       stundensatz: Number((t as any).stundensatz) || 52,
     } : null;
@@ -2456,7 +2461,7 @@ export default function InvoiceDetail() {
     if (ids.length === 0) return {};
     const { data } = await supabase
       .from("invoice_templates")
-      .select("id, ek_netto, verschnitt_prozent, aufschlag_prozent, befestigung_preis, sonstiges_preis, arbeitszeit_minuten, stundensatz, ist_kalkuliert")
+      .select("id, ek_netto, verschnitt_prozent, aufschlag_prozent, befestigung_preis, sonstiges_preis, arbeitszeit_minuten, stundensatz, ist_kalkuliert, kalk_bausteine")
       .in("id", ids);
     const map: Record<string, any> = {};
     for (const t of (data || [])) map[(t as any).id] = t;
@@ -2468,7 +2473,11 @@ export default function InvoiceDetail() {
     verschnitt_prozent: Number(t.verschnitt_prozent) || 0,
     aufschlag_prozent: Number(t.aufschlag_prozent) || 0,
     befestigung_preis: Number(t.befestigung_preis) || 0,
-    sonstiges_preis: Number(t.sonstiges_preis) || 0,
+    // Kostenbausteine der Produktkalkulation fließen als Summe in Sonstiges
+    // (die Position kennt keine Bausteinliste, der Preis bleibt identisch).
+    sonstiges_preis: round2((Number(t.sonstiges_preis) || 0) +
+      (Array.isArray(t.kalk_bausteine) ? t.kalk_bausteine : [])
+        .reduce((sBs: number, b: { betrag?: number }) => sBs + (Number(b?.betrag) || 0), 0)),
     arbeitszeit_minuten: Number(t.arbeitszeit_minuten) || 0,
     stundensatz: Number(t.stundensatz) || 52,
   });

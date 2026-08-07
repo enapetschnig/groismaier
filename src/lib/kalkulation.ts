@@ -12,6 +12,12 @@
 // dokumentweiten Aufschlag-Override (kalkulation_aufschlag_override).
 // ============================================================================
 
+/** Benannter Kostenbaustein je Einheit (Rohware, Transport, Handling …). */
+export interface KalkBaustein {
+  bezeichnung: string;
+  betrag: number; // EUR / Einheit
+}
+
 export interface KalkulationInput {
   ek_preis: number;            // Einkaufspreis Material in EUR / Einheit
   verschnitt_prozent: number;  // Verschnitt-Zuschlag in % (z.B. 15)
@@ -20,13 +26,17 @@ export interface KalkulationInput {
   sonstiges_preis: number;     // Sonstiges EUR / Einheit
   arbeitszeit_minuten: number; // Montage-/Arbeitszeit in Minuten / Einheit
   stundensatz: number;         // Lohnsatz EUR / h
+  /** Frei benannte Kostenbausteine je Einheit (Kundenwunsch 3.4) —
+   *  z. B. Transport, Handling, Helfer, Entsorgung, Maschinenkosten. */
+  bausteine?: KalkBaustein[];
 }
 
 export interface KalkulationResult {
-  materialkosten: number; // EK inkl. Verschnitt + Aufschlag
-  lohnkosten: number;     // Arbeitszeit · Stundensatz
-  zuschlaege: number;     // Befestigung + Sonstiges
-  einzelpreis: number;    // Summe = VK / Einheit
+  materialkosten: number;  // EK inkl. Verschnitt + Aufschlag
+  lohnkosten: number;      // Arbeitszeit · Stundensatz
+  zuschlaege: number;      // Befestigung + Sonstiges + Bausteine
+  bausteineSumme: number;  // Σ der benannten Kostenbausteine
+  einzelpreis: number;     // Summe = VK / Einheit
 }
 
 export const DEFAULT_STUNDENSATZ = 52;   // Mittellohn (Excel)
@@ -59,13 +69,17 @@ export function calcKalkulation(input: Partial<KalkulationInput>): KalkulationRe
 
   const materialkosten = ek * (1 + verschnitt / 100) * (1 + aufschlag / 100);
   const lohnkosten = (minuten / 60) * stundensatz;
-  const zuschlaege = befestigung + sonstiges;
+  // Benannte Bausteine (Transport, Handling, Helfer, Entsorgung, Maschine …)
+  // zählen wie Befestigung/Sonstiges als Zuschlag je Einheit.
+  const bausteineSumme = (input.bausteine || []).reduce((s, b) => s + num(b.betrag), 0);
+  const zuschlaege = befestigung + sonstiges + bausteineSumme;
   const einzelpreis = round2(materialkosten + zuschlaege + lohnkosten);
 
   return {
     materialkosten: round2(materialkosten),
     lohnkosten: round2(lohnkosten),
     zuschlaege: round2(zuschlaege),
+    bausteineSumme: round2(bausteineSumme),
     einzelpreis,
   };
 }

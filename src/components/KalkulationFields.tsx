@@ -1,7 +1,10 @@
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Plus, Trash2 } from "lucide-react";
 import {
   calcKalkulation,
+  type KalkBaustein,
   type KalkulationInput,
   DEFAULT_STUNDENSATZ,
 } from "@/lib/kalkulation";
@@ -38,13 +41,13 @@ export function KalkulationFields({
 
   const result = calcKalkulation({ ...value, aufschlag_prozent: effectiveAufschlag });
 
-  const set = (key: keyof KalkulationInput, raw: string) => {
+  const set = (key: Exclude<keyof KalkulationInput, "bausteine">, raw: string) => {
     const n = raw === "" ? 0 : parseFloat(raw.replace(",", "."));
     onChange({ ...value, [key]: Number.isFinite(n) ? n : 0 });
   };
 
   const field = (
-    key: keyof KalkulationInput,
+    key: Exclude<keyof KalkulationInput, "bausteine">,
     label: string,
     suffix?: string,
     readOnly = false,
@@ -125,6 +128,69 @@ export function KalkulationFields({
         </div>
       </div>
 
+      {/* Freie Kostenbausteine (Kundenwunsch 3.4): Rohware, Transport,
+          Handling, Helfer, Entsorgung, Maschinenkosten … je Einheit. */}
+      <div>
+        <div className="mb-1 flex items-center justify-between">
+          <Label className="text-xs text-muted-foreground">
+            Kostenbausteine je {einheit} (Transport, Handling, Maschine …)
+          </Label>
+          <Button
+            type="button" variant="outline" size="sm" className="h-8"
+            disabled={disabled}
+            onClick={() => onChange({ ...value, bausteine: [...(value.bausteine || []), { bezeichnung: "", betrag: 0 }] })}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" /> Baustein
+          </Button>
+        </div>
+        {(value.bausteine || []).length > 0 && (
+          <div className="space-y-1.5">
+            {(value.bausteine || []).map((b: KalkBaustein, i: number) => (
+              <div key={i} className="grid grid-cols-[1fr_110px_auto] items-center gap-1.5">
+                <Input
+                  className="h-9"
+                  placeholder="z. B. Transport ins Lager"
+                  list="kalk-baustein-vorschlaege"
+                  value={b.bezeichnung}
+                  disabled={disabled}
+                  onChange={(e) => onChange({
+                    ...value,
+                    bausteine: (value.bausteine || []).map((x, j) => j === i ? { ...x, bezeichnung: e.target.value } : x),
+                  })}
+                />
+                <div className="relative">
+                  <Input
+                    type="number" inputMode="decimal" step="any" className="h-9 pr-7"
+                    placeholder="0"
+                    value={b.betrag === 0 ? "" : b.betrag}
+                    disabled={disabled}
+                    onChange={(e) => {
+                      const n = e.target.value === "" ? 0 : parseFloat(e.target.value.replace(",", "."));
+                      onChange({
+                        ...value,
+                        bausteine: (value.bausteine || []).map((x, j) => j === i ? { ...x, betrag: Number.isFinite(n) ? n : 0 } : x),
+                      });
+                    }}
+                  />
+                  <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+                </div>
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-9 w-9"
+                  aria-label="Baustein entfernen" disabled={disabled}
+                  onClick={() => onChange({ ...value, bausteine: (value.bausteine || []).filter((_, j) => j !== i) })}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
+            ))}
+          </div>
+        )}
+        <datalist id="kalk-baustein-vorschlaege">
+          <option value="Rohware" /><option value="Transport ins Lager" /><option value="Handling" />
+          <option value="Helfer Maschine" /><option value="Müllentsorgung" /><option value="Maschinenkosten" />
+        </datalist>
+      </div>
+
       {/* Kalkulations-Aufschlüsselung */}
       <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
         <div className="grid grid-cols-2 gap-x-4 gap-y-1">
@@ -132,10 +198,16 @@ export function KalkulationFields({
           <span className="text-right tabular-nums">{fmt(result.materialkosten)} €</span>
           <span className="text-muted-foreground">Lohnkosten</span>
           <span className="text-right tabular-nums">{fmt(result.lohnkosten)} €</span>
-          {result.zuschlaege > 0 && (
+          {result.bausteineSumme > 0 && (
+            <>
+              <span className="text-muted-foreground">Kostenbausteine</span>
+              <span className="text-right tabular-nums">{fmt(result.bausteineSumme)} €</span>
+            </>
+          )}
+          {result.zuschlaege - result.bausteineSumme > 0 && (
             <>
               <span className="text-muted-foreground">Befestigung + Sonstiges</span>
-              <span className="text-right tabular-nums">{fmt(result.zuschlaege)} €</span>
+              <span className="text-right tabular-nums">{fmt(result.zuschlaege - result.bausteineSumme)} €</span>
             </>
           )}
           <span className="font-semibold border-t pt-1 mt-1">Einzelpreis / {einheit}</span>
