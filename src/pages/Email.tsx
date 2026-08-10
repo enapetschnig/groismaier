@@ -18,8 +18,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { PurchaseInvoiceUploadDialog } from "@/components/PurchaseInvoiceUploadDialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  ArrowLeft, Download, FileText, Loader2, Mail, MailOpen, Paperclip, ReceiptText, RefreshCw, Search, X,
+  ArrowLeft, Download, FileText, Forward, Loader2, Mail, MailOpen, Paperclip, PenLine,
+  ReceiptText, RefreshCw, Reply, ReplyAll, Search, Send, Trash2, X,
 } from "lucide-react";
 
 const POSTFAECHER = [
@@ -75,6 +79,14 @@ export default function Email() {
   const [detail, setDetail] = useState<MailDetail | null>(null);
   const [detailLaedt, setDetailLaedt] = useState(false);
   const [fehler, setFehler] = useState<string | null>(null);
+
+  // Verfassen (neu / antworten / weiterleiten) — bewusst schlicht:
+  // bei Antworten übernimmt Microsoft Empfänger, Betreff und Zitat selbst.
+  const [verfassen, setVerfassen] = useState<null | {
+    modus: "neu" | "antwort" | "antwortAlle" | "weiterleiten";
+    an: string; cc: string; betreff: string; text: string; bezugId?: string; bezugBetreff?: string;
+  }>(null);
+  const [sendet, setSendet] = useState(false);
 
   // ER-Übernahme
   const [erDialogOffen, setErDialogOffen] = useState(false);
@@ -178,6 +190,42 @@ export default function Email() {
     }
   };
 
+  const absenden = async () => {
+    if (!verfassen) return;
+    setSendet(true);
+    try {
+      await rufe({
+        aktion: "senden",
+        postfach,
+        modus: verfassen.modus,
+        id: verfassen.bezugId,
+        an: verfassen.an.split(/[;,]/).map((x) => x.trim()).filter(Boolean),
+        cc: verfassen.cc.split(/[;,]/).map((x) => x.trim()).filter(Boolean),
+        betreff: verfassen.betreff,
+        text: verfassen.text,
+      });
+      toast({ title: "Gesendet", description: "Die Mail liegt auch in Outlook unter »Gesendete Elemente«." });
+      setVerfassen(null);
+    } catch (e) {
+      toast({ title: "Senden fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setSendet(false);
+    }
+  };
+
+  const loeschen = async () => {
+    if (!detail) return;
+    if (!confirm(`„${detail.betreff}" in den Papierkorb verschieben?`)) return;
+    try {
+      await rufe({ aktion: "loeschen", postfach, id: detail.id });
+      setMails((alt2) => alt2.filter((m) => m.id !== detail.id));
+      setDetail(null);
+      toast({ title: "In den Papierkorb verschoben" });
+    } catch (e) {
+      toast({ title: "Löschen fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
+    }
+  };
+
   const listeSichtbar = !detail || typeof window === "undefined" || window.innerWidth >= 1024;
 
   return (
@@ -229,6 +277,13 @@ export default function Email() {
             )}
           </div>
           <Button onClick={suchen} disabled={laedt}>Suchen</Button>
+          <Button
+            variant="outline"
+            onClick={() => setVerfassen({ modus: "neu", an: "", cc: "", betreff: "", text: "" })}
+            title={`Neue E-Mail von ${postfach}`}
+          >
+            <PenLine className="mr-1.5 h-4 w-4" /> Neue E-Mail
+          </Button>
         </div>
 
         <div className="flex gap-3">
@@ -308,6 +363,23 @@ export default function Email() {
                           {" · "}{new Date(detail.empfangen).toLocaleString("de-AT")}
                         </div>
                       </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Antworten"
+                          onClick={() => setVerfassen({ modus: "antwort", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          <Reply className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Allen antworten"
+                          onClick={() => setVerfassen({ modus: "antwortAlle", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          <ReplyAll className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Weiterleiten"
+                          onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          <Forward className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="In den Papierkorb" onClick={loeschen}>
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      </div>
                       <Button
                         className="shrink-0"
                         size="sm"
@@ -361,6 +433,71 @@ export default function Email() {
           Direkt verbunden mit Microsoft 365 · Öffnen markiert als gelesen · „Als Eingangsrechnung" schickt die Anhänge in den bekannten KI-Scan
         </p>
       </div>
+
+      {/* Verfassen — bewusst einfach: bei Antworten macht Microsoft Zitat,
+          Betreff (AW:) und Empfänger automatisch; gesendet wird als das
+          gerade offene Postfach, Ablage in „Gesendete Elemente" (Outlook-Sync). */}
+      <Dialog open={!!verfassen} onOpenChange={(o) => !o && setVerfassen(null)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {verfassen?.modus === "neu" && "Neue E-Mail"}
+              {verfassen?.modus === "antwort" && `Antwort: ${verfassen.bezugBetreff}`}
+              {verfassen?.modus === "antwortAlle" && `Antwort an alle: ${verfassen.bezugBetreff}`}
+              {verfassen?.modus === "weiterleiten" && `Weiterleiten: ${verfassen.bezugBetreff}`}
+            </DialogTitle>
+          </DialogHeader>
+          {verfassen && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">Absender: {postfach}</p>
+              {(verfassen.modus === "neu" || verfassen.modus === "weiterleiten") && (
+                <div className="space-y-1">
+                  <Label>An</Label>
+                  <Input
+                    autoFocus
+                    placeholder="name@firma.at — mehrere mit Beistrich"
+                    value={verfassen.an}
+                    onChange={(e) => setVerfassen(v => v && ({ ...v, an: e.target.value }))}
+                  />
+                </div>
+              )}
+              {verfassen.modus === "neu" && (
+                <>
+                  <div className="space-y-1">
+                    <Label>CC (optional)</Label>
+                    <Input value={verfassen.cc} onChange={(e) => setVerfassen(v => v && ({ ...v, cc: e.target.value }))} />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Betreff</Label>
+                    <Input value={verfassen.betreff} onChange={(e) => setVerfassen(v => v && ({ ...v, betreff: e.target.value }))} />
+                  </div>
+                </>
+              )}
+              <div className="space-y-1">
+                <Label>Nachricht</Label>
+                <Textarea
+                  rows={8}
+                  autoFocus={verfassen.modus === "antwort" || verfassen.modus === "antwortAlle"}
+                  value={verfassen.text}
+                  onChange={(e) => setVerfassen(v => v && ({ ...v, text: e.target.value }))}
+                />
+                {(verfassen.modus !== "neu") && (
+                  <p className="text-[11px] text-muted-foreground">
+                    Die ursprüngliche Mail wird automatisch als Zitat angehängt{verfassen.modus !== "weiterleiten" ? ", Empfänger und Betreff setzt Microsoft selbst" : ""}.
+                  </p>
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setVerfassen(null)}>Abbrechen</Button>
+                <Button onClick={absenden} disabled={sendet || !verfassen.text.trim()}>
+                  {sendet ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+                  Senden
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Der bewährte ER-Scan-Dialog, gefüttert mit den Mail-Anhängen. */}
       <PurchaseInvoiceUploadDialog

@@ -7,6 +7,12 @@
 //   { aktion: "detail",  postfach, id }                       → Betreff/Body/Anhänge-Metadaten (+ als gelesen markieren)
 //   { aktion: "anhang",  postfach, id, anhangId }             → ein Anhang mit Inhalt (base64)
 //   { aktion: "ordner",  postfach }                           → Ordnerliste mit Ungelesen-Zählern
+//   { aktion: "senden",  postfach, modus, an[], cc?, betreff?, text, bezugId? }
+//       modus "neu" | "antwort" | "antwortAlle" | "weiterleiten" — Antworten/
+//       Weiterleiten laufen über die Graph-Komfort-Endpunkte: Microsoft hängt
+//       Zitat + Betreff (AW:/WG:) selbst an und legt die Mail in "Gesendete
+//       Elemente" ab → Outlook bleibt automatisch synchron.
+//   { aktion: "loeschen", postfach, id }                       → in den Papierkorb
 //
 // Zugriff NUR für angemeldete Administratoren — die Funktion prüft das
 // Benutzer-Token und die Rolle selbst (verify_jwt ist projektweit aus).
@@ -84,7 +90,8 @@ Deno.serve(async (req) => {
   try {
     if (!(await pruefeAdmin(req))) return antwort({ error: "Nicht berechtigt" }, 401);
 
-    const { aktion, postfach, id, anhangId, suche, ordner, skip } = await req.json();
+    const body = await req.json();
+    const { aktion, postfach, id, anhangId, suche, ordner, skip } = body;
     if (!ERLAUBTE_POSTFAECHER.has(String(postfach || ""))) {
       return antwort({ error: "Unbekanntes Postfach" }, 400);
     }
@@ -167,6 +174,66 @@ Deno.serve(async (req) => {
           id: f.id, name: f.displayName, ungelesen: f.unreadItemCount, gesamt: f.totalItemCount,
         })),
       });
+    }
+
+    if (aktion === "senden") {
+      const { modus, an, cc, betreff, text } = body as {
+        modus: string; an?: string[]; cc?: string[]; betreff?: string; text: string;
+      };
+      const empf = (liste?: string[]) =>
+        (liste || []).map((a) => String(a).trim()).filter((a) => /.+@.+\..+/.test(a))
+          .map((a) => ({ emailAddress: { address: a } }));
+      // Klartext → einfaches HTML (Zeilenumbrüche erhalten, Rest escapen).
+      const html = String(text || "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/\n/g, "<br>");
+
+      let r: Response;
+      if (modus === "antwort" || modus === "antwortAlle") {
+        // Graph hängt Zitat, AW:-Betreff und Empfänger selbst an und legt die
+        // Mail in „Gesendete Elemente" ab — Outlook bleibt dadurch synchron.
+        r = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/${modus === "antwort" ? "reply" : "replyAll"}`, {
+          method: "POST",
+          body: JSON.stringify({ comment: html }),
+        });
+      } else if (modus === "weiterleiten") {
+        const toRecipients = empf(an);
+        if (toRecipients.length === 0) return antwort({ error: "Empfänger fehlt" }, 400);
+        r = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/forward`, {
+          method: "POST",
+          body: JSON.stringify({ comment: html, toRecipients }),
+        });
+      } else {
+        const toRecipients = empf(an);
+        if (toRecipients.length === 0) return antwort({ error: "Empfänger fehlt" }, 400);
+        r = await graph(`/users/${mb}/sendMail`, {
+          method: "POST",
+          body: JSON.stringify({
+            message: {
+              subject: String(betreff || "").trim() || "(kein Betreff)",
+              body: { contentType: "HTML", content: html },
+              toRecipients,
+              ccRecipients: empf(cc),
+            },
+            saveToSentItems: true,
+          }),
+        });
+      }
+      if (!r.ok && r.status !== 202) {
+        return antwort({ error: `Senden fehlgeschlagen (Graph ${r.status}): ${(await r.text()).slice(0, 200)}` }, 502);
+      }
+      return antwort({ ok: true });
+    }
+
+    if (aktion === "loeschen") {
+      // In den Papierkorb verschieben (kein endgültiges Löschen) — taucht in
+      // Outlook ganz normal unter „Gelöschte Elemente" auf.
+      const r = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/move`, {
+        method: "POST",
+        body: JSON.stringify({ destinationId: "deleteditems" }),
+      });
+      if (!r.ok) return antwort({ error: `Löschen fehlgeschlagen (Graph ${r.status})` }, 502);
+      return antwort({ ok: true });
     }
 
     return antwort({ error: "Unbekannte Aktion" }, 400);
