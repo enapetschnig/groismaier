@@ -74,6 +74,9 @@ export function ZulassungsscheinUpload({ open, onOpenChange, fahrzeuge, onChange
     const fz = fahrzeuge.find((f) => f.id === fahrzeugId);
     const marke = [e.erkannt?.marke, e.erkannt?.handelsbezeichnung].filter(Boolean).join(" ");
     const patch: Record<string, unknown> = { zulassungsschein_path: e.path };
+    // Fehlt dem Fahrzeug das Kennzeichen (häufig bei manueller Zuordnung),
+    // wird es vom Schein übernommen — ab dann greift die Automatik von selbst.
+    if (!fz?.kennzeichen && e.erkannt?.kennzeichen) patch.kennzeichen = e.erkannt.kennzeichen;
     if (!fz?.marke_modell && marke) patch.marke_modell = marke;
     if (!fz?.fahrgestellnummer && e.erkannt?.fahrgestellnummer) patch.fahrgestellnummer = e.erkannt.fahrgestellnummer;
     if (!fz?.erstzulassung && e.erkannt?.erstzulassung) patch.erstzulassung = e.erkannt.erstzulassung;
