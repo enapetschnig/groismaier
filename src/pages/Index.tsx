@@ -11,6 +11,7 @@ import {
   Wallet,
   type LucideIcon,
   KeyRound,
+  Mail,
 } from "lucide-react";
 import { useOnboarding } from "@/contexts/OnboardingContext";
 import {
@@ -627,6 +628,9 @@ export default function Index() {
               )}
               {isAdmin && (
                 <KBButton className="w-full" icon={HardHat} label="Mitarbeiter" onClick={() => navigate("/employees")} />
+              )}
+              {isAdmin && (
+                <KBButton className="w-full" icon={Mail} label="E-Mail" onClick={() => navigate("/email")} />
               )}
               {isAdmin && (
                 <KBButton className="w-full" icon={KeyRound} label="Passwörter" onClick={() => navigate("/passwoerter")} />

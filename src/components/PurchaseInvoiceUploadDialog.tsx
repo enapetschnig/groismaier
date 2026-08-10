@@ -18,6 +18,10 @@ interface Props {
   onUploaded: () => void;
   prefillProjectId?: string | null;
   initialFile?: File | null;
+  /** Mehrere Startdateien (z. B. Anhänge aus dem E-Mail-Postfach). */
+  initialFiles?: File[] | null;
+  /** Vorbelegte Notiz (z. B. Absender/Betreff der Quell-Mail). */
+  prefillNotiz?: string | null;
 }
 
 const FALLBACK_KATEGORIEN = [
@@ -71,7 +75,7 @@ const dataUrlBytes = (d: string) => Math.ceil(((d.length - (d.indexOf(",") + 1))
 // weil das JSON-Envelope noch dazukommt.
 const MAX_SCAN_PAYLOAD = 4_200_000;
 
-export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, prefillProjectId, initialFile }: Props) {
+export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, prefillProjectId, initialFile, initialFiles, prefillNotiz }: Props) {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -149,7 +153,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
         project_id: prefillProjectId || "",
         zahlungsart: "ueberweisung",
         status: "offen",
-        notizen: "",
+        notizen: prefillNotiz || "",
       });
       // Load projects — vorausgewähltes Projekt (?project=) immer aufnehmen,
       // auch wenn es abgeschlossen ist, sonst zeigt das Select fälschlich
@@ -177,7 +181,10 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           }
         });
       // Wenn per Kamera-Button geöffnet → Datei direkt übernehmen + scannen
-      if (initialFile) {
+      if (initialFiles && initialFiles.length > 0) {
+        setFiles(initialFiles);
+        void scanFileWithAi(initialFiles[0]);
+      } else if (initialFile) {
         setFiles([initialFile]);
         void scanFileWithAi(initialFile);
       }

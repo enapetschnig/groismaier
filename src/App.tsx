@@ -24,6 +24,7 @@ import Admin from "./pages/Admin";
 import HoursReport from "./pages/HoursReport";
 import Employees from "./pages/Employees";
 import PasswordManager from "./pages/PasswordManager";
+import Email from "./pages/Email";
 import Notepad from "./pages/Notepad";
 import MaterialList from "./pages/MaterialList";
 import Disturbances from "./pages/Disturbances";
@@ -106,6 +107,7 @@ function AppContent() {
           <Route path="/hours-report" element={<ProtectedRoute feature="stundenauswertung"><HoursReport /></ProtectedRoute>} />
           <Route path="/employees" element={<ProtectedRoute><Employees /></ProtectedRoute>} />
           <Route path="/passwoerter" element={<ProtectedRoute feature="admin"><PasswordManager /></ProtectedRoute>} />
+          <Route path="/email" element={<ProtectedRoute feature="admin"><Email /></ProtectedRoute>} />
           <Route path="/notepad" element={<ProtectedRoute><Notepad /></ProtectedRoute>} />
           <Route path="/disturbances" element={<ProtectedRoute feature="regieberichte"><Disturbances /></ProtectedRoute>} />
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
