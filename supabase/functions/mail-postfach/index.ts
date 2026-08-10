@@ -431,8 +431,16 @@ Deno.serve(async (req) => {
       // Markante Namens-Teile: letztes Wort (Nachname) und erstes Wort (Firma),
       // ohne Füllwörter — „Fam. Birgit und Herbert Kiennast" → „Kiennast".
       const stop = new Set(["fam", "fam.", "familie", "und", "u.", "herr", "frau", "dr.", "ing.", "gmbh", "kg", "og", "e.u.", "gesmbh", "die", "der"]);
+      // Gängige Vornamen sind als Suchbegriff wertlos („Andrea" trifft jede
+      // Andrea) — nur markante Namensteile (Nachname, Firmenwort) verwenden.
+      const vornamen = new Set(["andrea","andreas","anna","alexander","barbara","bernhard","birgit","brigitte","christian","christine","christoph","claudia","daniel","david","elisabeth","erich","ernst","eva","florian","franz","friedrich","gabriele","georg","gerald","gerhard","gernot","gottfried","gudrun","harald","heinz","helga","herbert","hermann","horst","hubert","ingrid","johann","johannes","josef","juergen","jürgen","karin","karl","katrin","klaus","kurt","leopold","lukas","manfred","manuela","marcel","maria","marion","markus","marlies","martin","martina","matthias","michael","michaela","monika","nicole","norbert","patrick","peter","petra","philipp","rainer","renate","richard","robert","roland","rudolf","sabine","sandra","siegfried","silvia","simon","stefan","stefanie","susanne","thomas","tobias","ulrike","ursula","walter","werner","wolfgang"]);
       const woerter = String(kundenName || "").split(/\s+/).map((w) => w.trim()).filter((w) => w.length > 3 && !stop.has(w.toLowerCase()));
-      const namensSuchen = [...new Set([woerter[woerter.length - 1], woerter[0]].filter(Boolean))].slice(0, 2);
+      let namensSuchen = [...new Set([woerter[woerter.length - 1], woerter[0]].filter(Boolean))]
+        .filter((w) => !vornamen.has(w.toLowerCase()))
+        .slice(0, 2);
+      // Besteht der Name NUR aus Vornamen („Helga Stefan"), ist das letzte
+      // Wort der Nachname — dann lieber damit suchen als gar nicht.
+      if (namensSuchen.length === 0 && woerter.length > 0) namensSuchen = [woerter[woerter.length - 1]];
       if (adressen.size === 0 && namensSuchen.length === 0) return antwort({ error: "Kunden-E-Mail fehlt" }, 400);
 
       const suchbegriffe = [
