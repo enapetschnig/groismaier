@@ -35,7 +35,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
-import { Plus, Pencil, Trash2, Printer, Filter, ChevronDown, ChevronUp, Check, Truck } from "lucide-react";
+import { Plus, Pencil, Trash2, Printer, Filter, ChevronDown, ChevronUp, Check, Truck, FileScan, FileText } from "lucide-react";
+import { ZulassungsscheinUpload } from "@/components/ZulassungsscheinUpload";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import {
@@ -69,6 +70,11 @@ interface Vehicle {
   /** Vorlauf der Erinnerung auf der Startseite, in Tagen. */
   pickerl_erinnerung_tage: number | null;
   pickerl_letzte_pruefung: string | null;
+  /** Zulassungsschein (Storage-Pfad) + KI-gelesene Stammdaten. */
+  zulassungsschein_path?: string | null;
+  marke_modell?: string | null;
+  fahrgestellnummer?: string | null;
+  erstzulassung?: string | null;
   /** Kostenstelle für Stundenbuchungen (admin_config_options.wert). */
   kostenstelle: string | null;
 }
@@ -192,10 +198,14 @@ const EMPTY_FORM = {
   pickerl_faellig_am: "",
   pickerl_erinnerung_tage: "30",
   pickerl_letzte_pruefung: "",
+  marke_modell: "",
+  fahrgestellnummer: "",
+  erstzulassung: "",
 };
 
 export default function Fahrzeuge() {
   const { toast } = useToast();
+  const [scheinDialogOffen, setScheinDialogOffen] = useState(false);
   const navigate = useNavigate();
   const zurueck = useZurueck("/");
 
@@ -246,7 +256,7 @@ export default function Fahrzeuge() {
     setLoading(true);
     const [vehRes, empRes, usageRes, costRes, erRes] = await Promise.all([
       (supabase.from("vehicles" as never) as any)
-        .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung")
+        .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung, zulassungsschein_path, marke_modell, fahrgestellnummer, erstzulassung")
         .order("art")
         .order("aktiv", { ascending: false })
         .order("bezeichnung"),
@@ -522,6 +532,9 @@ export default function Fahrzeuge() {
       typ: v.typ || typOptionsFuer(v.art || "fahrzeug")[0].value,
       aktiv: !!v.aktiv,
       notizen: v.notizen || "",
+      marke_modell: v.marke_modell || "",
+      fahrgestellnummer: v.fahrgestellnummer || "",
+      erstzulassung: v.erstzulassung || "",
     });
     setTab("kosten");
     setDialogOpen(true);
@@ -555,6 +568,9 @@ export default function Fahrzeuge() {
       pickerl_faellig_am: istMaschine ? null : (form.pickerl_faellig_am || null),
       pickerl_erinnerung_tage: Math.max(0, Number(form.pickerl_erinnerung_tage) || 30),
       pickerl_letzte_pruefung: istMaschine ? null : (form.pickerl_letzte_pruefung || null),
+      marke_modell: istMaschine ? null : (form.marke_modell.trim() || null),
+      fahrgestellnummer: istMaschine ? null : (form.fahrgestellnummer.trim() || null),
+      erstzulassung: istMaschine ? null : (form.erstzulassung || null),
     };
     try {
       if (editId) {
@@ -711,6 +727,62 @@ export default function Fahrzeuge() {
                 placeholder={form.art === "maschine" ? "z.B. SN-884321" : "ZT-1234F"}
               />
             </div>
+            {form.art !== "maschine" && (
+              <>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-marke">Marke / Modell</label>
+                  <input
+                    id="fz-marke"
+                    className="kb-input w-full"
+                    value={form.marke_modell}
+                    onChange={(e) => setForm(f => ({ ...f, marke_modell: e.target.value }))}
+                    placeholder="z.B. VW Crafter 35"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-fin" title="Feld E am Zulassungsschein">Fahrgestellnummer (FIN)</label>
+                  <input
+                    id="fz-fin"
+                    className="kb-input w-full font-mono"
+                    value={form.fahrgestellnummer}
+                    onChange={(e) => setForm(f => ({ ...f, fahrgestellnummer: e.target.value.toUpperCase() }))}
+                    placeholder="17-stellig"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="fz-ez">Erstzulassung</label>
+                  <input
+                    id="fz-ez"
+                    type="date"
+                    className="kb-input w-full"
+                    value={form.erstzulassung}
+                    onChange={(e) => setForm(f => ({ ...f, erstzulassung: e.target.value }))}
+                  />
+                </div>
+                {editId && vehicles.find(v => v.id === editId)?.zulassungsschein_path && (
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      className="kb-btn flex items-center gap-1.5 text-sm"
+                      onClick={async () => {
+                        const pfad = vehicles.find(v => v.id === editId)?.zulassungsschein_path;
+                        if (!pfad) return;
+                        const { data, error } = await supabase.storage
+                          .from("vehicle-documents")
+                          .createSignedUrl(pfad, 3600);
+                        if (error || !data?.signedUrl) {
+                          toast({ title: "Öffnen fehlgeschlagen", description: error?.message, variant: "destructive" });
+                          return;
+                        }
+                        window.open(data.signedUrl, "_blank");
+                      }}
+                    >
+                      <FileText className="h-4 w-4 text-kb-blue" /> Zulassungsschein öffnen
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
             <div>
               <label className="block text-xs font-semibold mb-1">Typ</label>
               <Select value={form.typ} onValueChange={(v) => setForm(f => ({ ...f, typ: v }))}>
@@ -1068,8 +1140,21 @@ export default function Fahrzeuge() {
           disabled={!selectedRow}
           title={selectedRow ? `${selectedRow.bezeichnung} löschen` : "Zuerst eine Zeile markieren"}
         />
+        <KBToolbarButton
+          icon={FileScan}
+          label="Zulassungsschein (KI)"
+          title="Zulassungsscheine hochladen — die KI ordnet sie automatisch dem Fahrzeug zu"
+          onClick={() => setScheinDialogOffen(true)}
+        />
         <KBToolbarButton icon={Printer} label="Liste drucken" onClick={() => window.print()} />
       </KBToolbar>
+
+      <ZulassungsscheinUpload
+        open={scheinDialogOffen}
+        onOpenChange={setScheinDialogOffen}
+        fahrzeuge={vehicles.filter(v => v.art !== "maschine")}
+        onChanged={fetchAll}
+      />
 
       <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
         <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">

@@ -60,7 +60,7 @@ const LOCATION_OPTIONS = [
 const KOSTENSTELLEN_FALLBACK: KostenstelleOpt[] = [
   { wert: "baustelle", label: "Baustelle" },
   { wert: "werkstatt", label: "Werkstatt" },
-  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerwerkstatt", label: "Lager/Werkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
 ];
 
@@ -263,8 +263,8 @@ export function AdminTimeEntryDialog({
     if (form.wetterschicht_stunden.trim() && (wetterNum === null || wetterNum < 0 || wetterNum > stundenNum)) {
       toast({
         variant: "destructive",
-        title: "Wetterschicht unplausibel",
-        description: `Die Wetterschicht-Stunden müssen zwischen 0 und den erfassten ${formatForInput(stundenNum)} Stunden liegen.`,
+        title: "Schlechtwetter unplausibel",
+        description: `Die Schlechtwetter-Stunden müssen zwischen 0 und den erfassten ${formatForInput(stundenNum)} Stunden liegen.`,
       });
       return;
     }
@@ -552,7 +552,7 @@ export function AdminTimeEntryDialog({
 
             {form.location_type === "baustelle" && (
               <div>
-                <Label>Wetterschicht-Stunden (optional)</Label>
+                <Label>Schlechtwetter-Stunden (optional)</Label>
                 <Input
                   type="text"
                   inputMode="decimal"

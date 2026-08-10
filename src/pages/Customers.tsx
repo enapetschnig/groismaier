@@ -416,6 +416,96 @@ export default function Customers() {
   );
 
   // ── Kunden-Detailansicht (Umsatz / Belege / Kontakt-Historie) ──
+  /** Kundenstammblatt drucken (Kundenwunsch): sauberes A4-Blatt mit allen
+   *  Stammdaten; window.print liefert Papier ODER PDF (Systemdialog). */
+  const stammblattDrucken = (c: Customer, umsatz: number, anzahlRechnungen: number, anzahlAngebote: number) => {
+    const z = (v: string | number | null | undefined) => (v === null || v === undefined || v === "" ? "—" : String(v));
+    const datumAt = (iso: string) => { const [j, m, t] = iso.split("-"); return `${t}.${m}.${j}`; };
+    const zeile = (label: string, wert: string) =>
+      `<tr><td class="l">${label}</td><td>${wert.replace(/</g, "&lt;")}</td></tr>`;
+    const person = [c.anrede, c.titel, c.vorname, c.nachname].filter(Boolean).join(" ");
+    const adresse = [c.adresse, [c.plz, c.ort].filter(Boolean).join(" "), c.land].filter(Boolean).join(", ");
+    const rechnungsAdresse = [c.rechnungs_adresse, [c.rechnungs_plz, c.rechnungs_ort].filter(Boolean).join(" "), c.rechnungs_land].filter(Boolean).join(", ");
+    const zahlung = [
+      c.nettofrist ? `${c.nettofrist} Tage netto` : "",
+      c.skonto_prozent ? `${c.skonto_prozent} % Skonto${c.skonto_tage ? ` binnen ${c.skonto_tage} Tagen` : ""}` : "",
+      c.zahlungsbedingungen || "",
+    ].filter(Boolean).join(" · ");
+    const wichtig = (Array.isArray(c.wichtige_daten) ? c.wichtige_daten : [])
+      .map((w: any) => `${datumAt(w.datum)} — ${w.label}${w.notiz ? ` (${w.notiz})` : ""}`)
+      .join("<br>");
+
+    const html = `<!doctype html><html lang="de"><head><meta charset="utf-8">
+<title>Kundenstammblatt ${z(c.kundennummer)} — ${c.name.replace(/</g, "&lt;")}</title>
+<style>
+  @page { size: A4; margin: 16mm; }
+  body { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; color: #1a2433; font-size: 13px; margin: 0; }
+  .kopf { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #1e5a96; padding-bottom: 10px; margin-bottom: 14px; }
+  .kopf img { height: 44px; }
+  h1 { font-size: 19px; margin: 0; color: #1e5a96; }
+  .sub { color: #5b6b7d; font-size: 12px; margin-top: 2px; }
+  h2 { font-size: 13px; color: #1e5a96; border-bottom: 1px solid #c9d6e4; padding-bottom: 2px; margin: 14px 0 6px; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 3px 6px; vertical-align: top; border-bottom: 1px solid #eef2f7; }
+  td.l { width: 180px; color: #5b6b7d; }
+  .kennzahlen { display: flex; gap: 24px; margin-top: 4px; }
+  .kennzahlen div { text-align: left; }
+  .kennzahlen b { font-size: 16px; color: #1e5a96; display: block; }
+  .notiz { white-space: pre-wrap; background: #f5f8fb; border: 1px solid #dbe5f0; border-radius: 6px; padding: 8px 10px; }
+  .fuss { margin-top: 18px; font-size: 10.5px; color: #8a97a5; border-top: 1px solid #dde5ee; padding-top: 6px; }
+</style></head><body>
+<div class="kopf">
+  <div>
+    <h1>Kundenstammblatt</h1>
+    <div class="sub">${z(c.kundennummer)} · ${c.kundentyp === "geschaeftskunde" ? "Geschäftskunde" : c.kundentyp === "privatkunde" ? "Privatkunde" : "Kunde"}</div>
+  </div>
+  <img src="${window.location.origin}/groismaier-logo.png" alt="Holzbau Groismaier">
+</div>
+
+<h2>Kunde</h2>
+<table>
+${zeile("Name", z(c.name))}
+${c.firmenname ? zeile("Firma", z(c.firmenname)) : ""}
+${person ? zeile("Person", person) : ""}
+${c.branche ? zeile("Branche", z(c.branche)) : ""}
+${c.ansprechpartner ? zeile("Ansprechpartner", z(c.ansprechpartner)) : ""}
+${zeile("UID-Nummer", z(c.uid_nummer))}
+${c.herkunft ? zeile("Herkunft", z(c.herkunft)) : ""}
+</table>
+
+<h2>Adresse &amp; Kontakt</h2>
+<table>
+${zeile("Adresse", z(adresse))}
+${rechnungsAdresse && rechnungsAdresse !== adresse ? zeile("Rechnungsadresse", rechnungsAdresse) : ""}
+${zeile("Telefon", z(c.telefon))}
+${c.telefon2 ? zeile("Telefon 2", z(c.telefon2)) : ""}
+${zeile("E-Mail", z(c.email))}
+${c.website ? zeile("Website", z(c.website)) : ""}
+</table>
+
+${zahlung ? `<h2>Zahlungskonditionen</h2><table>${zeile("Konditionen", zahlung)}</table>` : ""}
+
+${wichtig ? `<h2>Wichtige Termine</h2><p>${wichtig}</p>` : ""}
+
+<h2>Kennzahlen</h2>
+<div class="kennzahlen">
+  <div><b>€ ${umsatz.toFixed(2)}</b>Umsatz (bezahlt)</div>
+  <div><b>${anzahlRechnungen}</b>Rechnungen</div>
+  <div><b>${anzahlAngebote}</b>Angebote</div>
+</div>
+
+${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt;")}</div>` : ""}
+
+<div class="fuss">Holzbau Groismaier · Stand ${new Date().toLocaleDateString("de-AT")} · vertraulich</div>
+<script>window.onload = () => { window.print(); };</` + `script>
+</body></html>`;
+
+    const w = window.open("", "_blank", "width=900,height=1100");
+    if (!w) { toast({ title: "Pop-up blockiert", description: "Bitte Pop-ups für diese Seite erlauben.", variant: "destructive" }); return; }
+    w.document.write(html);
+    w.document.close();
+  };
+
   if (selectedCustomer) {
     // Alle zahlbaren Rechnungstypen (auch Anzahlungs-/Schlussrechnung) zählen zum Umsatz.
     // Gutschriften (typ=gutschrift, status=verrechnet) werden abgezogen,
@@ -439,6 +529,16 @@ export default function Customers() {
           title={selectedCustomer.name}
         >
           <KBToolbarButton icon={Pencil} label="Bearbeiten" onClick={() => openEdit(selectedCustomer)} />
+          <KBToolbarButton
+            icon={Printer}
+            label="Stammblatt drucken"
+            onClick={() => stammblattDrucken(
+              selectedCustomer,
+              umsatz,
+              customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ)).length,
+              customerInvoices.filter(i => _angebotLikeTypes.has(i.typ)).length,
+            )}
+          />
         </KBToolbar>
 
         <div className="container mx-auto px-4 py-6 max-w-6xl">

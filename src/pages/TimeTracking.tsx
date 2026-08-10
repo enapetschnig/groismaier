@@ -55,7 +55,7 @@ interface KostenstelleOption {
 const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
   { wert: "baustelle", label: "Baustelle" },
   { wert: "werkstatt", label: "Werkstatt" },
-  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerwerkstatt", label: "Lager/Werkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
 ];
 
@@ -1357,7 +1357,7 @@ const TimeTracking = () => {
                               <span aria-hidden>☔</span>
                               {/* Am Handy nur „Wetterschicht" — der Zusatz wurde
                                   bei 390px ohnehin abgeschnitten. */}
-                              <span className="truncate">Wetterschicht<span className="hidden sm:inline"> (Regenstunden)</span></span>
+                              <span className="truncate">Schlechtwetter<span className="hidden sm:inline"> (Regenstunden)</span></span>
                             </Label>
                             <Input
                               id={`wetter-${block.id}`}

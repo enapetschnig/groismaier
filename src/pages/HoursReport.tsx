@@ -95,7 +95,7 @@ interface VehicleStat {
 const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
   { wert: "baustelle", label: "Baustelle" },
   { wert: "werkstatt", label: "Werkstatt" },
-  { wert: "lagerwerkstatt", label: "Lagerwerkstatt" },
+  { wert: "lagerwerkstatt", label: "Lager/Werkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
 ];
 
@@ -1034,7 +1034,7 @@ export default function HoursReport() {
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground flex items-center gap-1">
-                          <span aria-hidden>☔</span> Wetterschicht
+                          <span aria-hidden>☔</span> Schlechtwetter
                         </p>
                         <p className="text-2xl font-bold">
                           {timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)} h
@@ -1053,7 +1053,7 @@ export default function HoursReport() {
                           <TableHead>Pause</TableHead>
                           <TableHead className="text-right">Stunden</TableHead>
                           <TableHead className="text-right">Überstunden</TableHead>
-                          <TableHead className="text-right" title="Wetterschicht (Regenstunden)">☔ h</TableHead>
+                          <TableHead className="text-right" title="Schlechtwetter (Regenstunden)">☔ h</TableHead>
                           <TableHead>Ort</TableHead>
                           <TableHead>Projekt</TableHead>
                           <TableHead>Tätigkeit</TableHead>
