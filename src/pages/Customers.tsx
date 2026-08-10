@@ -656,8 +656,14 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
             <ContactHistoryTimeline customerId={selectedCustomer.id} />
           )}
 
-          {/* Mail-Verkehr mit diesem Kunden (christian.groismaier@ + office@) */}
-          {selectedCustomer.email && <KundenMailverkehr kundenEmail={selectedCustomer.email} />}
+          {/* Mail-Verkehr mit diesem Kunden — lernende Zuordnung: bekannte
+              Adressen (Stammsatz + KI-gelernt) plus Namens-Suche, darum auch
+              ohne hinterlegte Mailadresse sinnvoll. */}
+          <KundenMailverkehr
+            kundeId={selectedCustomer.id}
+            kundenEmail={selectedCustomer.email}
+            kundenName={selectedCustomer.name}
+          />
         </div>
 
         {editorDialog}

@@ -68,6 +68,15 @@ async function graph(pfad: string, init?: RequestInit): Promise<Response> {
 async function pruefeAdmin(req: Request): Promise<string | null> {
   const auth = req.headers.get("Authorization") || "";
   if (!auth.startsWith("Bearer ")) return null;
+  // Interner Wartungszugang (KI-Lernlauf per Service-Schlüssel): Beweis statt
+  // String-Vergleich — nur ein Service-Token darf den GoTrue-Admin-Endpunkt.
+  if (auth.slice(7) === SERVICE_ROLE) return "service";
+  try {
+    const probe = await fetch(`${SUPABASE_URL}/auth/v1/admin/users?per_page=1`, {
+      headers: { Authorization: auth, apikey: auth.slice(7) },
+    });
+    if (probe.ok) return "service";
+  } catch { /* keine Service-Berechtigung */ }
   const u = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
     headers: { Authorization: auth, apikey: ANON_KEY },
   });
@@ -80,6 +89,114 @@ async function pruefeAdmin(req: Request): Promise<string | null> {
   );
   const rollen = r.ok ? await r.json() : [];
   return Array.isArray(rollen) && rollen.length > 0 ? user.id : null;
+}
+
+const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
+
+/**
+ * KI-Lernlauf: unbekannte Absender-/Empfängeradressen aus den Postfächern mit
+ * der Kundenliste abgleichen (Anzeigename, Ort, Betreffs) und sichere Treffer
+ * in kunden_mail_adressen ablegen. Läuft höchstens 1× pro Tag, angestoßen im
+ * Hintergrund über die ER-Vorschläge.
+ */
+async function adressLernlauf(): Promise<{ geprueft: number; gelernt: number }> {
+  const sr = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
+
+  // Kundenliste + bereits bekannte Adressen laden.
+  const kundenRes = await fetch(`${SUPABASE_URL}/rest/v1/customers?select=id,kundennummer,name,ort,email&limit=1000`, { headers: sr });
+  const kunden = kundenRes.ok ? await kundenRes.json() : [];
+  const bekanntRes = await fetch(`${SUPABASE_URL}/rest/v1/kunden_mail_adressen?select=adresse&limit=5000`, { headers: sr });
+  const bekannt = new Set<string>(
+    (bekanntRes.ok ? await bekanntRes.json() : []).map((x: { adresse: string }) => String(x.adresse).toLowerCase()),
+  );
+  for (const k of kunden) if (k.email) bekannt.add(String(k.email).toLowerCase());
+
+  // Korrespondenz-Adressen der letzten Mails einsammeln (beide Postfächer).
+  const kandidaten = new Map<string, { name: string; betreffs: string[] }>();
+  for (const mbAdr of ["christian.groismaier@cg-holzbau.at", "office@cg-holzbau.at"]) {
+    for (const seite of [0, 100]) {
+      const r = await graph(
+        `/users/${encodeURIComponent(mbAdr)}/messages?$top=100&$skip=${seite}&$select=subject,from,toRecipients&$orderby=receivedDateTime desc`,
+      );
+      if (!r.ok) continue;
+      for (const m of ((await r.json()).value || []) as Record<string, any>[]) {
+        const beteiligte = [
+          m.from?.emailAddress,
+          ...(m.toRecipients || []).map((t: Record<string, any>) => t.emailAddress),
+        ].filter(Boolean);
+        for (const p of beteiligte) {
+          const adr = String(p.address || "").toLowerCase();
+          if (!adr || adr.endsWith("@cg-holzbau.at") || bekannt.has(adr)) continue;
+          if (/noreply|no-reply|newsletter|notification|mailer|automat/i.test(adr)) continue;
+          const e = kandidaten.get(adr) || { name: String(p.name || ""), betreffs: [] };
+          if (e.betreffs.length < 3 && m.subject) e.betreffs.push(String(m.subject).slice(0, 60));
+          kandidaten.set(adr, e);
+        }
+      }
+    }
+  }
+  const liste = [...kandidaten.entries()].slice(0, 80);
+  if (liste.length === 0 || !OPENAI_API_KEY) return { geprueft: 0, gelernt: 0 };
+
+  const kundenText = kunden
+    .map((k: Record<string, unknown>) => `${k.kundennummer || "?"} | ${k.name} | ${k.ort || ""}`)
+    .join("\n");
+  const adressText = liste
+    .map(([adr, e]) => `${adr} | ${e.name} | ${e.betreffs.join("; ")}`)
+    .join("\n");
+
+  const aiRes = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: `Du ordnest E-Mail-Adressen den Kunden eines Holzbau-Betriebs zu.
+Gegeben: Kundenliste (Nummer | Name | Ort) und Adressliste (Adresse | Anzeigename | Beispiel-Betreffs).
+Ordne NUR zu, wenn der ANZEIGENAME oder die ADRESSE selbst eindeutig zum Kundennamen passt (Nachname, Firmenname).
+Betreffzeilen sind höchstens Bestätigung, NIE alleinige Grundlage — ein Planer/Lieferant, der über das Projekt eines Kunden schreibt, ist NICHT der Kunde.
+Lieferanten, Planer, Ämter, Banken, Werbung: NICHT zuordnen.
+Antworte als JSON: {"zuordnungen":[{"adresse":"...","kunde_nummer":"...","sicherheit":0-100}]} — nur Treffer mit Sicherheit >= 80 aufnehmen.`,
+        },
+        { role: "user", content: `KUNDEN:\n${kundenText}\n\nADRESSEN:\n${adressText}` },
+      ],
+    }),
+  });
+  if (!aiRes.ok) return { geprueft: liste.length, gelernt: 0 };
+  let zuordnungen: { adresse: string; kunde_nummer: string; sicherheit: number }[] = [];
+  try {
+    zuordnungen = JSON.parse((await aiRes.json()).choices?.[0]?.message?.content || "{}").zuordnungen || [];
+  } catch { /* Ausgabe unbrauchbar → nichts lernen */ }
+
+  const nummerZuId = new Map(kunden.map((k: Record<string, unknown>) => [String(k.kundennummer), k.id]));
+  let gelernt = 0;
+  for (const z of zuordnungen) {
+    const kundeId = nummerZuId.get(String(z.kunde_nummer));
+    const adr = String(z.adresse || "").toLowerCase();
+    if (!kundeId || !adr || (z.sicherheit ?? 0) < 80 || bekannt.has(adr)) continue;
+    const r = await fetch(`${SUPABASE_URL}/rest/v1/kunden_mail_adressen`, {
+      method: "POST",
+      headers: { ...sr, "Content-Type": "application/json", Prefer: "resolution=ignore-duplicates" },
+      body: JSON.stringify({
+        customer_id: kundeId,
+        adresse: adr,
+        anzeigename: kandidaten.get(adr)?.name || null,
+        quelle: "ki",
+      }),
+    });
+    if (r.ok) gelernt++;
+  }
+  // Zeitstempel für die 1×-täglich-Drossel.
+  await fetch(`${SUPABASE_URL}/rest/v1/app_settings`, {
+    method: "POST",
+    headers: { ...sr, "Content-Type": "application/json", Prefer: "resolution=merge-duplicates" },
+    body: JSON.stringify({ key: "mail_adress_lernlauf_am", value: new Date().toISOString() }),
+  });
+  return { geprueft: liste.length, gelernt };
 }
 
 Deno.serve(async (req) => {
@@ -225,7 +342,24 @@ Deno.serve(async (req) => {
       return antwort({ ok: true });
     }
 
+    if (aktion === "adressen-lernen") {
+      // Manuell (oder per Service-Schlüssel) angestoßener Lernlauf.
+      return antwort(await adressLernlauf());
+    }
+
     if (aktion === "vorschlaege") {
+      // Nebenbei: Adress-Lernlauf höchstens 1× pro Tag im Hintergrund.
+      try {
+        const sr = { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` };
+        const r = await fetch(`${SUPABASE_URL}/rest/v1/app_settings?key=eq.mail_adress_lernlauf_am&select=value`, { headers: sr });
+        const rows = r.ok ? await r.json() : [];
+        const zuletzt = rows[0]?.value ? Date.parse(rows[0].value) : 0;
+        if (Date.now() - zuletzt > 24 * 3600 * 1000) {
+          // @ts-ignore — EdgeRuntime existiert in Supabase Edge Functions.
+          (globalThis as any).EdgeRuntime?.waitUntil?.(adressLernlauf().catch(() => {}));
+        }
+      } catch { /* Drossel-Check darf nie die Vorschläge blockieren */ }
+
       // Beleg-Vorschläge für die ER-Maske: neueste Mails MIT Anhängen aus
       // buchhaltung@ und office@, abzüglich bereits übernommener/ausgeblendeter.
       const quellen = ["buchhaltung@cg-holzbau.at", "office@cg-holzbau.at"];
@@ -279,31 +413,57 @@ Deno.serve(async (req) => {
     }
 
     if (aktion === "kundenmails") {
-      // Mail-Verkehr mit einem Kunden: sucht in christian.groismaier@ und
-      // office@ nach Mails, an denen die Kundenadresse beteiligt war
-      // (Absender ODER Empfänger — KQL "participants").
-      const { kundenEmail } = body as { kundenEmail?: string };
-      const adr = String(kundenEmail || "").trim().toLowerCase();
-      if (!adr || !/.+@.+\..+/.test(adr)) return antwort({ error: "Kunden-E-Mail fehlt" }, 400);
+      // Mail-Verkehr mit einem Kunden — lernende Zuordnung: gesucht wird über
+      // ALLE bekannten Adressen des Kunden (Stammsatz + KI-gelernt) UND über
+      // den Namen (KQL "participants" matcht auch Anzeigenamen). So finden
+      // sich Mails, obwohl der Kunde von einer fremden Adresse schreibt.
+      const { kundenEmail, kundeId, kundenName } = body as { kundenEmail?: string; kundeId?: string; kundenName?: string };
+      const adressen = new Set<string>();
+      const stammAdr = String(kundenEmail || "").trim().toLowerCase();
+      if (/.+@.+\..+/.test(stammAdr)) adressen.add(stammAdr);
+      if (kundeId) {
+        const r = await fetch(
+          `${SUPABASE_URL}/rest/v1/kunden_mail_adressen?select=adresse&customer_id=eq.${kundeId}`,
+          { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
+        );
+        if (r.ok) for (const x of await r.json()) adressen.add(String(x.adresse).toLowerCase());
+      }
+      // Markante Namens-Teile: letztes Wort (Nachname) und erstes Wort (Firma),
+      // ohne Füllwörter — „Fam. Birgit und Herbert Kiennast" → „Kiennast".
+      const stop = new Set(["fam", "fam.", "familie", "und", "u.", "herr", "frau", "dr.", "ing.", "gmbh", "kg", "og", "e.u.", "gesmbh", "die", "der"]);
+      const woerter = String(kundenName || "").split(/\s+/).map((w) => w.trim()).filter((w) => w.length > 3 && !stop.has(w.toLowerCase()));
+      const namensSuchen = [...new Set([woerter[woerter.length - 1], woerter[0]].filter(Boolean))].slice(0, 2);
+      if (adressen.size === 0 && namensSuchen.length === 0) return antwort({ error: "Kunden-E-Mail fehlt" }, 400);
+
+      const suchbegriffe = [
+        ...[...adressen].slice(0, 4).map((a) => `participants:${a}`),
+        ...namensSuchen.map((n) => `participants:"${n.replace(/"/g, "")}"`),
+      ];
       const quellen = ["christian.groismaier@cg-holzbau.at", "office@cg-holzbau.at"];
       const alle: Record<string, unknown>[] = [];
+      const idsGesehen = new Set<string>();
       for (const quelle of quellen) {
-        const q = encodeURIComponent(`"participants:${adr}"`);
-        const r = await graph(
-          `/users/${encodeURIComponent(quelle)}/messages?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments&$top=15`,
-        );
-        if (!r.ok) continue;
-        for (const m of ((await r.json()).value || []) as Record<string, unknown>[]) {
-          const vonAdr = String((m.from as any)?.emailAddress?.address || "").toLowerCase();
-          alle.push({
-            id: m.id,
-            postfach: quelle,
-            betreff: m.subject || "(kein Betreff)",
-            von: (m.from as any)?.emailAddress?.name || vonAdr || "?",
-            vonKunde: vonAdr === adr,
-            empfangen: m.receivedDateTime,
-            hatAnhaenge: !!m.hasAttachments,
-          });
+        for (const begriff of suchbegriffe) {
+          const q = encodeURIComponent(`"${begriff}"`);
+          const r = await graph(
+            `/users/${encodeURIComponent(quelle)}/messages?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments&$top=15`,
+          );
+          if (!r.ok) continue;
+          for (const m of ((await r.json()).value || []) as Record<string, unknown>[]) {
+            const schluessel = `${quelle}|${m.id}`;
+            if (idsGesehen.has(schluessel)) continue;
+            idsGesehen.add(schluessel);
+            const vonAdr = String((m.from as any)?.emailAddress?.address || "").toLowerCase();
+            alle.push({
+              id: m.id,
+              postfach: quelle,
+              betreff: m.subject || "(kein Betreff)",
+              von: (m.from as any)?.emailAddress?.name || vonAdr || "?",
+              vonKunde: !vonAdr.endsWith("@cg-holzbau.at"),
+              empfangen: m.receivedDateTime,
+              hatAnhaenge: !!m.hasAttachments,
+            });
+          }
         }
       }
       // Duplikate (gleiche Mail in beiden Postfächern) über Betreff+Zeit eindampfen.

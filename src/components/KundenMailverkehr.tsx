@@ -20,7 +20,7 @@ interface KundenMail {
   hatAnhaenge: boolean;
 }
 
-export function KundenMailverkehr({ kundenEmail }: { kundenEmail: string }) {
+export function KundenMailverkehr({ kundeId, kundenEmail, kundenName }: { kundeId: string; kundenEmail: string | null; kundenName: string }) {
   const navigate = useNavigate();
   const [mails, setMails] = useState<KundenMail[] | null>(null);
   const [fehler, setFehler] = useState(false);
@@ -30,7 +30,7 @@ export function KundenMailverkehr({ kundenEmail }: { kundenEmail: string }) {
     (async () => {
       try {
         const { data, error } = await supabase.functions.invoke("mail-postfach", {
-          body: { aktion: "kundenmails", postfach: "office@cg-holzbau.at", kundenEmail },
+          body: { aktion: "kundenmails", postfach: "office@cg-holzbau.at", kundenEmail, kundeId, kundenName },
         });
         if (error || data?.error) throw new Error(error?.message || data?.error);
         if (!abgebrochen) setMails(data.mails || []);
@@ -39,7 +39,7 @@ export function KundenMailverkehr({ kundenEmail }: { kundenEmail: string }) {
       }
     })();
     return () => { abgebrochen = true; };
-  }, [kundenEmail]);
+  }, [kundeId, kundenEmail, kundenName]);
 
   // Kein Mailverkehr und kein Fehler → Karte gar nicht zeigen (kein Leerlärm).
   if (mails !== null && mails.length === 0 && !fehler) return null;
@@ -51,7 +51,7 @@ export function KundenMailverkehr({ kundenEmail }: { kundenEmail: string }) {
         <CardTitle className="flex items-center gap-2 text-base">
           <Mail className="h-4 w-4 text-kb-blue" /> E-Mail-Verkehr
           {mails === null && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
-          {mails !== null && <span className="text-xs font-normal text-muted-foreground">({mails.length} aus christian.groismaier@ + office@)</span>}
+          {mails !== null && <span className="text-xs font-normal text-muted-foreground">({mails.length} — gefunden über Adresse und Namen in christian.groismaier@ + office@)</span>}
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
