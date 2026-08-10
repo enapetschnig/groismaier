@@ -15,7 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { pdfAllPagesToJpegDataUrls } from "@/lib/pdfToImage";
-import { CheckCircle2, CircleAlert, FileScan, Loader2 } from "lucide-react";
+import { CheckCircle2, CircleAlert, FileScan, Loader2, Plus } from "lucide-react";
 
 interface FahrzeugKurz {
   id: string;
@@ -140,6 +140,38 @@ export function ZulassungsscheinUpload({ open, onOpenChange, fahrzeuge, onChange
     onChanged();
   };
 
+  /** Kundenwunsch: aus dem Schein direkt ein neues Fahrzeug machen —
+   *  alle erkannten Daten + der Schein selbst sind sofort gespeichert. */
+  const alsNeuesFahrzeug = async (index: number) => {
+    const e = ergebnisse[index];
+    if (!e || !e.path) return;
+    const marke = [e.erkannt?.marke, e.erkannt?.handelsbezeichnung].filter(Boolean).join(" ");
+    const bezeichnung = marke || (e.erkannt?.kennzeichen ? `Fahrzeug ${e.erkannt.kennzeichen}` : "Neues Fahrzeug");
+    const { data, error } = await (supabase.from("vehicles" as never) as any)
+      .insert({
+        art: "fahrzeug",
+        bezeichnung,
+        kennzeichen: e.erkannt?.kennzeichen || null,
+        typ: "pkw",
+        aktiv: true,
+        marke_modell: marke || null,
+        fahrgestellnummer: e.erkannt?.fahrgestellnummer || null,
+        erstzulassung: e.erkannt?.erstzulassung || null,
+        zulassungsschein_path: e.path,
+      })
+      .select("id, bezeichnung")
+      .single();
+    if (error) {
+      toast({ title: "Anlegen fehlgeschlagen", description: error.message, variant: "destructive" });
+      return;
+    }
+    setErgebnisse((alt2) => alt2.map((r, j) => (j === index
+      ? { ...r, fahrzeugId: data.id, status: "zugeordnet", meldung: `${data.bezeichnung} (neu angelegt)` }
+      : r)));
+    toast({ title: "Fahrzeug angelegt", description: `${bezeichnung} — Kennzeichen, FIN und Erstzulassung sind übernommen, der Schein ist hinterlegt.` });
+    onChanged();
+  };
+
   const manuellZuordnen = async (index: number, fahrzeugId: string) => {
     const e = ergebnisse[index];
     if (!e || !e.path) return;
@@ -201,8 +233,12 @@ export function ZulassungsscheinUpload({ open, onOpenChange, fahrzeuge, onChange
                   <div className="mt-0.5 text-xs text-destructive">{e.meldung}</div>
                 )}
                 {e.status === "offen" && (
-                  <div className="mt-1.5 flex items-center gap-2">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
                     <span className="text-xs text-amber-700">{e.meldung}</span>
+                    <Button size="sm" className="h-8" onClick={() => alsNeuesFahrzeug(i)}>
+                      <Plus className="mr-1 h-3.5 w-3.5" /> Als neues Fahrzeug anlegen
+                    </Button>
+                    <span className="text-xs text-muted-foreground">oder</span>
                     <Select onValueChange={(v) => manuellZuordnen(i, v)}>
                       <SelectTrigger className="h-8 w-56 text-xs"><SelectValue placeholder="Fahrzeug wählen…" /></SelectTrigger>
                       <SelectContent>
