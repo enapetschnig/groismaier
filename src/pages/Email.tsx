@@ -11,6 +11,7 @@
  * werden in einer Sandbox-iframe gerendert (kein Skript läuft mit).
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { KBToolbar } from "@/components/kingbill";
@@ -69,7 +70,10 @@ export default function Email() {
   const zurueck = useZurueck("/");
   const { toast } = useToast();
 
-  const [postfach, setPostfach] = useState(POSTFAECHER[0].adresse);
+  const [suchParams] = useSearchParams();
+  const startPostfach = POSTFAECHER.find((p) => p.adresse === suchParams.get("postfach"))?.adresse;
+  const [postfach, setPostfach] = useState(startPostfach || POSTFAECHER[0].adresse);
+  const deepLinkMail = useRef(suchParams.get("mail"));
   const [mails, setMails] = useState<MailZeile[]>([]);
   const [mehrDa, setMehrDa] = useState(false);
   const [laedt, setLaedt] = useState(false);
@@ -122,7 +126,19 @@ export default function Email() {
     sucheAktiv.current = "";
     setSuche("");
     lade(postfach, "");
-  }, [postfach, lade]);
+    // Deep-Link aus der Kundenmaske: die angefragte Mail direkt öffnen.
+    const mailId = deepLinkMail.current;
+    if (mailId) {
+      deepLinkMail.current = null;
+      (async () => {
+        setDetailLaedt(true);
+        try {
+          setDetail(await rufe({ aktion: "detail", postfach, id: mailId }));
+        } catch { /* Mail evtl. gelöscht — Liste reicht */ }
+        finally { setDetailLaedt(false); }
+      })();
+    }
+  }, [postfach, lade, rufe]);
 
   const suchen = () => {
     sucheAktiv.current = suche.trim();

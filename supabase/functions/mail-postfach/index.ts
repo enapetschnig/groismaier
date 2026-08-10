@@ -225,6 +225,99 @@ Deno.serve(async (req) => {
       return antwort({ ok: true });
     }
 
+    if (aktion === "vorschlaege") {
+      // Beleg-Vorschläge für die ER-Maske: neueste Mails MIT Anhängen aus
+      // buchhaltung@ und office@, abzüglich bereits übernommener/ausgeblendeter.
+      const quellen = ["buchhaltung@cg-holzbau.at", "office@cg-holzbau.at"];
+      const verarbeitetRes = await fetch(
+        `${SUPABASE_URL}/rest/v1/mail_belege_verarbeitet?select=mail_id`,
+        { headers: { apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}` } },
+      );
+      const verarbeitet = new Set(
+        (verarbeitetRes.ok ? await verarbeitetRes.json() : []).map((x: { mail_id: string }) => x.mail_id),
+      );
+      const alle: Record<string, unknown>[] = [];
+      for (const quelle of quellen) {
+        const r = await graph(
+          `/users/${encodeURIComponent(quelle)}/mailFolders/inbox/messages?$filter=hasAttachments eq true&$orderby=receivedDateTime desc&$top=20&$select=id,subject,from,receivedDateTime,bodyPreview`,
+        );
+        if (!r.ok) continue;
+        for (const m of ((await r.json()).value || []) as Record<string, unknown>[]) {
+          if (verarbeitet.has(String(m.id))) continue;
+          alle.push({
+            id: m.id,
+            postfach: quelle,
+            betreff: m.subject || "(kein Betreff)",
+            von: (m.from as any)?.emailAddress?.name || (m.from as any)?.emailAddress?.address || "?",
+            vonAdresse: (m.from as any)?.emailAddress?.address || "",
+            empfangen: m.receivedDateTime,
+            vorschau: m.bodyPreview || "",
+          });
+        }
+      }
+      alle.sort((a, b) => String(b.empfangen).localeCompare(String(a.empfangen)));
+      return antwort({ vorschlaege: alle.slice(0, 15) });
+    }
+
+    if (aktion === "verarbeitet") {
+      // Vorschlag abhaken (übernommen oder ausgeblendet) — taucht nie wieder auf.
+      const { mailAktion, purchaseInvoiceId } = body as { mailAktion?: string; purchaseInvoiceId?: string };
+      const r = await fetch(`${SUPABASE_URL}/rest/v1/mail_belege_verarbeitet`, {
+        method: "POST",
+        headers: {
+          apikey: SERVICE_ROLE, Authorization: `Bearer ${SERVICE_ROLE}`,
+          "Content-Type": "application/json", Prefer: "resolution=merge-duplicates",
+        },
+        body: JSON.stringify({
+          mail_id: id, postfach,
+          aktion: mailAktion === "ausgeblendet" ? "ausgeblendet" : "uebernommen",
+          purchase_invoice_id: purchaseInvoiceId || null,
+        }),
+      });
+      if (!r.ok) return antwort({ error: `Merken fehlgeschlagen (${r.status})` }, 500);
+      return antwort({ ok: true });
+    }
+
+    if (aktion === "kundenmails") {
+      // Mail-Verkehr mit einem Kunden: sucht in christian.groismaier@ und
+      // office@ nach Mails, an denen die Kundenadresse beteiligt war
+      // (Absender ODER Empfänger — KQL "participants").
+      const { kundenEmail } = body as { kundenEmail?: string };
+      const adr = String(kundenEmail || "").trim().toLowerCase();
+      if (!adr || !/.+@.+\..+/.test(adr)) return antwort({ error: "Kunden-E-Mail fehlt" }, 400);
+      const quellen = ["christian.groismaier@cg-holzbau.at", "office@cg-holzbau.at"];
+      const alle: Record<string, unknown>[] = [];
+      for (const quelle of quellen) {
+        const q = encodeURIComponent(`"participants:${adr}"`);
+        const r = await graph(
+          `/users/${encodeURIComponent(quelle)}/messages?$search=${q}&$select=id,subject,from,receivedDateTime,hasAttachments&$top=15`,
+        );
+        if (!r.ok) continue;
+        for (const m of ((await r.json()).value || []) as Record<string, unknown>[]) {
+          const vonAdr = String((m.from as any)?.emailAddress?.address || "").toLowerCase();
+          alle.push({
+            id: m.id,
+            postfach: quelle,
+            betreff: m.subject || "(kein Betreff)",
+            von: (m.from as any)?.emailAddress?.name || vonAdr || "?",
+            vonKunde: vonAdr === adr,
+            empfangen: m.receivedDateTime,
+            hatAnhaenge: !!m.hasAttachments,
+          });
+        }
+      }
+      // Duplikate (gleiche Mail in beiden Postfächern) über Betreff+Zeit eindampfen.
+      const gesehen = new Set<string>();
+      const einzig = alle.filter((m) => {
+        const k = `${m.betreff}|${m.empfangen}`;
+        if (gesehen.has(k)) return false;
+        gesehen.add(k);
+        return true;
+      });
+      einzig.sort((a, b) => String(b.empfangen).localeCompare(String(a.empfangen)));
+      return antwort({ mails: einzig.slice(0, 20) });
+    }
+
     if (aktion === "loeschen") {
       // In den Papierkorb verschieben (kein endgültiges Löschen) — taucht in
       // Outlook ganz normal unter „Gelöschte Elemente" auf.

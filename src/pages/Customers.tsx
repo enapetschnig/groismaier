@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
+import { KundenMailverkehr } from "@/components/KundenMailverkehr";
 import { matchesSearch } from "@/lib/searchUtils";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -654,6 +655,9 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
           {selectedCustomer && (
             <ContactHistoryTimeline customerId={selectedCustomer.id} />
           )}
+
+          {/* Mail-Verkehr mit diesem Kunden (christian.groismaier@ + office@) */}
+          {selectedCustomer.email && <KundenMailverkehr kundenEmail={selectedCustomer.email} />}
         </div>
 
         {editorDialog}

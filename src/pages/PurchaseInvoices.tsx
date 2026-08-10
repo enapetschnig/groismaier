@@ -1,7 +1,8 @@
-import { useEffect, useState, useMemo, useRef } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil } from "lucide-react";
+import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil, Inbox, EyeOff, Loader2, Mail
+} from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { usePermissions } from "@/hooks/usePermissions";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -72,6 +73,78 @@ export default function PurchaseInvoices() {
   const [loading, setLoading] = useState(true);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [cameraFile, setCameraFile] = useState<File | null>(null);
+
+  // ── Beleg-Vorschläge aus dem Mail-Postfach (buchhaltung@/office@) ──
+  type MailVorschlag = { id: string; postfach: string; betreff: string; von: string; vonAdresse: string; empfangen: string; vorschau: string };
+  const [mailVorschlaege, setMailVorschlaege] = useState<MailVorschlag[]>([]);
+  const [mailVorschlaegeLaedt, setMailVorschlaegeLaedt] = useState(false);
+  const [mailDateien, setMailDateien] = useState<File[]>([]);
+  const [mailNotiz, setMailNotiz] = useState("");
+  const [mailUebernahme, setMailUebernahme] = useState<string | null>(null); // Mail-ID in Arbeit
+  const aktiveMail = useRef<MailVorschlag | null>(null);
+
+  const mailRufe = useCallback(async (body: Record<string, unknown>) => {
+    const { data, error } = await supabase.functions.invoke("mail-postfach", { body });
+    if (error) throw new Error(error.message);
+    if (data?.error) throw new Error(data.error);
+    return data;
+  }, []);
+
+  const ladeMailVorschlaege = useCallback(async () => {
+    if (!isAdmin) return;
+    setMailVorschlaegeLaedt(true);
+    try {
+      const d = await mailRufe({ aktion: "vorschlaege", postfach: "buchhaltung@cg-holzbau.at" });
+      setMailVorschlaege(d.vorschlaege || []);
+    } catch {
+      setMailVorschlaege([]); // Postfach nicht erreichbar → Panel bleibt einfach leer
+    } finally {
+      setMailVorschlaegeLaedt(false);
+    }
+  }, [isAdmin, mailRufe]);
+
+  useEffect(() => { ladeMailVorschlaege(); }, [ladeMailVorschlaege]);
+
+  /** Ein-Klick-Übernahme: Anhänge der Mail holen → bekannter KI-Scan-Dialog. */
+  const mailUebernehmen = async (v: MailVorschlag) => {
+    setMailUebernahme(v.id);
+    try {
+      const det = await mailRufe({ aktion: "detail", postfach: v.postfach, id: v.id });
+      const passend = (det.anhaenge || []).filter((a: { typ?: string; name?: string }) =>
+        /pdf|image\//i.test(a.typ || "") || /\.(pdf|jpe?g|png|heic)$/i.test(a.name || ""));
+      if (passend.length === 0) {
+        toast({ title: "Kein passender Anhang", description: "Diese Mail hat keine PDF- oder Foto-Anhänge.", variant: "destructive" });
+        return;
+      }
+      const dateien: File[] = [];
+      for (const a of passend) {
+        const inhalt = await mailRufe({ aktion: "anhang", postfach: v.postfach, id: v.id, anhangId: a.id });
+        if (inhalt.inhaltBase64) {
+          const bytes = Uint8Array.from(atob(inhalt.inhaltBase64), (c) => c.charCodeAt(0));
+          dateien.push(new File([bytes], inhalt.name || "anhang", { type: inhalt.typ || "application/octet-stream" }));
+        }
+      }
+      if (dateien.length === 0) throw new Error("Anhänge konnten nicht geladen werden");
+      aktiveMail.current = v;
+      setMailDateien(dateien);
+      setMailNotiz(`Aus E-Mail: ${v.von} <${v.vonAdresse}> — „${v.betreff}" (${new Date(v.empfangen).toLocaleDateString("de-AT")})`);
+      setCameraFile(null);
+      setUploadOpen(true);
+    } catch (e) {
+      toast({ title: "Übernahme fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setMailUebernahme(null);
+    }
+  };
+
+  const mailAusblenden = async (v: MailVorschlag) => {
+    setMailVorschlaege((alt2) => alt2.filter((x) => x.id !== v.id));
+    try {
+      await mailRufe({ aktion: "verarbeitet", postfach: v.postfach, id: v.id, mailAktion: "ausgeblendet" });
+    } catch {
+      /* schlimmstenfalls taucht er beim nächsten Laden wieder auf */
+    }
+  };
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
@@ -280,6 +353,40 @@ export default function PurchaseInvoices() {
             Datei hochladen (PDF/Foto)
           </Button>
         </div>
+        {/* Beleg-Vorschläge aus dem Mail-Postfach — so einfach wie möglich:
+            Mail sehen → „Übernehmen" → KI-Scan läuft wie beim Foto-Upload. */}
+        {isAdmin && (mailVorschlaege.length > 0 || mailVorschlaegeLaedt) && (
+          <div className="kb-panel overflow-hidden">
+            <div className="flex items-center gap-2 border-b bg-[hsl(210_60%_96%)] px-3 py-2">
+              <Inbox className="h-4 w-4 text-kb-blue" />
+              <span className="text-sm font-bold text-kb-blue-dark">Aus dem Postfach</span>
+              <span className="text-xs text-muted-foreground">
+                {mailVorschlaegeLaedt ? "prüfe buchhaltung@ und office@ …" : `${mailVorschlaege.length} Mail(s) mit Anhang — vermutlich Rechnungen`}
+              </span>
+            </div>
+            <div className="divide-y">
+              {mailVorschlaege.map((v) => (
+                <div key={v.id} className="flex items-center gap-2 px-3 py-2">
+                  <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium">{v.von} <span className="font-normal text-muted-foreground">— {v.betreff}</span></div>
+                    <div className="truncate text-xs text-muted-foreground">
+                      {new Date(v.empfangen).toLocaleDateString("de-AT")} · {v.postfach.startsWith("buchhaltung") ? "Buchhaltung" : "Office"}
+                    </div>
+                  </div>
+                  <Button size="sm" disabled={mailUebernahme === v.id} onClick={() => mailUebernehmen(v)}>
+                    {mailUebernahme === v.id ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : null}
+                    Übernehmen
+                  </Button>
+                  <Button variant="ghost" size="icon" className="h-8 w-8" title="Ausblenden (keine Rechnung)" onClick={() => mailAusblenden(v)}>
+                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <Card>
@@ -490,10 +597,25 @@ export default function PurchaseInvoices() {
       {/* Upload */}
       <PurchaseInvoiceUploadDialog
         open={uploadOpen}
-        onOpenChange={(o) => { setUploadOpen(o); if (!o) setCameraFile(null); }}
-        onUploaded={loadData}
+        onOpenChange={(o) => {
+          setUploadOpen(o);
+          if (!o) { setCameraFile(null); setMailDateien([]); aktiveMail.current = null; }
+        }}
+        onUploaded={() => {
+          loadData();
+          // Kam der Beleg aus einer Mail: abhaken, damit der Vorschlag verschwindet.
+          const v = aktiveMail.current;
+          if (v) {
+            aktiveMail.current = null;
+            mailRufe({ aktion: "verarbeitet", postfach: v.postfach, id: v.id, mailAktion: "uebernommen" })
+              .then(ladeMailVorschlaege)
+              .catch(() => {});
+          }
+        }}
         prefillProjectId={projectFilter}
         initialFile={cameraFile}
+        initialFiles={mailDateien.length > 0 ? mailDateien : undefined}
+        prefillNotiz={mailNotiz || undefined}
       />
 
       {/* Edit detail */}
