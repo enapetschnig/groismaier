@@ -5060,8 +5060,16 @@ export default function InvoiceDetail() {
                   <Input
                     value={form.betreff}
                     onChange={(e) => updateField("betreff", e.target.value)}
-                    placeholder={`z.B. ${typLabel} ${form.nummer || ""}`.trim()}
+                    /* Kundenwunsch: KEIN „Rechnung Nr. …" vorschlagen — die
+                       Nummer steht ohnehin im Kopf des Belegs. Hier gehört
+                       das Bauvorhaben / die Leistung hinein. */
+                    placeholder="z.B. Umbau Altbau + Neubau Schuppen"
                   />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {isNew
+                      ? `Die Belegnummer wird beim Speichern automatisch vergeben${form.nummer ? ` (voraussichtlich ${form.nummer})` : ""} — bitte nicht in den Betreff schreiben.`
+                      : `Belegnummer ${form.nummer} wurde automatisch vergeben — der Betreff beschreibt das Bauvorhaben.`}
+                  </p>
                 </div>
                 <div>
                   <Label>Datum</Label>
