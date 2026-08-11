@@ -88,7 +88,9 @@ export async function generateInvoicePdf(
   const L = layout || DEFAULT_LAYOUT;
   const [acR, acG, acB] = hexToRgb(L.accent_color);
   const docCfg = getDocConfig(invoice.typ);
-  const typLabel = docCfg.label;
+  // Frei änderbare Bezeichnung am Dokument (Kundenwunsch): steht am Beleg
+  // statt „Rechnung" z. B. „Teilrechnung" oder „Honorarnote". Leer = Standard.
+  const typLabel = String((invoice as any).dokument_bezeichnung || "").trim() || docCfg.label;
   const isAngebot = docCfg.isAngebotLike;               // Angebot + AB: kein Zahlungsblock, Angebots-Closing
   const showLeistungsdatum = docCfg.showLeistungsdatum; // alle außer Angebot + AB
   const showFaelligAm = docCfg.showPaymentSection;      // nur Rechnungs-artige
@@ -1096,7 +1098,15 @@ export async function generateInvoicePdf(
     if (closingText) renderMultilineText(closingText, 1);
     pdf.setFontSize(7.5);
     pdf.setTextColor(0, 0, 0);
-    renderMultilineText(`Bei E-Banking bitte als Zahlungsreferenz ${docCfg.label}snummer ${invoice.nummer || ""} und Kundennummer ${kundennummer || ""} eingeben.`, 4);
+    // Kundennummer nur nennen, wenn es sie gibt — sonst stand „und
+    // Kundennummer  eingeben." mit klaffender Lücke am Beleg.
+    const referenzTeile = [
+      invoice.nummer ? `${typLabel}snummer ${invoice.nummer}` : "",
+      kundennummer ? `Kundennummer ${kundennummer}` : "",
+    ].filter(Boolean);
+    if (referenzTeile.length > 0) {
+      renderMultilineText(`Bei E-Banking bitte als Zahlungsreferenz ${referenzTeile.join(" und ")} eingeben.`, 4);
+    }
     pdf.setFontSize(9);
   } else {
     // Lieferschein

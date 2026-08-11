@@ -259,6 +259,8 @@ const ohneGruppenSpalten = (row: any): any => {
 interface InvoiceData {
   typ: string;
   nummer: string;
+  /** Freie Bezeichnung am Dokument statt „Rechnung"/„Angebot" (leer = Standard). */
+  dokument_bezeichnung?: string;
   laufnummer: number;
   jahr: number;
   status: string;
@@ -728,6 +730,7 @@ export default function InvoiceDetail() {
 
   const [form, setForm] = useState<InvoiceData>({
     typ: defaultTyp,
+    dokument_bezeichnung: "",
     nummer: "",
     laufnummer: 0,
     jahr: new Date().getFullYear(),
@@ -1325,6 +1328,7 @@ export default function InvoiceDetail() {
         ausfuehrende_firma: data.ausfuehrende_firma || "",
         ausfuehrende_firma_freitext: data.ausfuehrende_firma_freitext || "",
         zahlungsbedingungen: data.zahlungsbedingungen || "",
+        dokument_bezeichnung: "",
         // Kopie soll sauber starten (Kundenwunsch): keine KingBill-Import-
         // Vermerke in den Notizen und keine ALTE Belegnummer im Betreff —
         // die stand sonst groß auf der PDF-Vorschau des neuen Belegs.
@@ -1831,6 +1835,7 @@ export default function InvoiceDetail() {
     setForm({
       typ: data.typ,
       nummer: data.nummer,
+      dokument_bezeichnung: ((data as any).dokument_bezeichnung as string) || "",
       laufnummer: data.laufnummer,
       jahr: data.jahr,
       status: data.status,
@@ -2888,6 +2893,7 @@ export default function InvoiceDetail() {
 
       const invoicePayload: any = {
         status: saveStatus,
+        dokument_bezeichnung: (form.dokument_bezeichnung || "").trim() || null,
         kunde_name: form.kunde_name,
         kunde_adresse: form.kunde_adresse || null,
         kunde_plz: form.kunde_plz || null,
@@ -5074,6 +5080,18 @@ export default function InvoiceDetail() {
                 <div>
                   <Label>Datum</Label>
                   <Input type="date" value={form.datum} onChange={(e) => updateField("datum", e.target.value)} />
+                </div>
+
+                <div>
+                  <Label>Bezeichnung am Dokument</Label>
+                  <Input
+                    value={form.dokument_bezeichnung || ""}
+                    onChange={(e) => updateField("dokument_bezeichnung" as never, e.target.value)}
+                    placeholder={getDocConfig(form.typ).label}
+                  />
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    Steht so am Beleg (Titel, Kopfzeile „… Nr."). Leer = {getDocConfig(form.typ).label}.
+                  </p>
                 </div>
 
                 {/* Zeile 2 */}

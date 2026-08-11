@@ -258,7 +258,8 @@ export function buildInvoiceHtml(
   const L = layout || DEFAULT_LAYOUT;
   const b = bank || DEFAULT_BANK;
   const docCfg = getDocConfig(invoice.typ);
-  const typLabel = docCfg.label;
+  // Frei änderbare Bezeichnung (siehe pdfGenerator) — Vorschau muss identisch sein.
+  const typLabel = String((invoice as any).dokument_bezeichnung || "").trim() || docCfg.label;
   const isAngebot = docCfg.isAngebotLike;         // Angebot + AB: kein Rechnungsbeleg-Footer
   const showLeistungsdatum = docCfg.showLeistungsdatum;
   const showFaelligAm = docCfg.showPaymentSection;
