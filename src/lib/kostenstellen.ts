@@ -25,6 +25,8 @@ export const KOSTENSTELLEN_ICONS: Record<string, string> = {
   lagerplatz: "📦",
   fuhrpark: "🚚",
   maschinen: "⚙️",
+  buero_chef: "💼",
+  buero_verwaltung: "🗂️",
 };
 
 export const kostenstelleIcon = (wert: string | null | undefined): string =>

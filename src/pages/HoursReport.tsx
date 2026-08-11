@@ -95,8 +95,10 @@ interface VehicleStat {
 const KOSTENSTELLEN_FALLBACK: KostenstelleOption[] = [
   { wert: "baustelle", label: "Baustelle" },
   { wert: "werkstatt", label: "Werkstatt" },
-  { wert: "lagerwerkstatt", label: "Lager/Werkstatt" },
+  { wert: "lagerwerkstatt", label: "Lager – Werkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
+  { wert: "buero_chef", label: "Büroarbeit – Chef" },
+  { wert: "buero_verwaltung", label: "Büro/Verwaltung" },
 ];
 
 const KOSTEN_KATEGORIEN: { wert: string; label: string }[] = [

@@ -60,8 +60,10 @@ const LOCATION_OPTIONS = [
 const KOSTENSTELLEN_FALLBACK: KostenstelleOpt[] = [
   { wert: "baustelle", label: "Baustelle" },
   { wert: "werkstatt", label: "Werkstatt" },
-  { wert: "lagerwerkstatt", label: "Lager/Werkstatt" },
+  { wert: "lagerwerkstatt", label: "Lager – Werkstatt" },
   { wert: "lagerplatz", label: "Lagerplatz" },
+  { wert: "buero_chef", label: "Büroarbeit – Chef" },
+  { wert: "buero_verwaltung", label: "Büro/Verwaltung" },
 ];
 
 /** Obergrenze für einen einzelnen Zeit-Eintrag (ein Kalendertag hat 24 h). */
