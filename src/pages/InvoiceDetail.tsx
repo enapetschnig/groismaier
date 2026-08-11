@@ -4578,7 +4578,8 @@ export default function InvoiceDetail() {
                         // MIT Preisen kopiert (nur Anzeige/PDF blenden sie aus), damit
                         // die Kette LS→Rechnung verlustfrei bleibt.
                         lieferschein: t === "angebot" || t === "auftragsbestaetigung",
-                        rechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "lieferschein",
+                        // Auch Rechnung → neue Rechnung (1:1-Kopie mit neuer Nummer, Kundenwunsch).
+                        rechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "lieferschein" || t === "rechnung" || t === "anzahlungsrechnung" || t === "schlussrechnung",
                         anzahlungsrechnung: t === "angebot" || t === "auftragsbestaetigung",
                         schlussrechnung: t === "angebot" || t === "auftragsbestaetigung" || t === "anzahlungsrechnung",
                         // Gutschrift kann zu jeder rechnungs-artigen Doku angelegt
@@ -4608,7 +4609,7 @@ export default function InvoiceDetail() {
                             )}
                             {allow.rechnung && (
                               <DropdownMenuItem onClick={() => handleConvertTo("rechnung")}>
-                                Rechnung
+                                {form.typ === "rechnung" ? "Neue Rechnung (Kopie)" : "Rechnung"}
                               </DropdownMenuItem>
                             )}
                             {allow.anzahlungsrechnung && (

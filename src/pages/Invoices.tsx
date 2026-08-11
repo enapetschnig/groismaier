@@ -142,6 +142,9 @@ export default function Invoices() {
     initialTab && VALID_TABS.includes(initialTab) ? initialTab : "rechnung"
   );
   const [filterStatus, setFilterStatus] = useState<string>(searchParams.get("status") || "alle");
+  /** Jahresfilter (Kundenwunsch „zeig nur den Umsatz vom Jahr") — Standard:
+   *  aktuelles Jahr, damit die 11 Jahre KingBill-Historie die Summen nicht fluten. */
+  const [filterJahr, setFilterJahr] = useState<string>(String(new Date().getFullYear()));
   // Mobile: linke Filterspalte auf-/zuklappbar (auf lg+ immer sichtbar)
   const [filtersOpen, setFiltersOpen] = useState(false);
   // Sub-Typ-Filter innerhalb der Rechnungen- bzw. Angebote-Tabs.
@@ -594,10 +597,11 @@ export default function Invoices() {
       String(i.brutto_summe).includes(searchQuery) ||
       i.brutto_summe.toFixed(2).includes(searchQuery);
     const matchArchive = showArchive ? true : !i.archiviert;
+    const matchJahr = filterJahr === "alle" || (i.datum || "").startsWith(filterJahr);
 
     // Tab "storno" → NUR stornierte Rechnungen
     if (filterTyp === "storno") {
-      return matchSearch && matchArchive && i.status === "storniert";
+      return matchSearch && matchArchive && matchJahr && i.status === "storniert";
     }
     if (i.status === "storniert") return false;
     // "rechnung"-Tab sammelt alle Rechnungs-artigen Dokumente
@@ -616,8 +620,12 @@ export default function Invoices() {
       matchTyp = i.typ === filterTyp;
     }
     const matchStatus = filterStatus === "alle" ? true : i.status === filterStatus;
-    return matchTyp && matchStatus && matchSearch && matchArchive;
+    return matchTyp && matchStatus && matchSearch && matchArchive && matchJahr;
   });
+
+  // Vorhandene Jahre für den Filter (absteigend, aus den Belegdaten).
+  const belegJahre = [...new Set(invoices.map(i => (i.datum || "").slice(0, 4)).filter(j => /^\d{4}$/.test(j)))]
+    .sort((a, b) => b.localeCompare(a));
 
   const storniertCount = invoices.filter(i => i.status === "storniert").length;
 
@@ -819,6 +827,9 @@ export default function Invoices() {
                             : quellTyp === "lieferschein"
                               ? [["rechnung", "eine neue Rechnung"]]
                               : [
+                                  // Kundenwunsch: Rechnung auch 1:1 in eine NEUE
+                                  // Rechnung kopieren (Kunde + Positionen, neue Nummer).
+                                  ["rechnung", "eine neue Rechnung (Kopie)"],
                                   ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
                                   ["schlussrechnung", "eine neue Schlussrechnung"],
                                 ];
@@ -977,6 +988,19 @@ export default function Invoices() {
                 );
               })()}
 
+              {/* Jahr filtern — Standard: aktuelles Jahr */}
+              <Select value={filterJahr} onValueChange={setFilterJahr}>
+                <SelectTrigger className="w-full h-9" aria-label="Jahr filtern">
+                  <SelectValue placeholder="Jahr…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {belegJahre.map(j => (
+                    <SelectItem key={j} value={j}>{j}</SelectItem>
+                  ))}
+                  <SelectItem value="alle">Alle Jahre</SelectItem>
+                </SelectContent>
+              </Select>
+
               {/* Status filtern */}
               {filterTyp !== "storno" && (
                 <Select value={filterStatus} onValueChange={setFilterStatus}>
@@ -996,7 +1020,7 @@ export default function Invoices() {
                   — bezogen auf die aktuell GEFILTERTE Liste. */}
               <div className="border-t border-border pt-2 text-sm space-y-0.5">
                 <div className="flex justify-between">
-                  <span>Anzahl {filterTyp === "angebot" ? "Angebote" : filterTyp === "lieferschein" ? "Lieferscheine" : filterTyp === "storno" ? "Storni" : "Rechnungen"}</span>
+                  <span>Anzahl {filterTyp === "angebot" ? "Angebote" : filterTyp === "lieferschein" ? "Lieferscheine" : filterTyp === "storno" ? "Storni" : "Rechnungen"}{filterJahr !== "alle" ? ` ${filterJahr}` : ""}</span>
                   <span className="font-bold tabular-nums">{loading ? "…" : filtered.length}</span>
                 </div>
                 {filterTyp !== "lieferschein" && (
