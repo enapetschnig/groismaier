@@ -73,12 +73,15 @@ export interface BankData {
   kontoinhaber: string;
   iban: string;
   bic: string;
+  /** Bankinstitut — steht so am Original-Beleg des Kunden („Institut Volksbank Wien AG"). */
+  institut?: string;
 }
 
 export const DEFAULT_BANK: BankData = {
   kontoinhaber: "",
   iban: "",
   bic: "",
+  institut: "",
 };
 
 export interface InvoiceHtmlData {
@@ -734,7 +737,9 @@ ${
   showBank
     ? `<div class="bank-info" style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
   <div class="bank-info-row">
-    <strong>Bankverbindung:</strong> ${[b.kontoinhaber, b.iban ? `IBAN: ${b.iban}` : "", b.bic ? `BIC: ${b.bic}` : ""].filter(Boolean).join(" · ")}
+    ${L.footer.show_bank_in_footer
+      ? "" /* steht wie am Original nur in der Fußzeile */
+      : `<strong>Bankverbindung:</strong> ${[b.kontoinhaber, b.iban ? `IBAN: ${b.iban}` : "", b.bic ? `BIC: ${b.bic}` : ""].filter(Boolean).join(" · ")}`}
   </div>
   ${qrCodeDataUri ? `<div style="text-align:center;flex-shrink:0;">
     <img src="${qrCodeDataUri}" style="width:80px;height:80px;" alt="QR-Code Zahlung" />
@@ -751,7 +756,13 @@ ${
   </div>
   ${L.footer.line2 ? `<div class="footer-line">${L.footer.line2}</div>` : ""}
   ${L.footer.line3 ? `<div class="footer-line">${L.footer.line3}</div>` : ""}
-  ${L.footer.show_bank_in_footer && (b.iban || b.bic) ? `<div class="footer-line">${[b.iban ? `IBAN: ${b.iban}` : "", b.bic ? `BIC: ${b.bic}` : ""].filter(Boolean).join(" · ")}</div>` : ""}
+  ${L.footer.show_bank_in_footer && (b.iban || b.bic) ? `<div class="footer-line"><strong>Bankverbindung</strong></div>
+  <div class="footer-line">${[
+    b.institut ? `<strong>Institut</strong> ${b.institut}` : "",
+    b.kontoinhaber ? `<strong>Inhaber</strong> ${b.kontoinhaber}` : "",
+    b.iban ? `<strong>IBAN</strong> ${b.iban}` : "",
+    b.bic ? `<strong>BIC</strong> ${b.bic}` : "",
+  ].filter(Boolean).join(" · ")}</div>` : ""}
 </div>
 
 </div><!-- /page-wrap -->

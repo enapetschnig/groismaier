@@ -14,7 +14,7 @@ import { loadInvoiceLogo } from "@/lib/logoLoader";
 interface ExportInvoicesDialogProps {
   open: boolean;
   onClose: () => void;
-  bankData: { kontoinhaber: string; iban: string; bic: string };
+  bankData: { kontoinhaber: string; iban: string; bic: string; institut?: string };
 }
 
 const MONTHS = [

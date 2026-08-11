@@ -222,6 +222,7 @@ export default function Invoices() {
   };
   const [bankKontoinhaber, setBankKontoinhaber] = useState("");
   const [bankIban, setBankIban] = useState("");
+  const [bankInstitut, setBankInstitut] = useState("");
   const [bankBic, setBankBic] = useState("");
   const [createProjectDialogOpen, setCreateProjectDialogOpen] = useState(false);
   const [createProjectForInvoiceId, setCreateProjectForInvoiceId] = useState<string | null>(null);
@@ -257,12 +258,13 @@ export default function Invoices() {
     const { data } = await supabase
       .from("app_settings")
       .select("key, value")
-      .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "invoice_layout"]);
+      .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "invoice_layout"]);
     if (data) {
       data.forEach(s => {
         if (s.key === "bank_kontoinhaber") setBankKontoinhaber(s.value);
         if (s.key === "bank_iban") setBankIban(s.value);
         if (s.key === "bank_bic") setBankBic(s.value);
+        if (s.key === "bank_institut") setBankInstitut(s.value);
         if (s.key === "invoice_layout") setInvoiceLayout(parseLayoutSettings(s.value));
       });
     }
@@ -391,17 +393,18 @@ export default function Invoices() {
       const [{ data: inv }, { data: invItems }, { data: bankSettings }] = await Promise.all([
         supabase.from("invoices").select("*").eq("id", invoiceId).single(),
         supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId).order("position"),
-        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid"]),
+        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid"]),
       ]);
       if (!inv) throw new Error("Rechnung nicht gefunden");
 
-      const bank = { kontoinhaber: "", iban: bankIban, bic: bankBic };
+      const bank = { kontoinhaber: "", iban: bankIban, bic: bankBic, institut: bankInstitut };
       let firmenUid = "";
       if (bankSettings) {
         bankSettings.forEach((s: any) => {
           if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
           if (s.key === "bank_iban") bank.iban = s.value;
           if (s.key === "bank_bic") bank.bic = s.value;
+          if (s.key === "bank_institut") bank.institut = s.value;
           if (s.key === "firmen_uid") firmenUid = s.value;
         });
       }
@@ -474,16 +477,17 @@ export default function Invoices() {
       const [{ data: inv }, { data: invItems }, { data: settings }] = await Promise.all([
         supabase.from("invoices").select("*").eq("id", invoiceId).single(),
         supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId).order("position"),
-        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid"]),
+        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid"]),
       ]);
       if (!inv) throw new Error("Nicht gefunden");
 
-      const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic };
+      const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic, institut: bankInstitut };
       let firmenUid = "";
       settings?.forEach((s: any) => {
         if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
         if (s.key === "bank_iban") bank.iban = s.value;
         if (s.key === "bank_bic") bank.bic = s.value;
+        if (s.key === "bank_institut") bank.institut = s.value;
         if (s.key === "firmen_uid") firmenUid = s.value;
       });
 
@@ -1196,7 +1200,7 @@ export default function Invoices() {
                               // Download Storno-PDF
                               try {
                                 const logoUri = await loadInvoiceLogo();
-                                const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic };
+                                const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic, institut: bankInstitut };
                                 const { generateStornoPdf } = await import("@/lib/pdfGenerator");
                                 const pdfBlob = generateStornoPdf(
                                   { nummer: inv.nummer, kunde_name: inv.kunde_name, brutto_summe: Number(inv.brutto_summe), datum: inv.datum },
@@ -1427,7 +1431,7 @@ export default function Invoices() {
                                       e.stopPropagation();
                                       try {
                                         const logoUri = await loadInvoiceLogo();
-                                        const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic };
+                                        const bank = { kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic, institut: bankInstitut };
                                         const stufe = Number(inv.mahnstufe || 0) + 1;
                                         if (stufe > 3) {
                                           toast({
@@ -1502,7 +1506,7 @@ export default function Invoices() {
         <ExportInvoicesDialog
           open={exportDialogOpen}
           onClose={() => setExportDialogOpen(false)}
-          bankData={{ kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic }}
+          bankData={{ kontoinhaber: bankKontoinhaber, iban: bankIban, bic: bankBic, institut: bankInstitut }}
         />
 
         {/* Anzahlungsrechnung aus der Liste: Prozent ODER Betrag abfragen */}

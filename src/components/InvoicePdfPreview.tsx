@@ -72,7 +72,9 @@ export function InvoicePdfPreview({
 
   useEffect(() => {
     if (open && saved) generatePdf();
-  }, [saved, formData?.nummer]);
+    // Auch auf Bezeichnung/Betreff hören: sonst blieb die Vorschau auf
+    // „Rechnung" stehen, obwohl im Feld z. B. „Teilrechnung" stand.
+  }, [saved, formData?.nummer, (formData as any)?.dokument_bezeichnung, formData?.betreff]);
 
   const generatePdf = async () => {
     setGenerating(true);
@@ -84,12 +86,13 @@ export function InvoicePdfPreview({
       let layout: InvoiceLayoutSettings = DEFAULT_LAYOUT;
       try {
         const { data: bankSettings } = await supabase
-          .from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "invoice_layout"]);
+          .from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid", "invoice_layout"]);
         if (bankSettings) {
           bankSettings.forEach((row: any) => {
             if (row.key === "bank_kontoinhaber") bankData.kontoinhaber = row.value;
             if (row.key === "bank_iban") bankData.iban = row.value;
             if (row.key === "bank_bic") bankData.bic = row.value;
+            if (row.key === "bank_institut") bankData.institut = row.value;
             if (row.key === "firmen_uid") loadedFirmenUid = row.value;
             if (row.key === "invoice_layout") layout = parseLayoutSettings(row.value);
           });

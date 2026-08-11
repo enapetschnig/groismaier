@@ -3234,13 +3234,14 @@ export default function InvoiceDetail() {
       const { data: bankSettings } = await supabase
         .from("app_settings")
         .select("key, value")
-        .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid"]);
-      const bank = { kontoinhaber: "", iban: "", bic: "" };
+        .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid"]);
+      const bank = { kontoinhaber: "", iban: "", bic: "", institut: "" };
       let firmenUid = "";
       bankSettings?.forEach((s: any) => {
         if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
         if (s.key === "bank_iban") bank.iban = s.value;
         if (s.key === "bank_bic") bank.bic = s.value;
+        if (s.key === "bank_institut") bank.institut = s.value;
         if (s.key === "firmen_uid") firmenUid = s.value || "";
       });
 
@@ -3494,13 +3495,14 @@ export default function InvoiceDetail() {
     const { data: bankSettings } = await supabase
       .from("app_settings")
       .select("key, value")
-      .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid"]);
-    const bank = { kontoinhaber: "", iban: "", bic: "" };
+      .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid"]);
+    const bank = { kontoinhaber: "", iban: "", bic: "", institut: "" };
     let firmenUid = "";
     bankSettings?.forEach((s: any) => {
       if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
       if (s.key === "bank_iban") bank.iban = s.value;
       if (s.key === "bank_bic") bank.bic = s.value;
+      if (s.key === "bank_institut") bank.institut = s.value;
       if (s.key === "firmen_uid") firmenUid = s.value || "";
     });
 
@@ -3971,12 +3973,13 @@ export default function InvoiceDetail() {
       try {
         const { generateStornoPdf } = await import("@/lib/pdfGenerator");
         const logoUri = await loadInvoiceLogo();
-        const { data: bankSettings1 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-        const bank1 = { kontoinhaber: "", iban: "", bic: "" };
+        const { data: bankSettings1 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut"]);
+        const bank1 = { kontoinhaber: "", iban: "", bic: "", institut: "" };
         bankSettings1?.forEach((s: any) => {
           if (s.key === "bank_kontoinhaber") bank1.kontoinhaber = s.value;
           if (s.key === "bank_iban") bank1.iban = s.value;
           if (s.key === "bank_bic") bank1.bic = s.value;
+          if (s.key === "bank_institut") bank1.institut = s.value;
         });
         const pdfBlob = generateStornoPdf(
           { nummer: form.nummer, kunde_name: form.kunde_name, brutto_summe: bruttoSumme, datum: form.datum },
@@ -4105,6 +4108,9 @@ export default function InvoiceDetail() {
   // und die angedockte Live-Vorschau (xl+) erhalten exakt dieselben Daten.
   const previewFormData = {
     typ: form.typ,
+    // Freie Bezeichnung am Dokument — MUSS hier stehen, sonst zeigt die
+    // Vorschau weiter „Rechnung", obwohl im Feld etwas anderes steht.
+    dokument_bezeichnung: form.dokument_bezeichnung || "",
     // KingBill: solange der Beleg nicht gespeichert ist, hat er KEINE echte
     // Nummer — Vorschau/PDF zeigen „vorläufig". Die fortlaufende Nummer wird
     // erst beim ersten Speichern gezogen (Nummernkreis bleibt lückenlos).
@@ -4234,12 +4240,13 @@ export default function InvoiceDetail() {
                       }
                       const { generateStornoPdf } = await import("@/lib/pdfGenerator");
                       const logoUri = await loadInvoiceLogo();
-                      const { data: bankSettings2 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-                      const bank2 = { kontoinhaber: "", iban: "", bic: "" };
+                      const { data: bankSettings2 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut"]);
+                      const bank2 = { kontoinhaber: "", iban: "", bic: "", institut: "" };
                       bankSettings2?.forEach((s: any) => {
                         if (s.key === "bank_kontoinhaber") bank2.kontoinhaber = s.value;
                         if (s.key === "bank_iban") bank2.iban = s.value;
                         if (s.key === "bank_bic") bank2.bic = s.value;
+                        if (s.key === "bank_institut") bank2.institut = s.value;
                       });
                       const pdfBlob = generateStornoPdf(
                         { nummer: freshInv.nummer, kunde_name: freshInv.kunde_name, brutto_summe: Number(freshInv.brutto_summe), datum: freshInv.datum },
@@ -4581,12 +4588,13 @@ export default function InvoiceDetail() {
                           loadMahnungen();
                           // Generate Mahnung PDF
                           const logoUri = await loadInvoiceLogo();
-                          const { data: bankSettings } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-                          const bank = { kontoinhaber: "", iban: "", bic: "" };
+                          const { data: bankSettings } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut"]);
+                          const bank = { kontoinhaber: "", iban: "", bic: "", institut: "" };
                           bankSettings?.forEach((s: any) => {
                             if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
                             if (s.key === "bank_iban") bank.iban = s.value;
                             if (s.key === "bank_bic") bank.bic = s.value;
+                            if (s.key === "bank_institut") bank.institut = s.value;
                           });
                           const { generateMahnungPdf } = await import("@/lib/pdfGenerator");
                           const { loadMahnungSettings } = await import("@/lib/mahnungSettings");
@@ -5020,12 +5028,13 @@ export default function InvoiceDetail() {
                         <Button variant="ghost" size="sm" className="gap-1" onClick={async () => {
                           try {
                             const logoUri = await loadInvoiceLogo();
-                            const { data: bankSettings } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-                            const bank = { kontoinhaber: "", iban: "", bic: "" };
+                            const { data: bankSettings } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut"]);
+                            const bank = { kontoinhaber: "", iban: "", bic: "", institut: "" };
                             bankSettings?.forEach((s: any) => {
                               if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
                               if (s.key === "bank_iban") bank.iban = s.value;
                               if (s.key === "bank_bic") bank.bic = s.value;
+                              if (s.key === "bank_institut") bank.institut = s.value;
                             });
                             const { generateMahnungPdf } = await import("@/lib/pdfGenerator");
                             const { loadMahnungSettings } = await import("@/lib/mahnungSettings");
@@ -7327,12 +7336,13 @@ export default function InvoiceDetail() {
                   const logoUri = await loadInvoiceLogo();
                   const { data: inv } = await supabase.from("invoices").select("storno_nummer, storno_datum, storno_grund").eq("id", invoiceId).single();
                   if (!inv?.storno_nummer) return;
-                  const { data: bankSettings3 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic"]);
-                  const bank3 = { kontoinhaber: "", iban: "", bic: "" };
+                  const { data: bankSettings3 } = await supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut"]);
+                  const bank3 = { kontoinhaber: "", iban: "", bic: "", institut: "" };
                   bankSettings3?.forEach((s: any) => {
                     if (s.key === "bank_kontoinhaber") bank3.kontoinhaber = s.value;
                     if (s.key === "bank_iban") bank3.iban = s.value;
                     if (s.key === "bank_bic") bank3.bic = s.value;
+                    if (s.key === "bank_institut") bank3.institut = s.value;
                   });
                   const blob = generateStornoPdf(
                     { nummer: form.nummer, kunde_name: form.kunde_name, brutto_summe: bruttoSumme, datum: form.datum },

@@ -752,7 +752,7 @@ export async function generateInvoicePdf(
 
   // Dynamic footer height: base + jede Textzeile + ggf. Seitennummer-Zeile
   const footerLines = [L.footer.line1 || "auto", L.footer.show_bank_in_footer ? "bank" : "", L.footer.line2, L.footer.line3].filter(Boolean);
-  const footerH = 8 + footerLines.length * 4 + (L.footer.show_page_numbers ? 4 : 0);
+  const footerH = 8 + footerLines.length * 4 + (L.footer.show_bank_in_footer ? 4 : 0) + (L.footer.show_page_numbers ? 4 : 0);
 
   // Spaltenbreite für Beschreibungsspalte berechnen (für Höhen-Schätzung).
   const fixedWidths = hidePrices ? 10 + 26 : 10 + 24 + (hatRabattSpalte ? 14 : 0) + 22 + 24;
@@ -1177,12 +1177,18 @@ export async function generateInvoicePdf(
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(9);
     pdf.setTextColor(0, 0, 0);
-    const bankLine = [
-      bank.kontoinhaber ? `Kontoinhaber: ${bank.kontoinhaber}` : "",
-      bank.iban ? `IBAN: ${bank.iban}` : "",
-      bank.bic ? `BIC: ${bank.bic}` : "",
-    ].filter(Boolean).join(" \u00B7 ");
-    if (bankLine) { pdf.text(bankLine, ml, y); y += 5; }
+    // Die Bankverbindung steht wie am KingBill-Original NUR in der Fußzeile
+    // (Kundenwunsch „nur so wie im Original") — hier bliebe sie sonst doppelt.
+    // Ist die Fußzeilen-Zeile abgeschaltet, wird sie hier gedruckt, damit die
+    // Rechnung nie ganz ohne Konto rausgeht.
+    if (!L.footer.show_bank_in_footer) {
+      const bankLine = [
+        bank.kontoinhaber ? `Kontoinhaber: ${bank.kontoinhaber}` : "",
+        bank.iban ? `IBAN: ${bank.iban}` : "",
+        bank.bic ? `BIC: ${bank.bic}` : "",
+      ].filter(Boolean).join(" \u00B7 ");
+      if (bankLine) { pdf.text(bankLine, ml, y); y += 5; }
+    }
 
     // QR Code
     if (qrCodeDataUri) {
@@ -1230,12 +1236,20 @@ export async function generateInvoicePdf(
       footerY += 4;
     }
     if (L.footer.show_bank_in_footer) {
+      // Aufbau wie am KingBill-Original des Kunden:
+      //   Bankverbindung
+      //   Institut … · Inhaber … · IBAN … · BIC …
       const ibanLine = [
-        bank.kontoinhaber ? `Kontoinhaber: ${bank.kontoinhaber}` : "",
-        bank.iban ? `IBAN: ${bank.iban}` : "",
-        bank.bic ? `BIC: ${bank.bic}` : "",
+        bank.institut ? `Institut ${bank.institut}` : "",
+        bank.kontoinhaber ? `Inhaber ${bank.kontoinhaber}` : "",
+        bank.iban ? `IBAN ${bank.iban}` : "",
+        bank.bic ? `BIC ${bank.bic}` : "",
       ].filter(Boolean).join(" \u00B7 ");
       if (ibanLine) {
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Bankverbindung", pageWidth / 2, footerY, { align: "center" });
+        footerY += 3.5;
+        pdf.setFont("helvetica", "normal");
         pdf.text(ibanLine, pageWidth / 2, footerY, { align: "center" });
         footerY += 4;
       }

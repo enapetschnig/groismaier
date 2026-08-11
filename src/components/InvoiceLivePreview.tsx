@@ -135,11 +135,12 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           const { data } = await supabase
             .from("app_settings")
             .select("key, value")
-            .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "invoice_layout"]);
+            .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid", "invoice_layout"]);
           data?.forEach((row: any) => {
             if (row.key === "bank_kontoinhaber") bank.kontoinhaber = row.value;
             if (row.key === "bank_iban") bank.iban = row.value;
             if (row.key === "bank_bic") bank.bic = row.value;
+            if (row.key === "bank_institut") bank.institut = row.value;
             if (row.key === "firmen_uid") uid = row.value;
             if (row.key === "invoice_layout") layout = parseLayoutSettings(row.value);
           });
@@ -267,11 +268,12 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         const { data } = await supabase
           .from("app_settings")
           .select("key, value")
-          .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "invoice_layout"]);
+          .in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid", "invoice_layout"]);
         data?.forEach((row: any) => {
           if (row.key === "bank_kontoinhaber") bank.kontoinhaber = row.value;
           if (row.key === "bank_iban") bank.iban = row.value;
           if (row.key === "bank_bic") bank.bic = row.value;
+          if (row.key === "bank_institut") bank.institut = row.value;
           if (row.key === "firmen_uid") uid = row.value;
           if (row.key === "invoice_layout") layout = parseLayoutSettings(row.value);
         });

@@ -196,7 +196,7 @@ export default function Admin() {
       const { data, error } = await supabase
         .from("app_settings")
         .select("key, value")
-        .in("key", ["disturbance_report_email", "bank_kontoinhaber", "bank_iban", "bank_bic", "firmen_uid", "einheiten", "default_betreff_rechnung", "default_betreff_angebot", "lohnnebenkosten_faktor"]);
+        .in("key", ["disturbance_report_email", "bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid", "einheiten", "default_betreff_rechnung", "default_betreff_angebot", "lohnnebenkosten_faktor"]);
 
       if (error) {
         console.error("Error fetching app settings:", error);
