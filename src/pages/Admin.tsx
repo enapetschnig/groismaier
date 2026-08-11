@@ -1363,7 +1363,7 @@ export default function Admin() {
               </CardHeader>
               <CardContent>
                 <Button variant="outline" onClick={() => navigate("/fahrzeuge")}>
-                  <Truck className="mr-2 h-4 w-4" /> KFZ-Manager öffnen
+                  <Truck className="mr-2 h-4 w-4" /> KFZ- und Maschinen Manager öffnen
                 </Button>
               </CardContent>
             </Card>

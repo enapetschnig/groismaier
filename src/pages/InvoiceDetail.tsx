@@ -481,8 +481,15 @@ export default function InvoiceDetail() {
   // fälschlich in die Belegliste statt zur Startmaske führen.
   const leaveZielRef = useRef<"zurueck" | "home">("zurueck");
   const verlasseSeite = () => {
-    if (leaveZielRef.current === "home") navigate("/");
-    else zurueck();
+    // „Nein" = verwerfen: Erst den Dirty-Zustand löschen, sonst greift der
+    // Verlassen-Schutz erneut und der Dialog fängt die Navigation wieder ab
+    // (der Nutzer „kam nicht raus"). Danach synchron navigieren.
+    setIsDirty(false);
+    const ziel = leaveZielRef.current;
+    setTimeout(() => {
+      if (ziel === "home") navigate("/");
+      else zurueck();
+    }, 0);
   };
   const handleBackNav = () => {
     leaveZielRef.current = "zurueck";
@@ -698,6 +705,26 @@ export default function InvoiceDetail() {
   const [newPaymentNote, setNewPaymentNote] = useState("");
   const defaultTyp = searchParams.get("typ") || "rechnung";
   const defaultProjectId = searchParams.get("project") || null;
+
+  // Vorschau-Belegnummer beim Neu-Anlegen (Kundenwunsch: Nummer schon in der
+  // PDF-Vorschau sehen). peek_document_number verbraucht den Zähler NICHT —
+  // die endgültige Nummer wird erst beim Speichern vergeben und kann minimal
+  // abweichen, falls zwischenzeitlich jemand anderer speichert.
+  const vorschauGeladen = useRef(false);
+  useEffect(() => {
+    if (!isNew || vorschauGeladen.current) return;
+    vorschauGeladen.current = true;
+    (async () => {
+      const jahr = Number((searchParams.get("datum") || "").slice(0, 4)) || new Date().getFullYear();
+      const { data, error } = await supabase.rpc("peek_document_number" as never, {
+        p_typ: defaultTyp, p_jahr: jahr,
+      } as never);
+      if (!error && data) {
+        setForm((prev) => (prev.nummer ? prev : { ...prev, nummer: data as string, _nummerVorschau: true } as any));
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [form, setForm] = useState<InvoiceData>({
     typ: defaultTyp,
@@ -1298,8 +1325,17 @@ export default function InvoiceDetail() {
         ausfuehrende_firma: data.ausfuehrende_firma || "",
         ausfuehrende_firma_freitext: data.ausfuehrende_firma_freitext || "",
         zahlungsbedingungen: data.zahlungsbedingungen || "",
-        notizen: data.notizen || "",
-        betreff: data.betreff || "",
+        // Kopie soll sauber starten (Kundenwunsch): keine KingBill-Import-
+        // Vermerke in den Notizen und keine ALTE Belegnummer im Betreff —
+        // die stand sonst groß auf der PDF-Vorschau des neuen Belegs.
+        notizen: (data.notizen || "")
+          .split("\n")
+          .filter((z: string) => !/^(Import aus KingBill|Bearbeiter:|Referenz:|Alt-Offenposten|Storniert laut KingBill|Storno-Beleg aus KingBill)/.test(z.trim()))
+          .join("\n")
+          .trim(),
+        betreff: (data.betreff || "")
+          .replace(/(?:\d+\.\s*)?(?:STORNO\s*-?\s*)?[A-Za-zÄÖÜäöüß]*(?:rechnung|angebot|bestätigung|lieferschein|gutschrift)\w*\s+\d{4}-\d{2,5}(?:\/\d+)?/gi, "")
+          .replace(/^[\s\-–—:()]+|[\s\-–—:()]+$/g, ""),
         // KEIN "|| 20": Ein steuerfreier Beleg (0 %) wurde beim Umwandeln
         // stillschweigend auf 20 % gesetzt und der Kunde bekam USt verrechnet,
         // die er nicht schuldet.
@@ -4264,7 +4300,13 @@ export default function InvoiceDetail() {
         onHome={handleHomeNav}
         /* Am Handy einen kurzen Titel — der lange Titel drängt sonst die
            Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
-        title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen — Nr. vorläufig`) : `${typLabel} ${form.nummer}`}
+        title={isNew
+          ? (isMobile
+              ? `${typLabel}${form.nummer ? ` ${form.nummer}` : ""}`
+              : form.nummer
+                ? `${typLabel} ${form.nummer}${(form as any)._nummerVorschau ? " (Vorschau)" : ""}`
+                : `${typArticle} ${typLabel} erstellen`)
+          : `${typLabel} ${form.nummer}`}
         rightActions={
           <>
           {originalPdfPath && (

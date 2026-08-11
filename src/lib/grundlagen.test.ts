@@ -116,8 +116,8 @@ describe("Regelarbeitszeit", () => {
     const p = getDefaultWorkTimes(montag);
     expect(p).not.toBeNull();
     expect(p!.startTime).toBe("07:00");
-    expect(p!.endTime).toBe("17:30");
-    expect(p!.pauseMinutes).toBe(30);
+    expect(p!.endTime).toBe("17:00");
+    expect(p!.pauseMinutes).toBe(60);
     // Kernaussage: Brutto-Spanne minus Pause = ausgewiesene Netto-Stunden.
     const [sh, sm] = p!.startTime.split(":").map(Number);
     const [eh, em] = p!.endTime.split(":").map(Number);
@@ -125,21 +125,24 @@ describe("Regelarbeitszeit", () => {
     expect(netto).toBeCloseTo(p!.totalHours, 2);
   });
 
-  it("Freitag bis Sonntag ohne Vorgabe", () => {
-    expect(getDefaultWorkTimes(new Date(2026, 6, 31))).toBeNull(); // Fr
+  it("Freitag hat 5h-Vorgabe (07:00-12:00), Sa/So arbeitsfrei", () => {
+    const fr = getDefaultWorkTimes(new Date(2026, 6, 31)); // Fr
+    expect(fr).not.toBeNull();
+    expect(fr!.startTime).toBe("07:00");
+    expect(fr!.endTime).toBe("12:00");
+    expect(fr!.totalHours).toBeCloseTo(5, 2);
     expect(getDefaultWorkTimes(new Date(2026, 7, 1))).toBeNull();  // Sa
     expect(getDefaultWorkTimes(new Date(2026, 7, 2))).toBeNull();  // So
   });
 
-  it("Normalstunden passen zur Vorgabe desselben Tages", () => {
+  it("Tages-Soll ist 7,8 h an jedem Werktag (Mo-Fr)", () => {
     for (const tag of [27, 28, 29, 30, 31]) {          // Mo–Fr
-      const d = new Date(2026, 6, tag);
-      const p = getDefaultWorkTimes(d);
-      const soll = getNormalWorkingHours(d);
-      // Wo es eine Vorgabe gibt, muss sie zur Stundenzahl passen; sonst 0.
-      if (p) expect(soll).toBeCloseTo(p.totalHours, 2);
-      else expect(soll).toBe(0);
+      expect(getNormalWorkingHours(new Date(2026, 6, tag))).toBeCloseTo(7.8, 2);
     }
+    // Anwesenheits-Vorgabe (getDefaultWorkTimes) ist bewusst höher als das
+    // Soll — die Differenz ist der laufende Zeitausgleich.
+    expect(getDefaultWorkTimes(new Date(2026, 6, 27))!.totalHours).toBeCloseTo(9, 2);
+    expect(getDefaultWorkTimes(new Date(2026, 6, 31))!.totalHours).toBeCloseTo(5, 2);
   });
 
   it("Wochensoll passt zur Summe der Tagesvorgaben", () => {

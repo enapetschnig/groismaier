@@ -1160,7 +1160,7 @@ export default function Fahrzeuge() {
         }
       `}</style>
 
-      <KBToolbar onBack={zurueck} title="KFZ-Manager">
+      <KBToolbar onBack={zurueck} title="KFZ- und Maschinen Manager">
         {/* Zwei getrennte Knöpfe statt „Neu" + Rückfrage: ein Klick weniger,
             und man sieht ohne Öffnen, dass es beides gibt. */}
         <KBToolbarButton icon={Plus} iconClassName="text-kb-green" label="Fahrzeug" title="Neues Fahrzeug anlegen" onClick={() => openNew("fahrzeug")} />

@@ -18,6 +18,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast as sonnerToast } from "sonner";
 import {
   getNormalWorkingHours,
+  getAbsenceHoursPerDay,
   getDefaultWorkTimes,
   isNonWorkingDay,
   getWeeklyTargetHours,
@@ -509,7 +510,9 @@ const TimeTracking = () => {
     }
 
     const selectedDateObj = new Date(absenceData.date);
-    const automaticHours = getNormalWorkingHours(selectedDateObj);
+    // Urlaub / ZA / Krankenstand / Feiertag: pauschal 7,8 h je Tag
+    // (Kundenvorgabe 39h-Woche ÷ 5 Tage), unabhängig vom Wochentag.
+    const automaticHours = getAbsenceHoursPerDay();
     const defaultTimes = getDefaultWorkTimes(selectedDateObj);
 
     let workingHours: number;
@@ -522,9 +525,9 @@ const TimeTracking = () => {
       const custom = parseDecimal(absenceData.customHours);
       // Validierung: muss eine endliche, nicht-negative Zahl zwischen 0 und 24 sein
       workingHours = (custom !== null && custom >= 0 && custom <= 24) ? custom : automaticHours;
-      entryStartTime = defaultTimes?.startTime || "07:00";
-      entryEndTime = defaultTimes?.endTime || "16:00";
-      entryPauseMinutes = defaultTimes?.pauseMinutes || 30;
+      entryStartTime = "07:00";
+      entryEndTime = "14:48";  // 07:00 + 7,8 h, ohne Pause
+      entryPauseMinutes = 0;
     } else {
       // Calculate from Von/Bis
       const [sH, sM] = absenceData.absenceStartTime.split(':').map(Number);

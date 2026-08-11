@@ -609,7 +609,7 @@ const MyHours = () => {
                         ))}
                     </SelectContent>
                   </Select>
-                  <p className="mt-0.5 text-xs text-muted-foreground">Die Stunden erscheinen im KFZ-Manager bei diesem Gerät.</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">Die Stunden erscheinen im KFZ- und Maschinen Manager bei diesem Gerät.</p>
                 </div>
               )}
               {!(((editingEntry as any).kostenstelle === "fuhrpark") || ((editingEntry as any).kostenstelle === "maschinen")) && (

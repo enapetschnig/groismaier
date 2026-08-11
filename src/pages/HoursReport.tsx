@@ -30,7 +30,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getNormalWorkingHours } from "@/lib/workingHours";
+import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
 import { alsISO } from "@/lib/datum";
 
@@ -705,12 +705,14 @@ export default function HoursReport() {
             // Export OHNE Überstunden: Regelarbeitszeiten aus Lib
             const regelarbeitszeit = getNormalWorkingHours(dayDate);
 
-            // Regelarbeitszeiten für Zeiten — Mo-Do 07:00-17:30 Pause 12:00-12:30
-            const regelStart = regelarbeitszeit > 0 ? "07:00" : "";
-            const regelMorningEnd = regelarbeitszeit > 0 ? "12:00" : "";
-            const regelPause = regelarbeitszeit > 0 ? "12:00 - 12:30" : "";
-            const regelAfternoonStart = regelarbeitszeit > 0 ? "12:30" : "";
-            const regelEnd = regelarbeitszeit > 0 ? "17:30" : "";
+            // Anwesenheits-Vorgabe zur Anzeige: Mo-Do 07:00-17:00 (1h Pause),
+            // Fr 07:00-12:00. Das gebuchte Soll bleibt 7,8 h/Tag (regelarbeitszeit).
+            const preset = getDefaultWorkTimes(dayDate);
+            const regelStart = preset ? preset.startTime : "";
+            const regelMorningEnd = preset ? preset.pauseStart : "";
+            const regelPause = preset && preset.pauseMinutes > 0 ? `${preset.pauseStart} - ${preset.pauseEnd}` : "";
+            const regelAfternoonStart = preset && preset.pauseMinutes > 0 ? preset.pauseEnd : "";
+            const regelEnd = preset ? preset.endTime : "";
             
             worksheetData.push([
               displayDay,
