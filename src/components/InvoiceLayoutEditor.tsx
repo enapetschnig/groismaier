@@ -210,6 +210,15 @@ export function InvoiceLayoutEditor() {
                 placeholder="www.beispiel.at"
               />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="company_dgnr">DGNR (optional)</Label>
+              <Input
+                id="company_dgnr"
+                value={form.company.dgnr || ""}
+                onChange={(e) => updateCompany("dgnr" as never, e.target.value)}
+                placeholder="702301137"
+              />
+            </div>
           </div>
         </div>
 

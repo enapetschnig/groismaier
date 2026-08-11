@@ -8,6 +8,8 @@ export interface InvoiceLayoutCompany {
   phone: string;
   email: string;
   website: string;
+  /** Dachverbands-Nummer (steht am KingBill-Briefkopf: „DGNR 702301137"). */
+  dgnr?: string;
 }
 
 export interface InvoiceLayoutLogo {
@@ -59,6 +61,7 @@ export const DEFAULT_LAYOUT: InvoiceLayoutSettings = {
     phone: "+43 (0) 664 4520 758",
     email: "office@cg-holzbau.at",
     website: "www.cg-holzbau.at",
+    dgnr: "702301137",
   },
   logo: {
     enabled: true,

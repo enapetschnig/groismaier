@@ -666,6 +666,7 @@ export default function InvoiceDetail() {
   const [chainRoot, setChainRoot] = useState<ChainDoc | null>(null);
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
+  const [originalPdfPath, setOriginalPdfPath] = useState<string | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
 
   // ── Herkunft Auftragskalkulation (Migration 20260722110000) ───────────────
@@ -1785,6 +1786,8 @@ export default function InvoiceDetail() {
 
     // Ausgangsstand für das Optimistic Locking merken (siehe handleSave).
     setGeladenerStand(((data as any).updated_at as string) || null);
+    // Alt-Beleg aus KingBill: Original-PDF liegt im Storage.
+    setOriginalPdfPath(((data as any).original_pdf_path as string) || null);
     // Herkunft Auftragskalkulation. Fehlt die Spalte (Migration noch nicht
     // eingespielt), ist der Wert schlicht undefined → Feature bleibt aus.
     setKalkulationId(((data as any).kalkulation_id as string) || null);
@@ -4263,7 +4266,25 @@ export default function InvoiceDetail() {
            Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
         title={isNew ? (isMobile ? typLabel : `${typArticle} ${typLabel} erstellen — Nr. vorläufig`) : `${typLabel} ${form.nummer}`}
         rightActions={
-          !isLocked ? (
+          <>
+          {originalPdfPath && (
+            <KBToolbarButton
+              icon={FileText}
+              label="Original-PDF"
+              title="Das originale KingBill-PDF dieses Belegs öffnen"
+              onClick={async () => {
+                const { data, error } = await supabase.storage
+                  .from("invoice-pdfs")
+                  .createSignedUrl(originalPdfPath, 3600);
+                if (error || !data?.signedUrl) {
+                  toast({ variant: "destructive", title: "Öffnen fehlgeschlagen", description: error?.message });
+                  return;
+                }
+                window.open(data.signedUrl, "_blank");
+              }}
+            />
+          )}
+          {!isLocked ? (
             <>
               <KBToolbarButton
                 icon={Save}
@@ -4281,7 +4302,8 @@ export default function InvoiceDetail() {
                 disabled={saving}
               />
             </>
-          ) : undefined
+          ) : undefined}
+          </>
         }
       >
         {/* Eigener Flex-Container: hält die 3 Wizard-Tabs am Handy in EINER

@@ -524,7 +524,7 @@ export function buildInvoiceHtml(
   /* Items table */
   table.items { width: 100%; border-collapse: collapse; margin-bottom: 18px; }
   table.items thead { display: table-header-group; }
-  table.items thead th { border-bottom: 2px solid #333; padding: 6px 8px; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 700; color: #555; background: #fff; }
+  table.items thead th { border: 1px solid #999; padding: 6px 8px; font-size: 8pt; font-weight: 700; color: #000; background: #EEEADB; }
   table.items tbody td { padding: 7px 8px; border-bottom: 1px solid #e0e0e0; font-size: 8.5pt; vertical-align: top; }
   table.items tbody tr { page-break-inside: avoid; }
   table.items tbody tr:last-child td { border-bottom: 2px solid #333; }
@@ -678,13 +678,12 @@ ${(() => {
 <table class="items">
   <thead>
     <tr>
-      <th style="width:40px;text-align:center;">Pos.</th>
-      <th style="width:55px;text-align:right;">Menge</th>
-      <th style="width:45px;text-align:center;">Einh.</th>
+      <th style="width:34px;text-align:center;">Pos</th>
       <th style="text-align:left;">Beschreibung</th>
-      ${hidePrices ? "" : `<th style="width:75px;text-align:right;">Preis</th>
+      ${hidePrices ? `<th style="width:80px;text-align:right;">Menge</th>` : `<th style="width:80px;text-align:right;">Einzelpreis €</th>
       <th style="width:50px;text-align:right;">Rabatt</th>
-      <th style="width:85px;text-align:right;">Gesamt</th>`}
+      <th style="width:75px;text-align:right;">Menge</th>
+      <th style="width:85px;text-align:right;">Summe €</th>`}
     </tr>
   </thead>
   <tbody>
@@ -692,7 +691,7 @@ ${(() => {
       if (e.art === "kapitel") {
         // Kapitelüberschrift (Aufbau) — ohne Betrag, den trägt die Sammelzeile.
         return `<tr>
-      <td colspan="${hidePrices ? 4 : 7}" style="font-weight:700;background:#f2f2f2;padding-top:9px;">${escapeHtml(e.titel)}</td>
+      <td colspan="${hidePrices ? 3 : 6}" style="font-weight:700;background:#f2f2f2;padding-top:9px;">${escapeHtml(e.titel)}</td>
     </tr>`;
       }
       const item = (items || [])[e.index];
@@ -701,15 +700,17 @@ ${(() => {
       // 0,00-€-Spalte würde wie ein Fehler wirken). Sie sind eingerückt.
       const einrueckung = e.detail ? "padding-left:26px;color:#555;" : "";
       const fett = e.summenzeile ? "font-weight:700;" : "";
+      const mengeText = `${fmt(Number(item.menge))} ${item.einheit || "Stk."}`;
       return `<tr>
       <td style="text-align:center;color:#888;">${e.nummer}</td>
-      <td style="text-align:right;${e.detail ? "color:#555;" : ""}">${fmt(Number(item.menge))}</td>
-      <td style="text-align:center;color:#888;">${item.einheit || "Stk."}</td>
       <td style="${einrueckung}${fett}">${item.beschreibung}</td>
-      ${hidePrices ? "" : e.detail
-        ? `<td></td><td></td><td></td>`
-        : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
+      ${hidePrices
+        ? `<td style="text-align:right;">${mengeText}</td>`
+        : e.detail
+          ? `<td></td><td></td><td style="text-align:right;color:#555;">${mengeText}</td><td></td>`
+          : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
+      <td style="text-align:right;">${mengeText}</td>
       <td style="text-align:right;font-weight:600;">${fmtCurrency(Number(item.gesamtpreis))}</td>`}
     </tr>`;
     }).join("")}

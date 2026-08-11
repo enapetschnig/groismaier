@@ -161,6 +161,8 @@ export async function generateInvoicePdf(
     L.company.phone ? "Tel: " + L.company.phone : "",
     L.company.email,
     L.company.website,
+    // DGNR (Dachverbands-Nummer) wie am KingBill-Briefkopf des Kunden.
+    (L.company as any).dgnr ? "DGNR " + (L.company as any).dgnr : "",
   ].filter(Boolean);
   const hasAnyInfo = companyInfoLinesFull.length > 0 || !!firmenUid;
 
@@ -175,15 +177,18 @@ export async function generateInvoicePdf(
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(7.5);
     pdf.setTextColor(80, 80, 80);
+    // Kompakter Zeilenabstand: mit DGNR + UID sind es bis zu 8 Zeilen, und
+    // der Block muss über der DIN-Absenderzeile (45 mm) enden.
+    const infoZeilenAbstand = companyInfoLinesFull.length >= 6 ? 3.1 : 3.5;
     companyInfoLinesFull.forEach((line, i) => {
-      pdf.text(line, ml, y + 7 + i * 3.5);
+      pdf.text(line, ml, y + 6.5 + i * infoZeilenAbstand);
     });
     if (firmenUid) {
       pdf.setFont("helvetica", "bold");
-      pdf.text(`UID: ${firmenUid}`, ml, y + 7 + companyInfoLinesFull.length * 3.5);
+      pdf.text(`UID: ${firmenUid}`, ml, y + 6.5 + companyInfoLinesFull.length * infoZeilenAbstand);
       pdf.setFont("helvetica", "normal");
     }
-    logoBottomY = Math.max(logoBottomY, y + 7 + (companyInfoLinesFull.length + (firmenUid ? 1 : 0)) * 3.5);
+    logoBottomY = Math.max(logoBottomY, y + 6.5 + (companyInfoLinesFull.length + (firmenUid ? 1 : 0)) * infoZeilenAbstand);
   } else if (hasAnyInfo) {
     const infoStartX = logoRightX + 5;
     const availableInfoWidth = pageWidth - mr - infoStartX;
@@ -498,10 +503,18 @@ export async function generateInvoicePdf(
   }
 
   // ======= ITEMS TABLE =======
-  // Lieferschein: ohne Preisspalten
+  // Spaltenlayout nach der KingBill-Vorlage des Kunden (Angebot 2026-033):
+  //   Pos | Beschreibung | Einzelpreis € | Menge (mit Einheit) | Summe €
+  // Die Rabattspalte erscheint nur, wenn mindestens eine sichtbare Position
+  // einen Rabatt trägt — die Vorlage kennt sie gar nicht.
+  const hatRabattSpalte = !hidePrices && items.some((it) => (Number((it as any).rabatt_prozent) || 0) > 0);
   const tableHead = hidePrices
-    ? [["Pos.", "Menge", "Einheit", "Beschreibung"]]
-    : [["Pos.", "Menge", "Einheit", "Beschreibung", "Preis (netto)", "Rabatt", "Gesamt (netto)"]];
+    ? [["Pos", "Beschreibung", "Menge"]]
+    : hatRabattSpalte
+      ? [["Pos", "Beschreibung", "Einzelpreis €", "Rabatt", "Menge", "Summe €"]]
+      : [["Pos", "Beschreibung", "Einzelpreis €", "Menge", "Summe €"]];
+  const SPALTEN_ANZAHL = tableHead[0].length;
+  const COL_BESCHREIBUNG = 1;
 
   // Angebots-/Rechnungs-Positionen nach gängigem Layout (z.B. sevDesk,
   // Lexoffice): enge Row-Höhe, Trennlinie direkt unter dem letzten
@@ -579,13 +592,20 @@ export async function generateInvoicePdf(
   const detailRows = new Set<number>();
   const summenRows = new Set<number>();
   const tableBody: any[][] = [];
+  // Kumulierte Zeilensummen (Index = Body-Zeile) für „Übertrag".
+  const uebertragNachZeile: Record<number, number> = {};
+  const letzterUebertrag = () => {
+    const idx = Object.keys(uebertragNachZeile).map(Number);
+    return idx.length ? uebertragNachZeile[Math.max(...idx)] : 0;
+  };
   druckplan.forEach((e) => {
     const rowIdx = tableBody.length;
     if (e.art === "kapitel") {
       kapitelRows.add(rowIdx);
       // Eine Zelle über die volle Breite — die Kapitelüberschrift beginnt
       // am linken Rand, nicht erst in der Beschreibungsspalte.
-      tableBody.push([{ content: e.titel, colSpan: hidePrices ? 4 : 7 }]);
+      tableBody.push([{ content: e.titel, colSpan: SPALTEN_ANZAHL }]);
+      uebertragNachZeile[rowIdx] = letzterUebertrag();
       return;
     }
     const item = items[e.index];
@@ -600,24 +620,27 @@ export async function generateInvoicePdf(
     // Nur Kurztext in die Zelle. Langtext wird in didDrawCell manuell
     // darunter gezeichnet; die zusätzliche Höhe reserviert didParseCell
     // via minCellHeight.
-    const row = [
-      e.nummer,
-      fmtMenge(p.menge),
-      item.einheit || "Stk.",
-      kurztext,
-    ];
-    if (!hidePrices) {
+    const mengeText = `${fmtMenge(p.menge)} ${item.einheit || "Stk."}`;
+    const row = [e.nummer, kurztext];
+    if (hidePrices) {
+      row.push(mengeText);
+    } else if (e.detail) {
       // Detailzeilen tragen keinen eigenen Betrag (gesamtpreis 0). Eine
       // 0,00-€-Spalte würde wie ein Fehler wirken → Spalten bleiben leer.
-      if (e.detail) {
-        row.push("", "", "");
-      } else {
-        row.push(fmtCurrency(p.einzelpreis));
-        row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
-        row.push(fmtCurrency(p.gesamt));
-      }
+      row.push("");
+      if (hatRabattSpalte) row.push("");
+      row.push(mengeText, "");
+    } else {
+      row.push(fmtCurrency(p.einzelpreis));
+      if (hatRabattSpalte) row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
+      row.push(mengeText, fmtCurrency(p.gesamt));
     }
     tableBody.push(row);
+    // Laufende Positionssumme für die Übertrag-Zeilen am Seitenende
+    // (KingBill-Vorlage). Detailzeilen tragen keinen eigenen Betrag.
+    uebertragNachZeile[rowIdx] = r2(
+      (uebertragNachZeile[rowIdx - 1] ?? letzterUebertrag()) + (e.detail ? 0 : p.gesamt),
+    );
   });
 
   // Build totals rows for the table footer.
@@ -730,7 +753,7 @@ export async function generateInvoicePdf(
   const footerH = 8 + footerLines.length * 4 + (L.footer.show_page_numbers ? 4 : 0);
 
   // Spaltenbreite für Beschreibungsspalte berechnen (für Höhen-Schätzung).
-  const fixedWidths = hidePrices ? 12 + 18 + 18 : 12 + 18 + 18 + 22 + 14 + 24;
+  const fixedWidths = hidePrices ? 10 + 26 : 10 + 24 + (hatRabattSpalte ? 14 : 0) + 22 + 24;
   const descWidth = contentWidth - fixedWidths - 4; // grob; Padding/Border
   // autoTable rendert den Body. WICHTIG: margin.bottom reserviert nur den
   // Footer + einen kleinen Puffer – nicht den kompletten Closing-Bereich.
@@ -740,21 +763,24 @@ export async function generateInvoicePdf(
   //
   // Stattdessen prüfen wir NACH autoTable, ob das Closing noch auf die
   // aktuelle Seite passt; wenn nein, addPage() (siehe unten).
+  // Übertrag (KingBill-Vorlage): Summe am Seitenende + Wiederaufnahme oben.
+  const seitenEnde: Record<number, { y: number; summe: number }> = {};
   autoTable(pdf, {
     startY: y,
     head: tableHead,
     body: tableBody,
     theme: "plain",
     rowPageBreak: "avoid",
-    margin: { left: ml, right: mr, bottom: footerH + 12 },
+    margin: { left: ml, right: mr, top: 26, bottom: footerH + 12 },
     headStyles: {
-      fillColor: [240, 240, 240],
+      // Beige Kopfzeile mit feinem Rahmen — exakt die KingBill-Vorlage.
+      fillColor: [238, 234, 219],
       textColor: [0, 0, 0],
       fontStyle: "bold",
-      fontSize: 8,
-      cellPadding: { top: 3, bottom: 3, left: 2, right: 2 },
-      lineWidth: { bottom: 0.5 },
-      lineColor: [0, 0, 0],
+      fontSize: 9,
+      cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+      lineWidth: 0.2,
+      lineColor: [140, 140, 140],
     },
     bodyStyles: {
       fontSize: KURZ_FONT_SIZE,
@@ -764,15 +790,28 @@ export async function generateInvoicePdf(
       lineColor: [190, 190, 190],
       valign: "top",
     },
-    columnStyles: {
-      0: { halign: "center", cellWidth: 12, textColor: [0, 0, 0] },
-      1: { halign: "right", cellWidth: 18 },
-      2: { halign: "center", cellWidth: 18, textColor: [0, 0, 0] },
-      3: { halign: "left" },
-      4: { halign: "right", cellWidth: 22 },
-      5: { halign: "right", cellWidth: 14 },
-      6: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-    },
+    columnStyles: hidePrices
+      ? {
+          0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
+          1: { halign: "left" },
+          2: { halign: "right", cellWidth: 26 },
+        }
+      : hatRabattSpalte
+        ? {
+            0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
+            1: { halign: "left" },
+            2: { halign: "right", cellWidth: 24 },
+            3: { halign: "right", cellWidth: 14 },
+            4: { halign: "right", cellWidth: 22 },
+            5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
+          }
+        : {
+            0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
+            1: { halign: "left" },
+            2: { halign: "right", cellWidth: 24 },
+            3: { halign: "right", cellWidth: 22 },
+            4: { halign: "right", cellWidth: 24, fontStyle: "bold" },
+          },
     didParseCell: (data: any) => {
       // ── Kapitel / Detail / Sammelzeile optisch absetzen ──────────────────
       if (data.section === "body") {
@@ -787,7 +826,7 @@ export async function generateInvoicePdf(
           data.cell.styles.fontStyle = "bold";
         } else if (detailRows.has(ri)) {
           data.cell.styles.textColor = [90, 90, 90];
-          if (data.column.index === 3) {
+          if (data.column.index === COL_BESCHREIBUNG) {
             data.cell.styles.cellPadding = { top: CELL_PAD_TOP, bottom: CELL_PAD_BOTTOM, left: 2 + INDENT_MM, right: 2 };
           }
         }
@@ -796,7 +835,7 @@ export async function generateInvoicePdf(
       // vorhanden ist. autoTable nimmt das Maximum aller Zellen-Höhen
       // der Row, deshalb reicht es, den Wert in der Beschreibungsspalte
       // zu setzen.
-      if (data.section === "body" && data.column.index === 3) {
+      if (data.section === "body" && data.column.index === COL_BESCHREIBUNG) {
         const info = langtextInfo[data.row.index];
         if (info) {
           try {
@@ -820,10 +859,21 @@ export async function generateInvoicePdf(
       }
     },
     didDrawCell: (data: any) => {
+      // Seitenende-Tracking für die Übertrag-Zeilen: je Dokumentseite die
+      // Unterkante der letzten Body-Zeile + die dortige laufende Summe.
+      if (data.section === "body" && data.column.index === 0) {
+        try {
+          const seite = (pdf as any).internal.getCurrentPageInfo().pageNumber as number;
+          seitenEnde[seite] = {
+            y: data.cell.y + data.cell.height,
+            summe: uebertragNachZeile[data.row.index] ?? 0,
+          };
+        } catch { /* Tracking ist nur Kosmetik */ }
+      }
       // autoTable hat den Kurztext in 9pt gezeichnet. Wir malen nun den
       // Langtext direkt darunter (ohne Overpaint, ohne Bottom-Border
       // nachzuzeichnen — die zieht autoTable selbst).
-      if (data.section === "body" && data.column.index === 3) {
+      if (data.section === "body" && data.column.index === COL_BESCHREIBUNG) {
         const info = langtextInfo[data.row.index];
         if (info) {
           try {
@@ -849,6 +899,38 @@ export async function generateInvoicePdf(
       }
     },
   });
+
+  // ── Übertrag-Zeilen (KingBill-Vorlage): am Ende jeder Tabellenseite die
+  //    laufende Summe, auf der Folgeseite oben die Wiederaufnahme. ──
+  if (!hidePrices && !hideTotals) {
+    const seiten = Object.keys(seitenEnde).map(Number).sort((a, b) => a - b);
+    if (seiten.length > 1) {
+      const aktuelleSeite = (pdf as any).internal.getCurrentPageInfo().pageNumber as number;
+      const wert = (n: number) => fmtCurrency(n);
+      seiten.forEach((seite, i) => {
+        pdf.setPage(seite);
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(9);
+        pdf.setTextColor(0, 0, 0);
+        if (i < seiten.length - 1) {
+          const e = seitenEnde[seite];
+          pdf.setFillColor(238, 234, 219);
+          pdf.rect(ml, e.y + 2, contentWidth, 7, "F");
+          pdf.text("Übertrag", ml + 2, e.y + 6.8);
+          pdf.text(wert(e.summe), ml + contentWidth - 2, e.y + 6.8, { align: "right" });
+        }
+        if (i > 0) {
+          const vorher = seitenEnde[seiten[i - 1]];
+          pdf.setFillColor(238, 234, 219);
+          pdf.rect(ml, 16, contentWidth, 7, "F");
+          pdf.text("Übertrag", ml + 2, 20.8);
+          pdf.text(wert(vorher.summe), ml + contentWidth - 2, 20.8, { align: "right" });
+        }
+      });
+      pdf.setPage(aktuelleSeite);
+      pdf.setFont("helvetica", "normal");
+    }
+  }
 
   y = (pdf as any).lastAutoTable.finalY;
 
