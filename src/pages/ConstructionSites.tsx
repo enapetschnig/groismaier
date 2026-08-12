@@ -62,7 +62,7 @@ const ConstructionSites = () => {
         <KBToolbarButton icon={FolderKanban} label="Projekte" onClick={() => navigate("/projects")} />
       </KBToolbar>
 
-      <main className="container mx-auto max-w-4xl px-3 py-4 sm:px-4 sm:py-6">
+      <main className="mx-auto w-full max-w-4xl px-3 py-4 sm:px-4 sm:py-6">
         <p className="mb-3 text-sm text-muted-foreground">
           Alle laufenden Projekte mit Baustellen-Adresse. Antippen öffnet die Projektübersicht.
         </p>

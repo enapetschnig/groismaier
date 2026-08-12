@@ -188,7 +188,7 @@ export default function MyDocuments() {
         onBack={zurueck}
       />
 
-      <div className="container mx-auto max-w-3xl px-3 py-4 sm:px-4 sm:py-6">
+      <div className="mx-auto w-full max-w-3xl px-3 py-4 sm:px-4 sm:py-6">
         {loading ? (
           <p className="py-12 text-center text-muted-foreground">Lädt...</p>
         ) : (

@@ -273,7 +273,7 @@ const ProjectDetail = () => {
     return (
       <div className="min-h-screen bg-background">
         <PageHeader title="Unbekannter Ordner" backPath={`/projects/${projectId}`} />
-        <main className="container mx-auto px-4 py-10 text-center">
+        <main className="mx-auto w-full px-4 py-10 text-center">
           <p className="text-muted-foreground">Diesen Projektordner gibt es nicht.</p>
         </main>
       </div>
@@ -296,7 +296,7 @@ const ProjectDetail = () => {
         {/* Zurück führt ins PROJEKT, nicht in die Projektliste — sonst verliert
             man nach jedem Ordner-Besuch den Projektkontext. */}
         <PageHeader title={`${projectName} - Fotos`} backPath={`/projects/${projectId}`} />
-        <main className="container mx-auto px-4 py-6 max-w-5xl">
+        <main className="mx-auto w-full px-4 py-6 max-w-5xl">
           {projectId && <ProjectPhotoGallery projectId={projectId} />}
         </main>
       </div>
@@ -307,7 +307,7 @@ const ProjectDetail = () => {
     <div className="min-h-screen bg-background">
       <PageHeader title={`${projectName} - ${titleMap[type]}`} backPath={`/projects/${projectId}`} />
 
-      <main className="container mx-auto px-3 sm:px-4 py-6 max-w-5xl">
+      <main className="mx-auto w-full px-3 sm:px-4 py-6 max-w-5xl">
         <Card>
           <CardHeader>
             <CardTitle>{titleMap[type]}</CardTitle>

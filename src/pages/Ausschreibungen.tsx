@@ -587,7 +587,7 @@ export default function Ausschreibungen() {
           />
         </KBToolbar>
 
-        <div id="lv-druck" className="container mx-auto px-3 sm:px-4 py-4 max-w-[1200px] space-y-4">
+        <div id="lv-druck" className="mx-auto w-full px-3 sm:px-4 py-4 max-w-[1200px] space-y-4">
           {/* ── Kopf: Vorhaben + laufende Summen ── */}
           <div className="kb-panel p-3 sm:p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
@@ -817,7 +817,7 @@ export default function Ausschreibungen() {
         onChange={dateiGewaehlt}
       />
 
-      <div className="container mx-auto px-3 sm:px-4 py-4 max-w-[1100px]">
+      <div className="mx-auto w-full px-3 sm:px-4 py-4 max-w-[1100px]">
         {loading ? (
           <p className="text-center py-10 text-muted-foreground">Lädt…</p>
         ) : lvs.length === 0 ? (

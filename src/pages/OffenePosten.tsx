@@ -302,7 +302,7 @@ export default function OffenePosten() {
         <KBToolbarButton icon={SearchIcon} iconClassName="text-kb-yellow" label="Eingänge anzeigen" onClick={() => void zeigeEingaenge()} />
       </KBToolbar>
 
-      <div className="container mx-auto max-w-[1600px] px-3 py-4 sm:px-4 sm:py-6">
+      <div className="mx-auto w-full px-3 py-4 sm:px-4 sm:py-6">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:gap-4">
           {/* ── Sidebar wie im Original ── */}
           <aside className="kb-panel w-full shrink-0 p-3 lg:sticky lg:top-20 lg:w-64">

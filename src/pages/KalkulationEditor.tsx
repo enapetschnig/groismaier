@@ -731,7 +731,7 @@ export default function KalkulationEditor() {
         </div>
       </KBToolbar>
 
-      <div className="mx-auto max-w-[1500px] space-y-4 px-3 py-4 sm:px-4">
+      <div className="mx-auto w-full space-y-4 px-3 py-4 sm:px-4">
         {/* Handy-Aktionsleiste: große Flächen zum Antippen */}
         <div className="flex gap-2 sm:hidden">
           <KBButton className="h-11 min-w-0 flex-1 justify-center" icon={FileText} label="Angebot"

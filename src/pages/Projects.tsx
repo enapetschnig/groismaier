@@ -347,7 +347,7 @@ const Projects = () => {
         onCreated={() => { setShowNewDialog(false); fetchProjects(); }}
       />
 
-      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 max-w-6xl">
+      <main className="mx-auto w-full max-w-[1400px] px-3 sm:px-4 lg:px-6 py-4 sm:py-6">
         {/* Filter & Suche im kb-panel — gleiche Optik wie Kunden-/Artikelmaske. */}
         <div className="kb-panel mb-4 p-3">
         {/* Status-Filter */}

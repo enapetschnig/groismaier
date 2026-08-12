@@ -184,7 +184,7 @@ export default function FreelancerHours() {
         rightActions={<KBToolbarButton icon={LogOut} label="Abmelden" onClick={logout} />}
       />
 
-      <main className="container mx-auto max-w-2xl space-y-4 px-3 py-4 sm:px-4 sm:py-6">
+      <main className="mx-auto w-full max-w-2xl space-y-4 px-3 py-4 sm:px-4 sm:py-6">
         <Card className="kb-panel">
           <CardHeader className="pb-3">
             <CardTitle className="text-base">Neue Projektstunden</CardTitle>

@@ -32,7 +32,7 @@ const NotFound = () => {
         onBack={canGoBack ? () => navigate(-1) : undefined}
       />
 
-      <div className="container mx-auto max-w-xl px-4 py-8">
+      <div className="mx-auto w-full max-w-xl px-4 py-8">
         <div className="kb-panel p-6 text-center">
           <SearchX className="mx-auto mb-3 h-12 w-12 text-kb-icon-gray" strokeWidth={1.75} />
           <p className="text-3xl font-extrabold text-kb-blue-dark">404</p>

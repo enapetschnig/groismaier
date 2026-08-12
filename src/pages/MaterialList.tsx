@@ -236,7 +236,7 @@ const MaterialList = () => {
     <div className="min-h-screen bg-background">
       <PageHeader title={`${projectName} - Material`} backPath={`/projects/${projectId}`} />
 
-      <main className="container mx-auto px-4 py-6 max-w-3xl space-y-4">
+      <main className="mx-auto w-full px-4 py-6 max-w-3xl space-y-4">
         {/* Verbrauchsübersicht */}
         {summary.length > 0 && (
           <Card>

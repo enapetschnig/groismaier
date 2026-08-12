@@ -676,7 +676,7 @@ export default function Admin() {
         />
       </KBToolbar>
 
-      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-8">
+      <main className="mx-auto w-full max-w-[1600px] px-3 sm:px-4 lg:px-6 py-4 sm:py-6 lg:py-8">
         <Tabs defaultValue={initialTab} className="w-full">
           {/* h-auto + h-11-Trigger: die shadcn-Standardhöhe (32 px) ist auf der
               Baustelle mit Handschuhen nicht treffsicher bedienbar. */}

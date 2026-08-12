@@ -343,10 +343,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
 
   return (
     // KingBill-Layout: Vorschau-Panel + vertikale Aktions-Buttonspalte rechts daneben.
-    <div className="hidden xl:flex w-[40%] shrink-0 sticky top-20 self-start items-start gap-2">
+    <div className="hidden xl:flex w-[50%] max-w-[1100px] shrink-0 sticky top-20 self-start items-start gap-2">
       <div
         className="kb-panel flex min-w-0 flex-1 flex-col overflow-hidden"
-        style={{ height: "calc(100vh - 6.5rem)" }}
+        style={{ height: "calc(100vh - 5rem)" }}
       >
         {/* Kopf: blaue KingBill-Leiste mit Netto/Brutto oben rechts */}
         <div className="kb-toolbar min-h-0 gap-2 px-2.5 py-1.5">
@@ -356,6 +356,28 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
               Beleg-Vorschau
             </span>
             {generating && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-white/80" />}
+          </div>
+          {/* Logo/Summe sitzen jetzt in der blauen Leiste — die frühere zweite
+              Optionszeile entfiel, damit die A4-Seite mehr Höhe bekommt. */}
+          <div className="ml-2 flex shrink-0 items-center gap-2.5 text-xs text-white/90">
+            <label className="flex cursor-pointer select-none items-center gap-1.5" title="Logo auf dem Beleg anzeigen">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-white"
+                checked={showLogo}
+                onChange={(e) => setShowLogo(e.target.checked)}
+              />
+              Logo
+            </label>
+            <label className="flex cursor-pointer select-none items-center gap-1.5" title="Summenblock auf dem Beleg anzeigen">
+              <input
+                type="checkbox"
+                className="h-3.5 w-3.5 accent-white"
+                checked={showSummary}
+                onChange={(e) => setShowSummary(e.target.checked)}
+              />
+              Summe
+            </label>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {netto !== undefined && brutto !== undefined && (
@@ -403,43 +425,6 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           </div>
         </div>
 
-        {/* KingBill-Optionsleiste: Logo / Summe + Druckvorlage / Variable */}
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-muted/40 px-2.5 py-1.5 text-xs">
-          <label className="flex cursor-pointer items-center gap-1.5 select-none">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-kb-blue-dark"
-              checked={showLogo}
-              onChange={(e) => setShowLogo(e.target.checked)}
-            />
-            Logo
-          </label>
-          <label className="flex cursor-pointer items-center gap-1.5 select-none">
-            <input
-              type="checkbox"
-              className="h-3.5 w-3.5 accent-kb-blue-dark"
-              checked={showSummary}
-              onChange={(e) => setShowSummary(e.target.checked)}
-            />
-            Summe
-          </label>
-          <select
-            className="h-6 rounded border border-input bg-background px-1 text-xs"
-            defaultValue="standard"
-            title="Druckvorlage"
-          >
-            <option value="standard">Druckvorlage</option>
-          </select>
-          <select
-            className="h-6 rounded border border-input bg-background px-1 text-xs text-muted-foreground"
-            defaultValue=""
-            title="Platzhalter-Variable (kommt später)"
-            disabled
-          >
-            <option value="">Variable</option>
-          </select>
-        </div>
-
         <div className="flex-1 overflow-hidden bg-gray-200">
           {error ? (
             <div className="flex h-full items-center justify-center p-4">
@@ -451,7 +436,9 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           ) : pdfUrl ? (
             // Eigene Scrollbar: der PDF-Viewer im iframe scrollt selbst.
             <iframe
-              src={`${pdfUrl}#toolbar=0&navpanes=0`}
+              /* view=Fit: ganze Seite sichtbar statt auf Breite skaliert und unten
+               abgeschnitten — der Beleg soll „als ganzes Dokument" lesbar sein. */
+            src={`${pdfUrl}#toolbar=0&navpanes=0&view=Fit`}
               className="h-full w-full border-0"
               title="Beleg Live-Vorschau"
             />

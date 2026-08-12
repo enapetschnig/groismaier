@@ -541,9 +541,10 @@ export default function InvoiceDetail() {
    *
    * Nicht am Viewport festgemacht, sondern am tatsächlich verfügbaren Platz —
    * am Handy ist es immer eng, am Desktop wird der Editor durch die
-   * angedockte Live-Vorschau ebenfalls schmal (auf 1440 px bleiben nur ~770 px
-   * übrig — die acht Tabellenspalten quetschen Mengen- und Preisfeld dann auf
-   * ~46 px zusammen, unlesbar). Unter POS_TABLE_MIN_PX wechselt die Darstellung
+   * angedockte Live-Vorschau ebenfalls schmal (die Maske nutzt seit 08/2026 die
+   * volle Bildschirmbreite, die Vorschau nimmt davon 50 % — auf 1920 px bleiben
+   * links ~870 px übrig; die acht Tabellenspalten quetschen Mengen- und
+   * Preisfeld dann unlesbar zusammen). Unter POS_TABLE_MIN_PX wechselt die Darstellung
    * deshalb auf eine Karte je Position. Praktische Faustregel: Live-Vorschau
    * offen → Karten, Vorschau zugeklappt → die gewohnte KingBill-Tabelle.
    */
@@ -4210,7 +4211,7 @@ export default function InvoiceDetail() {
     return (
       <div className="kb-page min-h-screen">
         <KBToolbar onBack={zurueck} title={`Storno: ${form.nummer}`} />
-        <div className="container mx-auto px-4 py-6 max-w-[800px]">
+        <div className="mx-auto w-full px-4 py-6 max-w-[800px]">
           <div className="space-y-6">
             <Card className="kb-panel">
               <CardContent className="pt-6 text-center space-y-4">
@@ -4368,7 +4369,7 @@ export default function InvoiceDetail() {
         </div>
       </KBToolbar>
 
-      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+      <div className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6">
         {/* KingBill-Layout: Editor links, permanente Beleg-Live-Vorschau rechts (xl+) */}
         <div className="xl:flex xl:items-start xl:gap-4">
         {/* KingBill: schmale Icon-Leiste ganz links (Katalog · Position weg ·

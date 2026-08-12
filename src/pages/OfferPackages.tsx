@@ -302,7 +302,7 @@ export default function OfferPackages() {
         />
       </KBToolbar>
 
-      <div className="container mx-auto max-w-4xl px-3 py-4 sm:px-4 sm:py-6">
+      <div className="mx-auto w-full max-w-4xl px-3 py-4 sm:px-4 sm:py-6">
         {packages.length > 0 && (
           <button
             type="button"

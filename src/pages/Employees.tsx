@@ -357,7 +357,7 @@ export default function Employees() {
         )}
       </KBToolbar>
 
-      <div className="container mx-auto p-3 sm:p-4">
+      <div className="mx-auto w-full max-w-[1600px] p-3 sm:p-4">
       {employees.length === 0 && (
         <div className="kb-panel p-8 text-center">
           <User className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />

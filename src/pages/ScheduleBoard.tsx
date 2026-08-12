@@ -540,7 +540,7 @@ export default function ScheduleBoard() {
         )}
       </KBToolbar>
 
-      <main className="mx-auto w-full max-w-[1800px] px-3 py-3 sm:px-4 sm:py-4">
+      <main className="mx-auto w-full px-3 py-3 sm:px-4 sm:py-4">
         {/* Zeitraum-Navigation */}
         <div className="kb-panel p-2 sm:p-3">
           <ScheduleHeader

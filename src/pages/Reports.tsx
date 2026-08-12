@@ -293,7 +293,7 @@ const Reports = () => {
         onBack={zurueck}
       />
 
-      <main className="container mx-auto max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
+      <main className="mx-auto w-full max-w-6xl px-3 py-4 sm:px-4 sm:py-6">
         {/* Der Seitentitel steht bereits in der blauen Leiste — hier nur noch
             die Erklärung, sonst stand „Projektberichte & Dateien" doppelt. */}
         <p className="mb-4 text-sm text-muted-foreground">

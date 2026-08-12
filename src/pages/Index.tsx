@@ -337,7 +337,7 @@ export default function Index() {
           style={{ background: pickerlFaellig.some(f => f.tage < 0) ? "#fef2f2" : "#fffbeb" }}
           onClick={() => navigate("/fahrzeuge")}
         >
-          <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3">
+          <div className="mx-auto w-full max-w-[1600px] px-3 sm:px-4 lg:px-6 py-3">
             <div className="flex items-center gap-3">
               <div className={`h-9 w-9 rounded-full flex items-center justify-center shrink-0 ${
                 pickerlFaellig.some(f => f.tage < 0) ? "bg-red-500" : "bg-amber-500"}`}>
@@ -369,7 +369,7 @@ export default function Index() {
           className="bg-amber-50 border-b border-amber-200 cursor-pointer hover:bg-amber-100 transition-colors"
           onClick={() => navigate("/admin")}
         >
-          <div className="container mx-auto px-3 sm:px-4 lg:px-6 py-3">
+          <div className="mx-auto w-full max-w-[1600px] px-3 sm:px-4 lg:px-6 py-3">
             <div className="flex items-center gap-3">
               <div className="h-9 w-9 rounded-full bg-amber-500 flex items-center justify-center shrink-0">
                 <Bell className="h-5 w-5 text-white" />
@@ -389,7 +389,7 @@ export default function Index() {
       )}
 
       {/* Main Content — KingBill-Startmaske */}
-      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6">
+      <main className="mx-auto w-full max-w-[1600px] px-3 sm:px-4 lg:px-6 py-4 sm:py-6">
 
         {/* Meine Einteilung — für Mitarbeiter und Vorarbeiter prominent oben */}
         {user && !isAdmin && (

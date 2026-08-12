@@ -901,7 +901,7 @@ export default function HoursReport() {
           ohne Toolbar eine Sackgasse (kein Weg zurück zum Start). */}
       <KBToolbar onBack={zurueck} title="Stundenauswertung" />
 
-      <div className="container mx-auto p-4 space-y-6">
+      <div className="mx-auto w-full p-4 space-y-6">
       <Tabs defaultValue="mitarbeiter" className="w-full">
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 h-auto">
           <TabsTrigger value="mitarbeiter">

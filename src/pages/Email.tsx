@@ -248,7 +248,7 @@ export default function Email() {
     <div className="kb-page min-h-screen">
       <KBToolbar onBack={zurueck} title="E-Mail" />
 
-      <div className="container mx-auto max-w-[1500px] px-3 py-4 sm:px-4">
+      <div className="mx-auto w-full px-3 py-4 sm:px-4">
         {/* Postfach-Reiter */}
         <div className="mb-3 flex flex-wrap items-center gap-1">
           {POSTFAECHER.map((p) => (

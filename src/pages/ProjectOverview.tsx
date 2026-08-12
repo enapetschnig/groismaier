@@ -537,7 +537,7 @@ const ProjectOverview = () => {
         <KBToolbarButton icon={Settings} label="Bearbeiten" onClick={openEditDialog} />
       </KBToolbar>
 
-      <main className="container mx-auto px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-28 max-w-4xl">
+      <main className="mx-auto w-full px-3 sm:px-4 lg:px-6 py-4 sm:py-6 pb-28 max-w-4xl">
         <div className="mb-6">
           <div className="flex items-center gap-2 mb-2">
             {editingName ? (

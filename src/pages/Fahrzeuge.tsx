@@ -1208,7 +1208,7 @@ export default function Fahrzeuge() {
         onChanged={fetchAll}
       />
 
-      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+      <div className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6">
         <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">
 
           {/* ── Linke Filterspalte ── */}

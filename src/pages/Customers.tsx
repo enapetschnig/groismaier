@@ -542,7 +542,7 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
           />
         </KBToolbar>
 
-        <div className="container mx-auto px-4 py-6 max-w-6xl">
+        <div className="mx-auto w-full px-4 py-6 max-w-6xl">
           <div className="flex items-center gap-2 flex-wrap mb-4">
             {(selectedCustomer as any).kundennummer && (
               <span className="text-sm font-mono font-bold">{(selectedCustomer as any).kundennummer}</span>
@@ -720,7 +720,7 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
         <KBToolbarButton className="hidden md:inline-flex" icon={Printer} label="Liste drucken" onClick={() => window.print()} />
       </KBToolbar>
 
-      <div className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-[1600px]">
+      <div className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6">
         <div className="flex flex-col lg:flex-row lg:items-start gap-3 lg:gap-4">
 
           {/* ── Linke KingBill-Filterspalte ── */}

@@ -275,7 +275,7 @@ const MyHours = () => {
         backLabel="Zurück zur Startmaske"
       />
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-7xl space-y-4">
+      <main className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6 max-w-7xl space-y-4">
         <Card className="kb-panel">
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">

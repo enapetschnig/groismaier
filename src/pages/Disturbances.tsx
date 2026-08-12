@@ -209,7 +209,7 @@ const Disturbances = () => {
         />
       </KBToolbar>
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-4xl">
+      <main className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6 max-w-4xl">
         {/* Am Handy die wichtigste Aktion groß und unmissverständlich */}
         <Button
           className="sm:hidden w-full h-12 text-base mb-3"

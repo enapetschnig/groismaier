@@ -823,7 +823,7 @@ function ProjectTableRow({
               Viewport-Breite begrenzt und mitgescrollt fixiert (sticky), damit
               am Handy nichts rechts abgeschnitten liegt. Ab md normale Breite. */}
           <TableCell colSpan={12} className="p-0">
-            <div className="sticky left-0 w-[calc(100vw-2rem)] p-4 md:static md:w-auto">
+            <div className="sticky left-0 w-[calc(100vw-1.5rem)] p-4 md:static md:w-auto">
             {/* Soll/Ist-Stunden + Aufschlüsselung je Mitarbeiter — zuoberst,
                 weil das die meistgestellte Frage der Nachkalkulation ist. */}
             <StundenAufschluesselung row={row} />

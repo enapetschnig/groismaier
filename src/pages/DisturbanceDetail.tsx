@@ -580,7 +580,7 @@ const DisturbanceDetail = () => {
     return (
       <div className="kb-page min-h-screen">
         <KBToolbar onBack={zurueck} title="Regiebericht nicht gefunden" />
-        <main className="container mx-auto px-4 py-6 text-center">
+        <main className="mx-auto w-full px-4 py-6 text-center">
           <p>Der angeforderte Regiebericht konnte nicht gefunden werden.</p>
           <Button onClick={() => navigate("/disturbances")} className="mt-4">
             Zurück zur Übersicht
@@ -618,7 +618,7 @@ const DisturbanceDetail = () => {
         />
       </KBToolbar>
 
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-6 max-w-4xl space-y-4">
+      <main className="mx-auto w-full px-3 sm:px-4 py-4 sm:py-6 max-w-4xl space-y-4">
         {/* Kopf: Kunde + Status */}
         <Card className="kb-panel">
           <CardContent className="p-4 space-y-3">
