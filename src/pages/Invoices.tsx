@@ -9,6 +9,7 @@ import { useZurueck } from "@/hooks/useZurueck";
 import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
+import { istEntwurfBeleg, hatPlatzhalterNummer, nummerFuerAnzeige } from "@/lib/belegEntwurf";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { formatDateShort } from "@/lib/dateFormat";
 import { EmptyState } from "@/components/EmptyState";
@@ -310,6 +311,20 @@ export default function Invoices() {
     e.stopPropagation();
     const inv = invoices.find(i => i.id === invoiceId);
     if (!inv) return;
+
+    // K1: Ein Rechnungs-ENTWURF darf NICHT über die Statusspalte ausgestellt
+    // werden — er hätte sonst für immer die Platzhalter-Nummer und wäre
+    // wegen isLocked nicht mehr korrigierbar. Ausstellen geht nur im Beleg
+    // über „Rechnung erstellen" (dort fällt die laufende Nummer).
+    if (istEntwurfBeleg(inv.typ, inv.status) || hatPlatzhalterNummer(inv.nummer)) {
+      toast({
+        variant: "destructive",
+        title: "Beleg ist noch ein Entwurf",
+        description: "Bitte den Beleg öffnen und dort mit »Rechnung erstellen« ausstellen — dabei wird die Belegnummer vergeben.",
+        duration: 8000,
+      });
+      return;
+    }
 
     // Prevent invalid backward status transitions
     const terminalStatuses = ["storniert", "bezahlt", "verrechnet"];
@@ -636,8 +651,7 @@ export default function Invoices() {
   /** Entwuerfe tragen intern eine Platzhalter-Nummer (ENTWURF-...), weil die
    *  laufende Nummer erst beim Erstellen vergeben wird. In der Liste soll
    *  davon nur "Entwurf" zu sehen sein. */
-  const zeigeNummer = (nummer: string | null | undefined): string =>
-    String(nummer || "").startsWith("ENTWURF-") ? "Entwurf" : (nummer || "—");
+  const zeigeNummer = (nummer: string | null | undefined): string => nummerFuerAnzeige(nummer);
 
   /**
    * Betreff-Spalte einheitlich: vorne IMMER die Bezeichnung am Dokument und
@@ -1053,13 +1067,13 @@ export default function Invoices() {
                     <div className="flex justify-between">
                       <span>Summe Netto</span>
                       <span className="font-bold tabular-nums">
-                        € {filtered.reduce((s, i) => s + Number((i as any).netto_summe || 0), 0).toFixed(2)}
+                        € {filtered.filter(i => i.status !== "entwurf").reduce((s, i) => s + Number((i as any).netto_summe || 0), 0).toFixed(2)}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Summe Brutto</span>
                       <span className="font-bold tabular-nums">
-                        € {filtered.reduce((s, i) => s + Number(i.brutto_summe || 0), 0).toFixed(2)}
+                        € {filtered.filter(i => i.status !== "entwurf").reduce((s, i) => s + Number(i.brutto_summe || 0), 0).toFixed(2)}
                       </span>
                     </div>
                   </>

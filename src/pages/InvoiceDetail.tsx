@@ -16,6 +16,7 @@ import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Pack
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
+import { istEntwurfBeleg, hatPlatzhalterNummer, darfAusgegebenWerden as belegDarfRaus } from "@/lib/belegEntwurf";
 import { BelegMailDialog } from "@/components/BelegMailDialog";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
@@ -890,7 +891,9 @@ export default function InvoiceDetail() {
   const istEntwurf = istRechnungsartig && (isNew || form.status === "entwurf");
   /** Beleg darf das Haus verlassen: ausgestellt (bzw. Angebot gespeichert)
    *  und seither unverändert. */
-  const darfAusgegebenWerden = !isNew && !isDirty && !istEntwurf;
+  const darfAusgegebenWerden = belegDarfRaus({
+    istNeu: isNew, istGeaendert: isDirty, typ: form.typ, status: form.status, nummer: form.nummer,
+  });
 
   // Angebot→Rechnung Vergleichs-Dialog
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
@@ -2699,7 +2702,10 @@ export default function InvoiceDetail() {
   // (Rechnung, Anzahlungsrechnung, Schlussrechnung, Gutschrift) —
   // AT-Rechtsvorschrift: ein Rechnungsbeleg muss stornierbar sein.
   const _cancelableTypes = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
-  const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert";
+  const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ)
+    && form.status !== "storniert"
+    // Ein Entwurf wurde nie ausgestellt — er wird gelöscht, nicht storniert.
+    && !istEntwurfBeleg(form.typ, form.status);
 
   /**
    * Speichert den Beleg.
@@ -2716,6 +2722,11 @@ export default function InvoiceDetail() {
    * jederzeit änderbar.
    */
   const handleSave = async (opts?: { erstellen?: boolean }): Promise<boolean> => {
+    // Wird der Beleg gerade nur als Entwurf gesichert? Dann greifen die
+    // Ausstellungs-Prüfungen (Betrag > 0 usw.) noch nicht.
+    const nurEntwurfSichern = RECHNUNGSARTIGE_TYPEN.has(form.typ)
+      && !opts?.erstellen
+      && (isNew || form.status === "entwurf");
     // Double-click protection — SOFORT setzen um Race-Condition bei schnellen Klicks zu verhindern
     if (saving) return false;
     setSaving(true);
@@ -2742,7 +2753,7 @@ export default function InvoiceDetail() {
     // berücksichtigt — daher dieselbe Größe für die Validierung verwenden.
     const saveBrutto = bruttoSumme;
     // Lieferscheine (hidePrices) sind preislos — € 0,00 ist dort gültig.
-    if (saveBrutto <= 0 && form.status !== "entwurf" && !getDocConfig(form.typ).hidePrices) {
+    if (saveBrutto <= 0 && !nurEntwurfSichern && form.status !== "entwurf" && !getDocConfig(form.typ).hidePrices) {
       toast({ variant: "destructive", title: "Fehler", description: "Rechnungsbetrag muss größer als €0,00 sein" });
       return false;
     }
@@ -3058,7 +3069,12 @@ export default function InvoiceDetail() {
         return next;
       };
 
-      if (isNew || !savedId) {
+      // K3: NUR anhand der tatsächlich vorhandenen Beleg-ID entscheiden.
+      // Früher stand hier `isNew || !savedId` — nach dem Speichern aus der
+      // offenen Vorschau heraus bleibt die Route aber „/invoices/new", also
+      // blieb isNew=true und jeder weitere Speichervorgang (z. B. „Rechnung
+      // erstellen") legte einen ZWEITEN Beleg an, samt zweiter Nummer.
+      if (!savedId) {
         // DOPPEL-BELEG-SPERRE: Ein Angebot lässt sich in zwei Tabs öffnen und
         // zweimal in eine Rechnung wandeln — der Kunde bekäme dieselbe
         // Leistung zweimal verrechnet. Deshalb unmittelbar vor dem Insert
@@ -3073,6 +3089,8 @@ export default function InvoiceDetail() {
             .eq("parent_invoice_id", normalizedParentId)
             .eq("typ", form.typ)
             .neq("status", "storniert")
+            // M2: Entwürfe blockieren nicht — sie wurden nie ausgestellt.
+            .neq("status", "entwurf")
             .limit(1);
           const vorhanden = ((geschwister as any[]) || [])[0];
           if (vorhanden) {
@@ -3250,7 +3268,12 @@ export default function InvoiceDetail() {
       toast({ title: "Gespeichert", description: `${getDocConfig(form.typ).label} wurde gespeichert` });
 
       // Wenn Projekt zugeordnet → PDF zusätzlich in den Projektordner ablegen
-      if (savedId && form.project_id) {
+      // K4: Erst ausgestellte Belege wandern in den Projektordner. Ein Entwurf
+      // trüge dort die Platzhalter- bzw. die unverbindliche Vorschaunummer —
+      // eine Nummer, die später eine ANDERE Rechnung bekommt.
+      const nochNichtAusgestellt = saveStatus === "entwurf"
+        || hatPlatzhalterNummer(invoicePayload.nummer ?? form.nummer);
+      if (savedId && form.project_id && !nochNichtAusgestellt) {
         void uploadInvoicePdfToProjectFolder(savedId);
       }
 
@@ -3598,6 +3621,15 @@ export default function InvoiceDetail() {
       toast({ variant: "destructive", title: "Fehler", description: "Bitte zuerst speichern" });
       return;
     }
+    // K5: Entwürfe dürfen gar nicht ausgegeben werden.
+    if (istEntwurfBeleg(form.typ, form.status) || hatPlatzhalterNummer(form.nummer)) {
+      toast({
+        variant: "destructive",
+        title: "Beleg ist noch ein Entwurf",
+        description: "Erst nach »Rechnung erstellen« — dabei wird die Belegnummer vergeben.",
+      });
+      return;
+    }
     // Auch bei bereits gespeichertem Beleg: ungespeicherte Änderungen würden
     // ein PDF erzeugen, das nicht dem gespeicherten Stand entspricht.
     if (isDirty) {
@@ -3642,6 +3674,14 @@ export default function InvoiceDetail() {
 
   const handlePrintPdf = async () => {
     if (!invoiceId) return;
+    if (istEntwurfBeleg(form.typ, form.status) || hatPlatzhalterNummer(form.nummer)) {
+      toast({
+        variant: "destructive",
+        title: "Beleg ist noch ein Entwurf",
+        description: "Erst nach »Rechnung erstellen« drucken — dabei wird die Belegnummer vergeben.",
+      });
+      return;
+    }
     if (isDirty) {
       toast({
         variant: "destructive",
@@ -3689,16 +3729,26 @@ export default function InvoiceDetail() {
     if (!user) return;
 
     try {
-      const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
-        p_typ: form.typ,
-        p_jahr: new Date().getFullYear(),
-      } as never);
-      if (numError) throw numError;
-
-      const nummer = numData as string;
-      // Laufnummer aus den TRAILING Digits extrahieren — funktioniert für alle
-      // Typ-Präfixe (AN, AB, AR, SR, LS, GS, TR, …) und Formate.
-      const laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+      // M1: Eine duplizierte Rechnung startet als ENTWURF — sie zieht also
+      // KEINE laufende Nummer und ist noch änderbar. Früher war die Kopie im
+      // selben Moment ausgestellt, gesperrt und eine offene Forderung.
+      const kopieAlsEntwurf = RECHNUNGSARTIGE_TYPEN.has(form.typ);
+      let nummer: string;
+      let laufnummer: number;
+      if (kopieAlsEntwurf) {
+        nummer = `ENTWURF-${crypto.randomUUID().slice(0, 8)}`;
+        laufnummer = 0;
+      } else {
+        const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+          p_typ: form.typ,
+          p_jahr: new Date().getFullYear(),
+        } as never);
+        if (numError) throw numError;
+        nummer = numData as string;
+        // Laufnummer aus den TRAILING Digits extrahieren — funktioniert für alle
+        // Typ-Präfixe (AN, AB, AR, SR, LS, GS, TR, …) und Formate.
+        laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+      }
 
       const { data: newInvoice, error: insertError } = await supabase
         .from("invoices")
@@ -3708,7 +3758,7 @@ export default function InvoiceDetail() {
           nummer,
           laufnummer,
           jahr: new Date().getFullYear(),
-          status: form.typ === "rechnung" ? "offen" : "entwurf",
+          status: "entwurf",
           kunde_name: form.kunde_name,
           kunde_adresse: form.kunde_adresse || null,
           kunde_plz: form.kunde_plz || null,
@@ -4207,7 +4257,7 @@ export default function InvoiceDetail() {
     nummer: String(form.nummer || "").startsWith("ENTWURF-")
       ? "wird beim Erstellen vergeben"
       : istEntwurf && form.nummer
-        ? `${form.nummer} (Entwurf)`
+        ? `${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} (Entwurf)`
         : form.nummer || "vorläufig",
     status: form.status,
     kunde_name: form.kunde_name,
@@ -4303,7 +4353,7 @@ export default function InvoiceDetail() {
   if (form.status === "storniert" && !isNew && invoiceId) {
     return (
       <div className="kb-page min-h-screen">
-        <KBToolbar onBack={zurueck} title={`Storno: ${form.nummer}`} />
+        <KBToolbar onBack={zurueck} title={`Storno: ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}`} />
         <div className="mx-auto w-full px-4 py-6 max-w-[800px]">
           <div className="space-y-6">
             <Card className="kb-panel">
@@ -4313,7 +4363,7 @@ export default function InvoiceDetail() {
                 </div>
                 <h2 className="text-xl font-bold text-red-700">{typLabel} storniert</h2>
                 <div className="text-sm text-muted-foreground space-y-1">
-                  <p>Belegnummer: <strong>{form.nummer}</strong></p>
+                  <p>Belegnummer: <strong>{hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}</strong></p>
                   <p>Kunde: <strong>{form.kunde_name}</strong></p>
                   <p>Bruttobetrag: <strong>€ {eur(bruttoSumme)}</strong></p>
                   {form.storno_nummer && <p>Stornonummer: <strong>{form.storno_nummer}</strong></p>}
@@ -4654,7 +4704,7 @@ export default function InvoiceDetail() {
               <CardContent className="pt-6">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3 flex-wrap">
-                    <Badge variant="outline" className="text-lg px-4 py-1 font-mono">{form.nummer}</Badge>
+                    <Badge variant="outline" className="text-lg px-4 py-1 font-mono">{hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}</Badge>
                     <Badge className={statusColors[form.status] || ""}>
                       {statusLabels[form.status] || form.status}
                     </Badge>
@@ -4722,7 +4772,7 @@ export default function InvoiceDetail() {
                           const url = URL.createObjectURL(pdfBlob);
                           const a = document.createElement("a"); a.href = url;
                           const stufeLabel = mahnSettings.stufen[Math.min(Math.max(mahnstufe, 1), 3) - 1].titel;
-                          a.download = `${stufeLabel}_${form.nummer}.pdf`; a.click();
+                          a.download = `${stufeLabel}_${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}.pdf`; a.click();
                           URL.revokeObjectURL(url);
                           toast({ title: `${stufeLabel} erstellt`, description: "PDF wurde heruntergeladen" });
                         } catch (err: any) {
@@ -4935,7 +4985,7 @@ export default function InvoiceDetail() {
                               {typLabel} löschen?
                             </AlertDialogTitle>
                             <AlertDialogDescription>
-                              {typLabel} {form.nummer} und alle Positionen werden dauerhaft gelöscht.
+                              {typLabel} {hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} und alle Positionen werden dauerhaft gelöscht.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
@@ -4970,14 +5020,14 @@ export default function InvoiceDetail() {
                                 <div className="space-y-3">
                                   {abCanHardDelete ? (
                                     <p>
-                                      Die Auftragsbestätigung {form.nummer} ist im Status „Entwurf" und hat keine
+                                      Die Auftragsbestätigung {hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} ist im Status „Entwurf" und hat keine
                                       Folgedokumente. Sie wird <b>unwiderruflich entfernt</b>, inkl. aller Positionen.
                                       Kein Storno-Beleg nötig.
                                     </p>
                                   ) : (
                                     <>
                                       <p>
-                                        Die Auftragsbestätigung {form.nummer} wird als <b>storniert</b> markiert
+                                        Die Auftragsbestätigung {hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} wird als <b>storniert</b> markiert
                                         und ein Storno-PDF wird automatisch erzeugt & heruntergeladen.
                                       </p>
                                       {abFollowups.length > 0 && (
@@ -5034,7 +5084,8 @@ export default function InvoiceDetail() {
               Anzahlungs- und Schlussrechnung). Vorher hing die Karte an
               typ === "rechnung", weshalb auf Anzahlungs-/Schlussrechnungen
               überhaupt keine Zahlung erfasst werden konnte. */}
-          {!isNew && ZAHLBARE_TYPEN.has(form.typ) && form.status !== "storniert" && (
+          {!isNew && ZAHLBARE_TYPEN.has(form.typ) && form.status !== "storniert"
+            && !istEntwurfBeleg(form.typ, form.status) && (
             <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
@@ -5160,7 +5211,7 @@ export default function InvoiceDetail() {
                               m.mahnstufe, 0, bank, logoUri, invoiceLayout, mahnSettings
                             );
                             const url = URL.createObjectURL(pdfBlob);
-                            const a = document.createElement("a"); a.href = url; a.download = `${label}_${form.nummer}.pdf`; a.click();
+                            const a = document.createElement("a"); a.href = url; a.download = `${label}_${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}.pdf`; a.click();
                             URL.revokeObjectURL(url);
                           } catch {}
                         }}>
@@ -5198,8 +5249,8 @@ export default function InvoiceDetail() {
                   />
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {isNew
-                      ? `Die Belegnummer wird beim Speichern automatisch vergeben${form.nummer ? ` (voraussichtlich ${form.nummer})` : ""} — bitte nicht in den Betreff schreiben.`
-                      : `Belegnummer ${form.nummer} wurde automatisch vergeben — der Betreff beschreibt das Bauvorhaben.`}
+                      ? `Die Belegnummer wird beim Speichern automatisch vergeben${form.nummer ? ` (voraussichtlich ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer})` : ""} — bitte nicht in den Betreff schreiben.`
+                      : `Belegnummer ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} wurde automatisch vergeben — der Betreff beschreibt das Bauvorhaben.`}
                   </p>
                 </div>
                 <div>
@@ -7733,7 +7784,7 @@ export default function InvoiceDetail() {
                   <p>
                     Der Beleg bekommt jetzt seine laufende Nummer
                     {form.nummer && !String(form.nummer).startsWith("ENTWURF-")
-                      ? <> <span className="font-bold text-foreground">{form.nummer}</span></>
+                      ? <> <span className="font-bold text-foreground">{hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}</span></>
                       : null} und wird abgeschlossen.
                   </p>
                   <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
@@ -7959,7 +8010,7 @@ export default function InvoiceDetail() {
             <DialogHeader>
               <DialogTitle>Gutschrift als verrechnet markieren</DialogTitle>
               <DialogDescription>
-                Bestätigt, dass die Gutschrift {form.nummer} ausgezahlt oder mit einer Rechnung verrechnet wurde.
+                Bestätigt, dass die Gutschrift {hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} ausgezahlt oder mit einer Rechnung verrechnet wurde.
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 py-2">
@@ -8361,7 +8412,7 @@ export default function InvoiceDetail() {
               <DialogTitle>{typLabel} stornieren</DialogTitle>
             </DialogHeader>
             <p className="text-sm text-muted-foreground">
-              {typLabel} {form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
+              {typLabel} {hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} wird unwiderruflich storniert. Eine Storno-Bestätigung wird erstellt.
             </p>
             {form.bezahlt_betrag > 0 && (
               <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
@@ -8387,7 +8438,7 @@ export default function InvoiceDetail() {
               <Button variant="destructive" disabled={!stornoGrund.trim() || stornoLaeuft} onClick={async () => {
                 // Guard: bereits storniert
                 if (form.status === "storniert") {
-                  toast({ variant: "destructive", title: "Bereits storniert", description: `${typLabel} ${form.nummer} wurde bereits storniert.` });
+                  toast({ variant: "destructive", title: "Bereits storniert", description: `${typLabel} ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer} wurde bereits storniert.` });
                   setStornoDialogOpen(false);
                   return;
                 }
@@ -8421,7 +8472,7 @@ export default function InvoiceDetail() {
             if (projectsData) setProjects(projectsData);
             setCreateProjectDialogOpen(false);
           }}
-          defaultName={`${form.kunde_name} - ${form.nummer}`}
+          defaultName={`${form.kunde_name} - ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}`}
           defaultCustomerName={form.kunde_name}
           defaultAdresse={form.kunde_adresse}
           defaultPlz={form.kunde_plz}

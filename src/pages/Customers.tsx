@@ -536,7 +536,7 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
             onClick={() => stammblattDrucken(
               selectedCustomer,
               umsatz,
-              customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ)).length,
+              customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ) && i.status !== "entwurf").length,
               customerInvoices.filter(i => _angebotLikeTypes.has(i.typ)).length,
             )}
           />
@@ -565,7 +565,7 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
             <Card className="kb-panel">
               <CardHeader className="pb-2">
                 <CardDescription>Rechnungen</CardDescription>
-                <CardTitle className="text-2xl">{customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ)).length}</CardTitle>
+                <CardTitle className="text-2xl">{customerInvoices.filter(i => _invoiceLikeTypes.has(i.typ) && i.status !== "entwurf").length}</CardTitle>
               </CardHeader>
             </Card>
             <Card className="kb-panel">

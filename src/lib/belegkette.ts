@@ -85,7 +85,7 @@ export function kettenSummen(belege: KettenBeleg[]): KettenSummen {
   // die netto/mwst-Werte ihrer Anzahlungen wären doppelt.
   const kettenMitSchluss = new Set<string>();
   for (const b of belege) {
-    if (b.typ === "schlussrechnung" && b.status !== "storniert") {
+    if (b.typ === "schlussrechnung" && b.status !== "storniert" && b.status !== "entwurf") {
       kettenMitSchluss.add(wurzelVon(map, b.id));
     }
   }

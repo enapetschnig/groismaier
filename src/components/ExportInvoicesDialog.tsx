@@ -78,7 +78,7 @@ export function ExportInvoicesDialog({ open, onClose, bankData }: ExportInvoices
       }
 
       if (!includeStorno) {
-        query = query.neq("status", "storniert");
+        query = query.neq("status", "storniert").neq("status", "entwurf");
       }
 
       const { data: invoices, error } = await query.order("laufnummer");

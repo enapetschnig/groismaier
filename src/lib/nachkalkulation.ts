@@ -32,7 +32,13 @@ export const FORDERUNGS_TYPEN = new Set(["rechnung", "anzahlungsrechnung", "schl
 export const AUFTRAGS_STATUS = new Set(["angenommen", "verrechnet", "bezahlt", "teilbezahlt"]);
 
 const netto = (b: NkBeleg): number => Number(b.netto_summe) || 0;
-const lebt = (b: NkBeleg): boolean => b.status !== "storniert" && b.status !== "abgelehnt";
+/**
+ * Zählt der Beleg mit? Stornierte und abgelehnte nicht — und seit 08/2026 auch
+ * ENTWÜRFE nicht: Ein Rechnungsentwurf ist noch nicht ausgestellt und darf den
+ * Ist-Erlös eines Projekts nicht erhöhen.
+ */
+const lebt = (b: NkBeleg): boolean =>
+  b.status !== "storniert" && b.status !== "abgelehnt" && b.status !== "entwurf";
 
 /**
  * Die Belege, die den SOLL-Auftragswert tragen.
