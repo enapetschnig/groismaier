@@ -361,6 +361,58 @@ const DisturbanceDetail = () => {
       y = (pdf as any).lastAutoTable.finalY + 6;
     }
 
+    // Maschinen / Werkzeug (Kundenwunsch) — mit Satz und Gesamtbetrag,
+    // damit der Kunde die Weiterverrechnung nachvollziehen kann.
+    const { data: masch } = await (supabase.from("disturbance_maschinen" as never) as any)
+      .select("maschine, menge, einheit, einzelpreis")
+      .eq("disturbance_id", d.id)
+      .order("created_at", { ascending: true });
+
+    if (masch && masch.length > 0) {
+      const eur = (n: number) => n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const zeilen = (masch as any[]).map((m) => {
+        const menge = Number(String(m.menge ?? "").replace(",", ".")) || 0;
+        const satz = m.einzelpreis != null ? Number(m.einzelpreis) : null;
+        return [
+          m.maschine || "",
+          m.menge || "",
+          m.einheit || "",
+          satz != null ? `${eur(satz)} €` : "",
+          satz != null && menge > 0 ? `${eur(menge * satz)} €` : "",
+        ];
+      });
+      const summe = (masch as any[]).reduce((sum, m) => {
+        const menge = Number(String(m.menge ?? "").replace(",", ".")) || 0;
+        return sum + (m.einzelpreis != null ? menge * Number(m.einzelpreis) : 0);
+      }, 0);
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(11);
+      pdf.text("Maschinen / Werkzeug", ml, y);
+      y += 3;
+      autoTable(pdf, {
+        startY: y,
+        head: [["Maschine", "Menge", "Einheit", "Satz", "Gesamt"]],
+        body: summe > 0 ? [...zeilen, ["", "", "", "Summe", `${eur(summe)} €`]] : zeilen,
+        theme: "plain",
+        margin: { left: ml, right: mr, bottom: 26 },
+        headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold", fontSize: 8.5 },
+        bodyStyles: { fontSize: 9, textColor: [0, 0, 0], lineWidth: { bottom: 0.15 }, lineColor: [200, 200, 200] },
+        columnStyles: {
+          1: { halign: "right", cellWidth: 18 },
+          2: { cellWidth: 18 },
+          3: { halign: "right", cellWidth: 22 },
+          4: { halign: "right", cellWidth: 24, fontStyle: "bold" },
+        },
+        didParseCell: (data: any) => {
+          if (summe > 0 && data.section === "body" && data.row.index === zeilen.length) {
+            data.cell.styles.fontStyle = "bold";
+          }
+        },
+      });
+      y = (pdf as any).lastAutoTable.finalY + 6;
+    }
+
     // Unterschrift
     const pageHeight = pdf.internal.pageSize.getHeight();
     if (y > pageHeight - 70) {

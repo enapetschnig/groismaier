@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, Save, Lock, Camera, Upload } from "lucide-react";
+import { Calendar, Clock, User, Mail, Phone, MapPin, FileText, Package, Plus, Trash2, Save, Lock, Camera, Upload , Wrench } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -79,6 +79,86 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
   const [selectedEmployees, setSelectedEmployees] = useState<string[]>([]);
   const [materials, setMaterials] = useState<MaterialEntry[]>([]);
+
+  /** Maschinen-Buchungen (Kundenwunsch: „auch Maschinen buchen können").
+   *  vehicleId = aus dem Maschinenstamm gewählt, sonst Freitext. */
+  interface MaschinenEintrag {
+    id: string;
+    maschine: string;
+    vehicleId: string | null;
+    menge: string;
+    einheit: string;
+    einzelpreis: number | null;
+  }
+  const [maschinen, setMaschinen] = useState<MaschinenEintrag[]>([]);
+  const [maschinenStamm, setMaschinenStamm] = useState<
+    { id: string; bezeichnung: string; verrechnungssatz: number | null; verrechnungseinheit: string | null }[]
+  >([]);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, verrechnungssatz, verrechnungseinheit")
+        .eq("art", "maschine")
+        .eq("aktiv", true)
+        .order("bezeichnung");
+      setMaschinenStamm((data as any) || []);
+    })();
+  }, []);
+
+  const addMaschine = () => {
+    setMaschinen((alt) => [...alt, {
+      id: crypto.randomUUID(), maschine: "", vehicleId: null, menge: "", einheit: "h", einzelpreis: null,
+    }]);
+  };
+  const removeMaschine = (id: string) => setMaschinen((alt) => alt.filter((m) => m.id !== id));
+  /** Aus dem Stamm gewählt → Bezeichnung, Satz und Einheit übernehmen. */
+  const waehleMaschine = (id: string, vehicleId: string) => {
+    const v = maschinenStamm.find((x) => x.id === vehicleId);
+    setMaschinen((alt) => alt.map((m) => m.id === id ? {
+      ...m,
+      vehicleId: v ? v.id : null,
+      maschine: v ? v.bezeichnung : m.maschine,
+      einzelpreis: v?.verrechnungssatz ?? m.einzelpreis,
+      einheit: v?.verrechnungseinheit || m.einheit || "h",
+    } : m));
+  };
+  const updateMaschine = (id: string, feld: "maschine" | "menge" | "einheit" | "einzelpreis", wert: string) => {
+    setMaschinen((alt) => alt.map((m) => m.id === id ? {
+      ...m,
+      [feld]: feld === "einzelpreis"
+        ? (wert.trim() === "" ? null : Number(wert.replace(",", ".")) || 0)
+        : wert,
+    } : m));
+  };
+
+  const ladeMaschinen = async (disturbanceId: string) => {
+    const { data } = await (supabase.from("disturbance_maschinen" as never) as any)
+      .select("id, maschine, vehicle_id, menge, einheit, einzelpreis")
+      .eq("disturbance_id", disturbanceId);
+    setMaschinen(((data as any) || []).map((m: any) => ({
+      id: m.id, maschine: m.maschine, vehicleId: m.vehicle_id,
+      menge: m.menge || "", einheit: m.einheit || "h", einzelpreis: m.einzelpreis ?? null,
+    })));
+  };
+
+  const speichereMaschinen = async (disturbanceId: string, userId: string) => {
+    await (supabase.from("disturbance_maschinen" as never) as any)
+      .delete().eq("disturbance_id", disturbanceId);
+    const gueltig = maschinen.filter((m) => m.maschine.trim());
+    if (gueltig.length === 0) return;
+    await (supabase.from("disturbance_maschinen" as never) as any).insert(
+      gueltig.map((m) => ({
+        disturbance_id: disturbanceId,
+        user_id: userId,
+        maschine: m.maschine.trim(),
+        vehicle_id: m.vehicleId,
+        menge: m.menge.trim() || null,
+        einheit: m.einheit || "h",
+        einzelpreis: m.einzelpreis,
+      })),
+    );
+  };
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [projects, setProjects] = useState<{id: string; name: string; customer_id: string | null}[]>([]);
@@ -162,9 +242,10 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       // "Aktualisieren" die Zuordnung auf null zurücksetzen.
       setSelectedProjectId(editData.project_id ?? null);
       setSelectedCustomerId(editData.customer_id ?? null);
-      // Load existing workers and materials when editing
+      // Load existing workers, materials and machines when editing
       loadExistingWorkers(editData.id);
       loadExistingMaterials(editData.id);
+      ladeMaschinen(editData.id);
     } else {
       // Reset form for new entry
       setFormData({
@@ -346,6 +427,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
       // Update materials
       await updateMaterials(editData.id, user.id);
+      await speichereMaschinen(editData.id, user.id);
 
       // Zeiteinträge für alle Mitarbeiter synchronisieren
       // Alte Einträge für diesen Regiebericht über Edge Function löschen + neu anlegen.
@@ -420,6 +502,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
           }))
         );
       }
+
+      // Gebuchte Maschinen (Kreissäge, Plattensäge, Handwerkzeug …)
+      await speichereMaschinen(newDisturbance.id, user.id);
 
       // Automatisch Zeiteinträge für alle beteiligten Mitarbeiter anlegen
       // Nutzt Edge Function (Service Role) damit auch für andere User inserted werden kann
@@ -908,6 +993,107 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+
+          {/* Maschinen (Kundenwunsch): Kreissäge, Plattensäge, Handwerkzeug …
+              Auswahl aus dem Maschinen-Manager übernimmt den Verrechnungssatz;
+              nicht angelegtes Gerät geht als Freitext. */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium flex items-center gap-2">
+                <Wrench className="h-4 w-4" />
+                Maschinen / Werkzeug (optional)
+              </h3>
+              <Button type="button" variant="outline" className="h-11" onClick={addMaschine}>
+                <Plus className="h-4 w-4 mr-1" />
+                Maschine
+              </Button>
+            </div>
+
+            {maschinen.length > 0 && (
+              <div className="space-y-3">
+                {maschinen.map((ma) => (
+                  <div key={ma.id} className="rounded-lg border bg-muted/20 p-2 space-y-2">
+                    {maschinenStamm.length > 0 && (
+                      <Select
+                        value={ma.vehicleId || "frei"}
+                        onValueChange={(v) => v === "frei"
+                          ? setMaschinen((alt2) => alt2.map((x) => x.id === ma.id ? { ...x, vehicleId: null } : x))
+                          : waehleMaschine(ma.id, v)}
+                      >
+                        <SelectTrigger className="h-11" aria-label="Maschine wählen">
+                          <SelectValue placeholder="Aus dem Maschinen-Manager wählen…" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {maschinenStamm.map((v) => (
+                            <SelectItem key={v.id} value={v.id}>
+                              {v.bezeichnung}
+                              {v.verrechnungssatz != null ? ` — € ${Number(v.verrechnungssatz).toFixed(2)}/${v.verrechnungseinheit || "h"}` : ""}
+                            </SelectItem>
+                          ))}
+                          <SelectItem value="frei">Freie Eingabe …</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    )}
+                    <Input
+                      placeholder="Maschine / Werkzeug (z. B. Kreissäge)"
+                      value={ma.maschine}
+                      onChange={(e) => updateMaschine(ma.id, "maschine", e.target.value)}
+                      className="h-11 w-full"
+                    />
+                    <div className="flex items-center gap-2">
+                      <Input
+                        placeholder="Menge"
+                        inputMode="decimal"
+                        value={ma.menge}
+                        onChange={(e) => updateMaschine(ma.id, "menge", e.target.value)}
+                        className="h-11 w-24"
+                      />
+                      <Select value={ma.einheit} onValueChange={(v) => updateMaschine(ma.id, "einheit", v)}>
+                        <SelectTrigger className="h-11 w-28" aria-label="Einheit"><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="h">Stunden</SelectItem>
+                          <SelectItem value="Tag">Tage</SelectItem>
+                          <SelectItem value="Einsatz">Einsatz</SelectItem>
+                          <SelectItem value="Stk.">Stück</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <div className="relative flex-1">
+                        <Input
+                          placeholder="Satz"
+                          inputMode="decimal"
+                          value={ma.einzelpreis ?? ""}
+                          onChange={(e) => updateMaschine(ma.id, "einzelpreis", e.target.value)}
+                          className="h-11 pr-7"
+                        />
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Maschine entfernen"
+                        onClick={() => removeMaschine(ma.id)}
+                        className="h-11 w-11 shrink-0 text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-5 w-5" />
+                      </Button>
+                    </div>
+                    {ma.menge.trim() && ma.einzelpreis != null && (
+                      <p className="text-right text-xs text-muted-foreground">
+                        Gesamt: € {((Number(ma.menge.replace(",", ".")) || 0) * ma.einzelpreis).toFixed(2)}
+                      </p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            {maschinenStamm.length === 0 && maschinen.length > 0 && (
+              <p className="text-xs text-amber-600">
+                Noch keine Maschinen angelegt — im KFZ- und Maschinen-Manager anlegen, dann
+                erscheinen sie hier mit ihrem Verrechnungssatz zur Auswahl.
+              </p>
             )}
           </div>
         </form>

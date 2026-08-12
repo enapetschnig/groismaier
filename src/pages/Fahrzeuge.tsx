@@ -74,6 +74,9 @@ interface Vehicle {
   /** Zulassungsschein (Storage-Pfad) + KI-gelesene Stammdaten. */
   zulassungsschein_path?: string | null;
   pruefbuch_path?: string | null;
+  /** Satz für die Weiterverrechnung im Regiebericht (nur Maschinen). */
+  verrechnungssatz?: number | null;
+  verrechnungseinheit?: string | null;
   marke_modell?: string | null;
   fahrgestellnummer?: string | null;
   erstzulassung?: string | null;
@@ -203,6 +206,8 @@ const EMPTY_FORM = {
   marke_modell: "",
   fahrgestellnummer: "",
   erstzulassung: "",
+  verrechnungssatz: "",
+  verrechnungseinheit: "h",
 };
 
 export default function Fahrzeuge() {
@@ -259,7 +264,7 @@ export default function Fahrzeuge() {
     setLoading(true);
     const [vehRes, empRes, usageRes, costRes, erRes] = await Promise.all([
       (supabase.from("vehicles" as never) as any)
-        .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung, zulassungsschein_path, pruefbuch_path, marke_modell, fahrgestellnummer, erstzulassung")
+        .select("id, art, bezeichnung, kennzeichen, typ, aktiv, notizen, kostenstelle, pickerl_faellig_am, pickerl_erinnerung_tage, pickerl_letzte_pruefung, zulassungsschein_path, pruefbuch_path, marke_modell, fahrgestellnummer, erstzulassung, verrechnungssatz, verrechnungseinheit")
         .order("art")
         .order("aktiv", { ascending: false })
         .order("bezeichnung"),
@@ -538,6 +543,8 @@ export default function Fahrzeuge() {
       marke_modell: v.marke_modell || "",
       fahrgestellnummer: v.fahrgestellnummer || "",
       erstzulassung: v.erstzulassung || "",
+      verrechnungssatz: v.verrechnungssatz != null ? String(v.verrechnungssatz) : "",
+      verrechnungseinheit: v.verrechnungseinheit || "h",
     });
     setTab("kosten");
     setDialogOpen(true);
@@ -574,6 +581,10 @@ export default function Fahrzeuge() {
       marke_modell: form.marke_modell.trim() || null,
       fahrgestellnummer: istMaschine ? null : (form.fahrgestellnummer.trim() || null),
       erstzulassung: istMaschine ? null : (form.erstzulassung || null),
+      // Verrechnungssatz nur bei Maschinen (für den Regiebericht).
+      verrechnungssatz: istMaschine && form.verrechnungssatz.trim()
+        ? Number(form.verrechnungssatz.replace(",", ".")) || null : null,
+      verrechnungseinheit: istMaschine ? (form.verrechnungseinheit || "h") : null,
     };
     try {
       if (editId) {
@@ -732,6 +743,35 @@ export default function Fahrzeuge() {
             </div>
             {form.art === "maschine" && (
               <>
+                <div>
+                  <label className="block text-xs font-semibold mb-1" htmlFor="ma-satz" title="Wird im Regiebericht als Vorschlag übernommen">
+                    Verrechnungssatz
+                  </label>
+                  <div className="flex gap-1.5">
+                    <input
+                      id="ma-satz"
+                      type="number"
+                      inputMode="decimal"
+                      step="any"
+                      className="kb-input w-full"
+                      value={form.verrechnungssatz}
+                      onChange={(e) => setForm(f => ({ ...f, verrechnungssatz: e.target.value }))}
+                      placeholder="z.B. 45,00"
+                    />
+                    <select
+                      className="kb-input w-24"
+                      aria-label="Einheit des Verrechnungssatzes"
+                      value={form.verrechnungseinheit}
+                      onChange={(e) => setForm(f => ({ ...f, verrechnungseinheit: e.target.value }))}
+                    >
+                      <option value="h">€/h</option>
+                      <option value="Tag">€/Tag</option>
+                      <option value="Einsatz">€/Einsatz</option>
+                      <option value="Stk.">€/Stk.</option>
+                    </select>
+                  </div>
+                  <p className="mt-0.5 text-[10px] text-muted-foreground">Vorschlag beim Buchen im Regiebericht</p>
+                </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1" htmlFor="ma-marke">Hersteller / Type</label>
                   <input
