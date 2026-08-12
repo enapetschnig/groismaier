@@ -16,6 +16,7 @@ import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Pack
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
+import { BelegMailDialog } from "@/components/BelegMailDialog";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
@@ -489,8 +490,11 @@ export default function InvoiceDetail() {
     setIsDirty(false);
     const ziel = leaveZielRef.current;
     setTimeout(() => {
-      if (ziel === "home") navigate("/");
-      else zurueck();
+      if (ziel === "home") { navigate("/"); return; }
+      // Absolut zur Belegliste statt navigate(-1): Der Browser-Verlauf ist
+      // hier oft unbrauchbar (Beleg per Deep-Link geöffnet, oder der Eintrag
+      // wurde beim Speichern ersetzt) — dann passierte sichtbar nichts.
+      navigate("/invoices");
     }, 0);
   };
   const handleBackNav = () => {
@@ -677,6 +681,8 @@ export default function InvoiceDetail() {
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [originalPdfPath, setOriginalPdfPath] = useState<string | null>(null);
+  // Beleg per Mail senden (PDF-Anhang über das Firmenpostfach).
+  const [mailDialog, setMailDialog] = useState<{ pdf: Blob; datei: string } | null>(null);
   const [newProjectName, setNewProjectName] = useState("");
 
   // ── Herkunft Auftragskalkulation (Migration 20260722110000) ───────────────
@@ -3195,8 +3201,14 @@ export default function InvoiceDetail() {
       if (isNew && !previewOpen) {
         navigate(`/invoices/${savedId}`, { replace: true });
       } else if (isNew) {
-        // Preview is open — don't navigate (would lose state), just update URL silently
-        window.history.replaceState(null, "", `/invoices/${savedId}`);
+        // Vorschau offen — nicht navigieren (würde den Formularzustand
+        // verlieren), nur die URL still nachziehen.
+        // WICHTIG: den bestehenden History-State ERHALTEN. Früher stand hier
+        // `replaceState(null, …)`; das löschte React Routers Verlaufs-Index
+        // (history.state.idx), und der Zurück-Pfeil wusste danach nicht mehr,
+        // wohin er führen soll — der Beleg ließ sich nur noch über „Home"
+        // verlassen.
+        window.history.replaceState(window.history.state, "", `/invoices/${savedId}`);
       }
 
       setSaving(false);
@@ -7407,6 +7419,7 @@ export default function InvoiceDetail() {
              von formData/items, gelangt nie ins Kunden-PDF. */
           internProfit={zeigeVerdienst ? { gewinn: deckungsbeitrag, marge: margeProzent, farbe: margeFarbe } : undefined}
           fileName={form.nummer || typLabel}
+          onSendMail={(pdf, datei) => setMailDialog({ pdf, datei })}
         />
         </div>
 
@@ -7599,6 +7612,18 @@ export default function InvoiceDetail() {
             </div>
           </DialogContent>
         </Dialog>
+        <BelegMailDialog
+          open={!!mailDialog}
+          onOpenChange={(o) => { if (!o) setMailDialog(null); }}
+          pdfBlob={mailDialog?.pdf || null}
+          dateiname={mailDialog?.datei || "Beleg.pdf"}
+          empfaenger={form.kunde_email || ""}
+          belegBezeichnung={typLabel}
+          belegNummer={form.nummer || ""}
+          kundeAnrede={(form as any).kunde_anrede || ""}
+          kundeName={form.kunde_name || ""}
+        />
+
         {/* KingBill: „Änderungen speichern?" beim Verlassen mit ungespeicherten
             Änderungen — [Zurück]=abbrechen, [Nein]=verwerfen+navigieren,
             [Speichern & Schließen]=speichern+navigieren */}

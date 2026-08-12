@@ -55,12 +55,18 @@ interface InvoiceLivePreviewProps {
   internProfit?: { gewinn: number; marge: number; farbe: "gruen" | "gelb" | "rot" };
   /** Dateiname (ohne .pdf) für den PDF-Export-Button. */
   fileName?: string;
+  /**
+   * Beleg per E-Mail senden. Bekommt das FERTIGE PDF, damit der Dialog es
+   * direkt anhängen kann. Ohne diesen Callback fällt der Knopf auf den alten
+   * mailto:-Weg zurück (ohne Anhang).
+   */
+  onSendMail?: (pdf: Blob, dateiname: string) => void;
 }
 
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName }: InvoiceLivePreviewProps) {
+export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail }: InvoiceLivePreviewProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState<boolean>(() => {
     try {
@@ -328,10 +334,31 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     }
   };
 
-  // Per E-Mail: öffnet den Mail-Client mit Kundenadresse + Betreff vorbelegt.
-  // Das PDF lässt sich per Browser-mailto nicht anhängen — Hinweis im Text.
+  // Per E-Mail: schickt den Beleg MIT PDF-Anhang über das Firmenpostfach.
+  // Früher öffnete das nur einen mailto:-Link, an den der Anwender das PDF
+  // selbst anhängen musste — und ohne registrierten Mail-Client passierte
+  // gar nichts.
   const kundeEmail = (formData as any)?.kunde_email as string | undefined;
-  const handleEmail = () => {
+  /** Das zuletzt erzeugte Vorschau-PDF als Blob (für den Mail-Anhang). */
+  const pdfBlobHolen = async (): Promise<Blob | null> => {
+    try {
+      if (pdfUrl) return await (await fetch(pdfUrl)).blob();
+    } catch { /* Blob-URL abgelaufen → unten neu erzeugen */ }
+    try {
+      await generate();
+      if (pdfUrl) return await (await fetch(pdfUrl)).blob();
+    } catch { /* aufgeben, Aufrufer meldet das */ }
+    return null;
+  };
+
+  const handleEmail = async () => {
+    if (onSendMail) {
+      const blob = await pdfBlobHolen();
+      if (blob) {
+        onSendMail(blob, `${(formData as any)?.nummer || fileName || "Beleg"}.pdf`);
+        return;
+      }
+    }
     const to = (kundeEmail || "").trim();
     const betreff = `${(formData as any)?.nummer || fileName || "Beleg"}`;
     const body =
@@ -498,7 +525,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           icon={Mail}
           label="Per E-Mail senden"
           onClick={handleEmail}
-          disabled={!kundeEmail}
+          disabled={!onSendMail && !kundeEmail}
           title={kundeEmail ? `E-Mail an ${kundeEmail} vorbereiten` : "Keine Kunden-E-Mail hinterlegt"}
         />
       </div>

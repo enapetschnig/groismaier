@@ -7,7 +7,8 @@
 //   { aktion: "detail",  postfach, id }                       → Betreff/Body/Anhänge-Metadaten (+ als gelesen markieren)
 //   { aktion: "anhang",  postfach, id, anhangId }             → ein Anhang mit Inhalt (base64)
 //   { aktion: "ordner",  postfach }                           → Ordnerliste mit Ungelesen-Zählern
-//   { aktion: "senden",  postfach, modus, an[], cc?, betreff?, text, bezugId? }
+//   { aktion: "senden",  postfach, modus, an[], cc?, betreff?, text, bezugId?,
+//                        anhaenge?: [{ name, inhaltBase64, typ? }] }
 //       modus "neu" | "antwort" | "antwortAlle" | "weiterleiten" — Antworten/
 //       Weiterleiten laufen über die Graph-Komfort-Endpunkte: Microsoft hängt
 //       Zitat + Betreff (AW:/WG:) selbst an und legt die Mail in "Gesendete
@@ -294,9 +295,19 @@ Deno.serve(async (req) => {
     }
 
     if (aktion === "senden") {
-      const { modus, an, cc, betreff, text } = body as {
+      const { modus, an, cc, betreff, text, anhaenge } = body as {
         modus: string; an?: string[]; cc?: string[]; betreff?: string; text: string;
+        anhaenge?: { name: string; inhaltBase64: string; typ?: string }[];
       };
+      // Dateianhänge (z. B. die Rechnung als PDF) im Graph-Format.
+      const graphAnhaenge = (anhaenge || [])
+        .filter((a) => a && a.name && a.inhaltBase64)
+        .map((a) => ({
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: a.name,
+          contentType: a.typ || "application/pdf",
+          contentBytes: a.inhaltBase64,
+        }));
       const empf = (liste?: string[]) =>
         (liste || []).map((a) => String(a).trim()).filter((a) => /.+@.+\..+/.test(a))
           .map((a) => ({ emailAddress: { address: a } }));
@@ -331,6 +342,7 @@ Deno.serve(async (req) => {
               body: { contentType: "HTML", content: html },
               toRecipients,
               ccRecipients: empf(cc),
+              ...(graphAnhaenge.length > 0 ? { attachments: graphAnhaenge } : {}),
             },
             saveToSentItems: true,
           }),
