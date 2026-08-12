@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
-import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown, Copy, Mail, FileCode2 } from "lucide-react";
+import { Loader2, RefreshCw, PanelRightClose, PanelRightOpen, Eye, Printer, FileDown, Copy, Mail, FileCode2, AlertTriangle, Save
+} from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { KBButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
@@ -61,12 +62,22 @@ interface InvoiceLivePreviewProps {
    * mailto:-Weg zurück (ohne Anhang).
    */
   onSendMail?: (pdf: Blob, dateiname: string) => void;
+  /**
+   * Ist der Beleg gespeichert UND unverändert? Nur dann darf er das Haus
+   * verlassen (drucken, exportieren, mailen, E-Rechnung). Vorher trägt er
+   * nur eine vorläufige Nummer und existiert nicht in der Datenbank —
+   * eine so verschickte Rechnung wäre buchhalterisch nicht auffindbar.
+   */
+  belegGespeichert?: boolean;
+  /** Speichern direkt aus der Vorschau heraus. */
+  onSpeichern?: () => void;
+  speichertGerade?: boolean;
 }
 
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail }: InvoiceLivePreviewProps) {
+export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail, belegGespeichert = true, onSpeichern, speichertGerade }: InvoiceLivePreviewProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState<boolean>(() => {
     try {
@@ -247,11 +258,13 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   }
 
   const handlePrint = () => {
+    if (!darfRaus("Drucken")) return;
     // Drucken — öffnet das PDF in neuem Tab mit Druckfunktion des Viewers.
     if (pdfUrl) window.open(pdfUrl, "_blank");
   };
 
   const handleExportPdf = () => {
+    if (!darfRaus("Der PDF-Export")) return;
     if (!pdfUrl) return;
     const a = document.createElement("a");
     a.href = pdfUrl;
@@ -262,6 +275,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   // E-Rechnung: ebInterface-6.1-XML erzeugen und herunterladen (der
   // Generator wird im Repo gegen das offizielle XSD validiert).
   const handleERechnung = async () => {
+    if (!darfRaus("Die E-Rechnung")) return;
     try {
       const { buildEbInterfaceXml } = await import("@/lib/eRechnung");
       const fd: any = formData;
@@ -339,6 +353,23 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   // selbst anhängen musste — und ohne registrierten Mail-Client passierte
   // gar nichts.
   const kundeEmail = (formData as any)?.kunde_email as string | undefined;
+  /**
+   * Wächter vor jeder Ausgabe: Ein ungespeicherter oder seit dem Speichern
+   * geänderter Beleg darf nicht raus. Grund: Die Belegnummer wird erst beim
+   * Speichern endgültig vergeben — bis dahin könnte dieselbe Nummer an einen
+   * anderen Beleg gehen, und der versendete Beleg wäre in der App nicht
+   * auffindbar.
+   */
+  const darfRaus = (aktion: string): boolean => {
+    if (belegGespeichert) return true;
+    toast({
+      variant: "destructive",
+      title: "Beleg zuerst speichern",
+      description: `${aktion} ist erst nach dem Speichern möglich — die endgültige Belegnummer wird dabei vergeben.`,
+    });
+    return false;
+  };
+
   /** Das zuletzt erzeugte Vorschau-PDF als Blob (für den Mail-Anhang). */
   const pdfBlobHolen = async (): Promise<Blob | null> => {
     try {
@@ -352,6 +383,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   };
 
   const handleEmail = async () => {
+    if (!darfRaus("Der Mail-Versand")) return;
     if (onSendMail) {
       const blob = await pdfBlobHolen();
       if (blob) {
@@ -452,7 +484,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           </div>
         </div>
 
-        <div className="flex-1 overflow-hidden bg-gray-200">
+        <div className="relative flex-1 overflow-hidden bg-gray-200">
           {error ? (
             <div className="flex h-full items-center justify-center p-4">
               <div className="text-center">
@@ -462,6 +494,20 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
             </div>
           ) : pdfUrl ? (
             // Eigene Scrollbar: der PDF-Viewer im iframe scrollt selbst.
+            // Solange der Beleg nicht gespeichert ist, liegt ein ENTWURF-
+            // Wasserzeichen darüber — damit niemand eine vorläufige Nummer
+            // für final hält.
+            <>
+            {!belegGespeichert && (
+              <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center" aria-hidden="true">
+                <span
+                  className="whitespace-nowrap text-[70px] font-bold text-black/[0.07] select-none"
+                  style={{ transform: "rotate(-35deg)" }}
+                >
+                  ENTWURF
+                </span>
+              </div>
+            )}
             <iframe
               /* view=Fit: ganze Seite sichtbar statt auf Breite skaliert und unten
                abgeschnitten — der Beleg soll „als ganzes Dokument" lesbar sein. */
@@ -469,6 +515,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
               className="h-full w-full border-0"
               title="Beleg Live-Vorschau"
             />
+            </>
           ) : (
             <div className="flex h-full items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -486,29 +533,50 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
 
       {/* Vertikale Button-Spalte wie im KingBill-Original */}
       <div className="flex w-36 shrink-0 flex-col gap-2">
+        {/* Kundenwunsch: klarer Hinweis, warum nichts rausgeht. Ein Beleg ohne
+            endgültige Nummer darf den Betrieb nicht verlassen. */}
+        {!belegGespeichert && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] leading-snug text-amber-900">
+            <div className="mb-1 flex items-center gap-1 font-bold">
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Noch nicht gespeichert
+            </div>
+            Senden, Drucken und E-Rechnung sind erst nach dem Speichern möglich —
+            die endgültige Belegnummer wird dabei vergeben.
+            {onSpeichern && (
+              <KBButton
+                className="mt-2 w-full"
+                icon={Save}
+                variant="green"
+                label={speichertGerade ? "Speichert…" : "Jetzt speichern"}
+                onClick={onSpeichern}
+                disabled={speichertGerade}
+              />
+            )}
+          </div>
+        )}
         <KBButton
           className="w-full"
           icon={Printer}
           label="Drucken"
           onClick={handlePrint}
-          disabled={!pdfUrl}
-          title="Drucken — öffnet das PDF in neuem Tab mit Druckfunktion"
+          disabled={!pdfUrl || !belegGespeichert}
+          title={belegGespeichert ? "Drucken — öffnet das PDF in neuem Tab mit Druckfunktion" : "Erst nach dem Speichern möglich"}
         />
         <KBButton
           className="w-full"
           icon={Copy}
           label="Druck-Kopien"
           onClick={handlePrint}
-          disabled={!pdfUrl}
-          title="Öffnet den Druckdialog — die Kopienzahl dort einstellen"
+          disabled={!pdfUrl || !belegGespeichert}
+          title={belegGespeichert ? "Öffnet den Druckdialog — die Kopienzahl dort einstellen" : "Erst nach dem Speichern möglich"}
         />
         <KBButton
           className="w-full"
           icon={FileDown}
           label="Export als PDF"
           onClick={handleExportPdf}
-          disabled={!pdfUrl}
-          title="Als PDF exportieren"
+          disabled={!pdfUrl || !belegGespeichert}
+          title={belegGespeichert ? "Als PDF exportieren" : "Erst nach dem Speichern möglich"}
         />
         {/* E-Rechnung — nur bei rechnungsartigen Belegen (wie KingBill). */}
         {["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"].includes(String((formData as any)?.typ)) && (
@@ -517,7 +585,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
             icon={FileCode2}
             label="E-Rechnung"
             onClick={() => void handleERechnung()}
-            title="E-Rechnung als ebInterface-6.1-XML exportieren (österreichischer Standard, u.a. e-rechnung.gv.at)"
+            disabled={!belegGespeichert}
+            title={belegGespeichert
+              ? "E-Rechnung als ebInterface-6.1-XML exportieren (österreichischer Standard, u.a. e-rechnung.gv.at)"
+              : "Erst nach dem Speichern möglich"}
           />
         )}
         <KBButton
@@ -525,8 +596,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           icon={Mail}
           label="Per E-Mail senden"
           onClick={handleEmail}
-          disabled={!onSendMail && !kundeEmail}
-          title={kundeEmail ? `E-Mail an ${kundeEmail} vorbereiten` : "Keine Kunden-E-Mail hinterlegt"}
+          disabled={!belegGespeichert || (!onSendMail && !kundeEmail)}
+          title={!belegGespeichert
+            ? "Erst nach dem Speichern möglich"
+            : kundeEmail ? `Beleg per E-Mail an ${kundeEmail} senden` : "Beleg per E-Mail senden"}
         />
       </div>
     </div>

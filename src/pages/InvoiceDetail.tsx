@@ -3542,6 +3542,16 @@ export default function InvoiceDetail() {
       toast({ variant: "destructive", title: "Fehler", description: "Bitte zuerst speichern" });
       return;
     }
+    // Auch bei bereits gespeichertem Beleg: ungespeicherte Änderungen würden
+    // ein PDF erzeugen, das nicht dem gespeicherten Stand entspricht.
+    if (isDirty) {
+      toast({
+        variant: "destructive",
+        title: "Ungespeicherte Änderungen",
+        description: "Bitte zuerst speichern — sonst weicht das PDF vom gespeicherten Beleg ab.",
+      });
+      return;
+    }
     try {
       const pdfBlob = await buildInvoicePdfBlob();
 
@@ -3576,6 +3586,14 @@ export default function InvoiceDetail() {
 
   const handlePrintPdf = async () => {
     if (!invoiceId) return;
+    if (isDirty) {
+      toast({
+        variant: "destructive",
+        title: "Ungespeicherte Änderungen",
+        description: "Bitte zuerst speichern — sonst druckst du einen anderen Stand als den gespeicherten.",
+      });
+      return;
+    }
     try {
       const pdfBlob = await buildInvoicePdfBlob();
       const url = URL.createObjectURL(pdfBlob);
@@ -7420,6 +7438,12 @@ export default function InvoiceDetail() {
           internProfit={zeigeVerdienst ? { gewinn: deckungsbeitrag, marge: margeProzent, farbe: margeFarbe } : undefined}
           fileName={form.nummer || typLabel}
           onSendMail={(pdf, datei) => setMailDialog({ pdf, datei })}
+          /* Ausgabe (drucken/senden/E-Rechnung) erst, wenn der Beleg wirklich
+             in der Datenbank steht UND seither nichts geändert wurde — sonst
+             ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
+          belegGespeichert={!isNew && !isDirty}
+          onSpeichern={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
+          speichertGerade={saving}
         />
         </div>
 
