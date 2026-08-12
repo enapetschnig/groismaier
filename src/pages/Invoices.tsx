@@ -365,7 +365,7 @@ export default function Invoices() {
         if (fullInv) {
           setCreateProjectForInvoiceId(invoiceId);
           setCreateProjectDefaults({
-            name: `${fullInv.kunde_name} - ${inv.nummer}`,
+            name: `${fullInv.kunde_name} - ${zeigeNummer(inv.nummer)}`,
             customerName: fullInv.kunde_name || "",
             customerId: fullInv.customer_id || null,
             adresse: fullInv.kunde_adresse || "",
@@ -632,6 +632,12 @@ export default function Invoices() {
     .sort((a, b) => b.localeCompare(a));
 
   const storniertCount = invoices.filter(i => i.status === "storniert").length;
+
+  /** Entwuerfe tragen intern eine Platzhalter-Nummer (ENTWURF-...), weil die
+   *  laufende Nummer erst beim Erstellen vergeben wird. In der Liste soll
+   *  davon nur "Entwurf" zu sehen sein. */
+  const zeigeNummer = (nummer: string | null | undefined): string =>
+    String(nummer || "").startsWith("ENTWURF-") ? "Entwurf" : (nummer || "—");
 
   /**
    * Gemeinsame Ableitungen je Beleg. Desktop-Tabelle und Mobil-Karten nutzen
@@ -1154,7 +1160,7 @@ export default function Invoices() {
                     <div className="mt-1 text-sm font-medium">{inv.kunde_name}</div>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
                       <span>Storniert am {formatDateShort((inv as any).storno_datum)}</span>
-                      <span className="font-mono">Original: {inv.nummer}</span>
+                      <span className="font-mono">Original: {zeigeNummer(inv.nummer)}</span>
                     </div>
                     {(inv as any).storno_grund && (
                       <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{(inv as any).storno_grund}</div>
@@ -1185,7 +1191,7 @@ export default function Invoices() {
                           <span className="block h-2.5 w-2.5 rounded-full bg-red-500" title="Storniert" />
                         </TableCell>
                         <TableCell className="font-mono font-medium">{(inv as any).storno_nummer || "—"}</TableCell>
-                        <TableCell className="font-mono text-muted-foreground">{inv.nummer}</TableCell>
+                        <TableCell className="font-mono text-muted-foreground">{zeigeNummer(inv.nummer)}</TableCell>
                         <TableCell>{inv.kunde_name}</TableCell>
                         <TableCell>{formatDateShort((inv as any).storno_datum)}</TableCell>
                         <TableCell className="max-w-xs truncate text-sm text-muted-foreground">{(inv as any).storno_grund || "—"}</TableCell>
@@ -1252,7 +1258,7 @@ export default function Invoices() {
                         <div className="flex items-center gap-2">
                           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${dotColor}`} title={statusLabels[inv.status] || inv.status} />
                           <TypBadge typ={inv.typ} />
-                          <span className="font-mono font-semibold truncate">{inv.nummer}</span>
+                          <span className="font-mono font-semibold truncate">{zeigeNummer(inv.nummer)}</span>
                           {filterTyp !== "lieferschein" && (
                             <span className="ml-auto shrink-0 text-base font-bold tabular-nums">€ {brutto.toFixed(2)}</span>
                           )}
@@ -1475,7 +1481,7 @@ export default function Invoices() {
                                           .then(() => undefined, () => undefined);
                                         const url = URL.createObjectURL(pdfBlob);
                                         const a = document.createElement("a"); a.href = url;
-                                        a.download = `Mahnung_${stufe}_${inv.nummer}.pdf`; a.click();
+                                        a.download = `Mahnung_${stufe}_${zeigeNummer(inv.nummer)}.pdf`; a.click();
                                         URL.revokeObjectURL(url);
                                         toast({ title: `Mahnung ${stufe} erstellt` });
                                         fetchInvoices();

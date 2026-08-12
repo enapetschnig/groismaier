@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2 } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
@@ -683,6 +683,8 @@ export default function InvoiceDetail() {
   const [originalPdfPath, setOriginalPdfPath] = useState<string | null>(null);
   // Beleg per Mail senden (PDF-Anhang über das Firmenpostfach).
   const [mailDialog, setMailDialog] = useState<{ pdf: Blob; datei: string } | null>(null);
+  /** Sicherheitsabfrage vor dem Ausstellen (danach ist der Beleg gesperrt). */
+  const [erstellenDialogOffen, setErstellenDialogOffen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
 
   // ── Herkunft Auftragskalkulation (Migration 20260722110000) ───────────────
@@ -880,6 +882,13 @@ export default function InvoiceDetail() {
     && RECHNUNGSARTIGE_TYPEN.has(form.typ)
     && form.status !== "entwurf";
   const isKundeLocked = isLocked;
+
+  /** Rechnungsartiger Beleg, der noch nicht ausgestellt ist (Entwurf). */
+  const istRechnungsartig = RECHNUNGSARTIGE_TYPEN.has(form.typ);
+  const istEntwurf = istRechnungsartig && (isNew || form.status === "entwurf");
+  /** Beleg darf das Haus verlassen: ausgestellt (bzw. Angebot gespeichert)
+   *  und seither unverändert. */
+  const darfAusgegebenWerden = !isNew && !isDirty && !istEntwurf;
 
   // Angebot→Rechnung Vergleichs-Dialog
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
@@ -2690,7 +2699,21 @@ export default function InvoiceDetail() {
   const _cancelableTypes = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
   const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ) && form.status !== "storniert";
 
-  const handleSave = async (): Promise<boolean> => {
+  /**
+   * Speichert den Beleg.
+   *
+   * Rechnungsartige Belege (Rechnung, AR, SR, Gutschrift) durchlaufen zwei
+   * Stufen — buchhalterisch vorgeschrieben:
+   *   1. ENTWURF: beliebig änderbar, trägt nur eine Platzhalter-Nummer und
+   *      verbraucht deshalb KEINE laufende Nummer. Ein verworfener Entwurf
+   *      hinterlässt so auch keine Lücke im Nummernkreis.
+   *   2. ERSTELLT (opts.erstellen): jetzt erst zieht der Beleg die laufende
+   *      Nummer, wechselt auf „offen" und ist ab da gesperrt (isLocked).
+   *      Korrekturen laufen danach nur noch über Storno + Neuausstellung.
+   * Angebote/AB/Lieferscheine kennen diese Trennung nicht — sie bleiben
+   * jederzeit änderbar.
+   */
+  const handleSave = async (opts?: { erstellen?: boolean }): Promise<boolean> => {
     // Double-click protection — SOFORT setzen um Race-Condition bei schnellen Klicks zu verhindern
     if (saving) return false;
     setSaving(true);
@@ -2871,9 +2894,15 @@ export default function InvoiceDetail() {
       // annehmen und wären nachträglich beliebig editierbar.
       // Bereits gesetzte Zahlungs-/Storno-Stati bleiben unangetastet.
       const _behaltStatus = new Set(["teilbezahlt", "bezahlt", "storniert", "verrechnet"]);
-      const saveStatus = RECHNUNGSARTIGE_TYPEN.has(form.typ)
-        ? (_behaltStatus.has(form.status) ? form.status : "offen")
-        : (form.status || "offen");
+      const jetztErstellen = !!opts?.erstellen;
+      // Noch nicht ausgestellt? Neuer Beleg oder einer, der als Entwurf liegt.
+      const nochEntwurf = RECHNUNGSARTIGE_TYPEN.has(form.typ)
+        && (isNew || form.status === "entwurf");
+      const saveStatus = !RECHNUNGSARTIGE_TYPEN.has(form.typ)
+        ? (form.status || "offen")
+        : _behaltStatus.has(form.status) ? form.status
+          : (nochEntwurf && !jetztErstellen) ? "entwurf"
+            : "offen";
 
       // Defensive Parent-Normalisierung: für AR/SR muss parent_invoice_id
       // auf einen echten Positionsträger (Angebot oder AB) zeigen — niemals
@@ -3057,14 +3086,23 @@ export default function InvoiceDetail() {
           }
         }
 
-        const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
-          p_typ: form.typ,
-          p_jahr: form.jahr,
-        } as never);
-
-        if (numError) throw numError;
-        const nummer = numData as string;
-        const laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+        // Entwurf: KEINE laufende Nummer ziehen — sonst wäre sie verbraucht,
+        // auch wenn der Entwurf nie zur Rechnung wird (Lücke im Nummernkreis).
+        // Platzhalter ist eindeutig (nummer ist UNIQUE) und klar erkennbar.
+        let nummer: string;
+        let laufnummer: number;
+        if (saveStatus === "entwurf") {
+          nummer = `ENTWURF-${crypto.randomUUID().slice(0, 8)}`;
+          laufnummer = 0;
+        } else {
+          const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+            p_typ: form.typ,
+            p_jahr: form.jahr,
+          } as never);
+          if (numError) throw numError;
+          nummer = numData as string;
+          laufnummer = parseInt((nummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+        }
 
         const insertOnce = async (payload: any) => supabase
           .from("invoices")
@@ -3083,6 +3121,19 @@ export default function InvoiceDetail() {
         setGeladenerStand(((insertData as any)?.updated_at as string) || null);
         updateField("nummer", insertData!.nummer);
       } else {
+        // Gespeicherter ENTWURF wird jetzt zur Rechnung: laufende Nummer ziehen
+        // und mit in dasselbe Update schreiben (ein Vorgang, kein Zwischenstand).
+        if (opts?.erstellen && String(form.nummer || "").startsWith("ENTWURF-")) {
+          const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
+            p_typ: form.typ,
+            p_jahr: form.jahr,
+          } as never);
+          if (numError) throw numError;
+          const echteNummer = numData as string;
+          invoicePayload.nummer = echteNummer;
+          invoicePayload.laufnummer = parseInt((echteNummer.match(/(\d+)$/) || ["", "1"])[1]) || 1;
+        }
+
         // LOST UPDATE verhindern: nur schreiben, wenn der Beleg seit dem Laden
         // unverändert ist. Trifft das Update 0 Zeilen, hat ein anderer Tab /
         // Kollege zwischenzeitlich gespeichert — dann NICHTS überschreiben.
@@ -3109,6 +3160,9 @@ export default function InvoiceDetail() {
           return false;
         }
         setGeladenerStand(((updRows as any[])?.[0]?.updated_at as string) || null);
+        // Beim Ausstellen die frisch gezogene Nummer ins Formular übernehmen,
+        // damit Kopf, Vorschau und PDF sofort die endgültige Nummer zeigen.
+        if (invoicePayload.nummer) updateField("nummer", invoicePayload.nummer);
       }
 
       await supabase.from("invoice_items").delete().eq("invoice_id", savedId!);
@@ -4145,7 +4199,14 @@ export default function InvoiceDetail() {
     // KingBill: solange der Beleg nicht gespeichert ist, hat er KEINE echte
     // Nummer — Vorschau/PDF zeigen „vorläufig". Die fortlaufende Nummer wird
     // erst beim ersten Speichern gezogen (Nummernkreis bleibt lückenlos).
-    nummer: form.nummer || "vorläufig",
+    // Entwurf: NIE die Platzhalter-Nummer (ENTWURF-…) aufs Papier bringen.
+    // Die voraussichtliche Nummer steht mit Zusatz da, damit klar ist, dass
+    // sie noch nicht vergeben ist.
+    nummer: String(form.nummer || "").startsWith("ENTWURF-")
+      ? "wird beim Erstellen vergeben"
+      : istEntwurf && form.nummer
+        ? `${form.nummer} (Entwurf)`
+        : form.nummer || "vorläufig",
     status: form.status,
     kunde_name: form.kunde_name,
     kunde_adresse: form.kunde_adresse,
@@ -4344,13 +4405,17 @@ export default function InvoiceDetail() {
         onHome={handleHomeNav}
         /* Am Handy einen kurzen Titel — der lange Titel drängt sonst die
            Wizard-Tabs in eine eigene Zeile und die Toolbar wird 4 Zeilen hoch. */
-        title={isNew
-          ? (isMobile
-              ? `${typLabel}${form.nummer ? ` ${form.nummer}` : ""}`
-              : form.nummer
-                ? `${typLabel} ${form.nummer}${(form as any)._nummerVorschau ? " (Vorschau)" : ""}`
-                : `${typArticle} ${typLabel} erstellen`)
-          : `${typLabel} ${form.nummer}`}
+        title={(() => {
+          const platzhalter = String(form.nummer || "").startsWith("ENTWURF-");
+          const nr = platzhalter ? "" : form.nummer;
+          if (istEntwurf) {
+            // Entwurf: die Nummer ist noch nicht vergeben — das muss man sehen.
+            return isMobile
+              ? `${typLabel} (Entwurf)`
+              : `${typLabel} – Entwurf${nr ? ` · Nr. ${nr} folgt beim Erstellen` : ""}`;
+          }
+          return isMobile ? `${typLabel} ${nr}` : `${typLabel} ${nr}`;
+        })()}
         rightActions={
           <>
           {originalPdfPath && (
@@ -4374,19 +4439,37 @@ export default function InvoiceDetail() {
             <>
               <KBToolbarButton
                 icon={Save}
-                label="Speichern"
+                label={istEntwurf ? "Entwurf speichern" : "Speichern"}
                 className="hidden sm:inline-flex"
-                onClick={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
+                onClick={async () => {
+                  const ok = await handleSave();
+                  if (ok) toast({ title: istEntwurf ? "Entwurf gespeichert" : "Gespeichert" });
+                }}
                 disabled={saving}
-                title="Speichern (bleibt geöffnet)"
+                title={istEntwurf
+                  ? "Als Entwurf sichern — noch ohne Rechnungsnummer, bleibt änderbar"
+                  : "Speichern (bleibt geöffnet)"}
               />
-              <KBToolbarButton
-                icon={CheckCircle2}
-                variant="green"
-                label={saving ? "Speichert..." : "Speichern & Schließen"}
-                onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); zurueck(); } }}
-                disabled={saving}
-              />
+              {istEntwurf ? (
+                /* Der eigentliche Ausstellungs-Schritt: erst hier bekommt der
+                   Beleg seine laufende Nummer und wird unveränderbar. */
+                <KBToolbarButton
+                  icon={FileCheck2}
+                  variant="green"
+                  label={saving ? "Erstellt…" : `${typLabel} erstellen`}
+                  onClick={() => setErstellenDialogOffen(true)}
+                  disabled={saving}
+                  title="Belegnummer vergeben und Beleg abschließen — danach nicht mehr änderbar"
+                />
+              ) : (
+                <KBToolbarButton
+                  icon={CheckCircle2}
+                  variant="green"
+                  label={saving ? "Speichert..." : "Speichern & Schließen"}
+                  onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); zurueck(); } }}
+                  disabled={saving}
+                />
+              )}
             </>
           ) : undefined}
           </>
@@ -7441,7 +7524,7 @@ export default function InvoiceDetail() {
           /* Ausgabe (drucken/senden/E-Rechnung) erst, wenn der Beleg wirklich
              in der Datenbank steht UND seither nichts geändert wurde — sonst
              ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
-          belegGespeichert={!isNew && !isDirty}
+          belegGespeichert={darfAusgegebenWerden}
           onSpeichern={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
           speichertGerade={saving}
         />
@@ -7636,6 +7719,53 @@ export default function InvoiceDetail() {
             </div>
           </DialogContent>
         </Dialog>
+        {/* Ausstellen bestätigen — der Schritt ist nicht umkehrbar. */}
+        <Dialog open={erstellenDialogOffen} onOpenChange={setErstellenDialogOffen}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{typLabel} jetzt erstellen?</DialogTitle>
+              <DialogDescription asChild>
+                <div className="space-y-2 pt-1 text-sm">
+                  <p>
+                    Der Beleg bekommt jetzt seine laufende Nummer
+                    {form.nummer && !String(form.nummer).startsWith("ENTWURF-")
+                      ? <> <span className="font-bold text-foreground">{form.nummer}</span></>
+                      : null} und wird abgeschlossen.
+                  </p>
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-amber-900">
+                    <span className="font-bold">Danach ist der Beleg nicht mehr änderbar.</span>{" "}
+                    Stellt sich später etwas als falsch heraus, wird er storniert und neu
+                    ausgestellt — so verlangt es die Buchhaltung.
+                  </p>
+                  <p className="text-muted-foreground">
+                    Erst nach dem Erstellen lässt sich der Beleg senden, drucken und als
+                    E-Rechnung ausgeben.
+                  </p>
+                </div>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex flex-col-reverse gap-2 pt-2 sm:flex-row sm:justify-end">
+              <KBButton label="Abbrechen" onClick={() => setErstellenDialogOffen(false)} />
+              <KBButton
+                icon={FileCheck2}
+                variant="green"
+                label={saving ? "Erstellt…" : `${typLabel} erstellen`}
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await handleSave({ erstellen: true });
+                  if (ok) {
+                    setErstellenDialogOffen(false);
+                    toast({
+                      title: `${typLabel} erstellt`,
+                      description: "Der Beleg ist jetzt abgeschlossen und kann versendet werden.",
+                    });
+                  }
+                }}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <BelegMailDialog
           open={!!mailDialog}
           onOpenChange={(o) => { if (!o) setMailDialog(null); }}
