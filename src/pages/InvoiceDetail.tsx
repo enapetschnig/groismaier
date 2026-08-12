@@ -7525,6 +7525,8 @@ export default function InvoiceDetail() {
              in der Datenbank steht UND seither nichts geändert wurde — sonst
              ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
           belegGespeichert={darfAusgegebenWerden}
+          sperrGrund={istEntwurf ? "entwurf" : "ungespeichert"}
+          aktionLabel={`${typLabel} erstellen`}
           onSpeichern={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
           speichertGerade={saving}
         />

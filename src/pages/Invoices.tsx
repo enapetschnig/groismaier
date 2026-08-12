@@ -294,7 +294,7 @@ export default function Invoices() {
   const fetchInvoices = async () => {
     const { data, error } = await supabase
       .from("invoices")
-      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer, betreff, kunde_adresse, kunde_plz, kunde_ort, leistungsdatum, leistungsdatum_bis, lieferadresse, notizen")
+      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer, betreff, dokument_bezeichnung, kunde_adresse, kunde_plz, kunde_ort, leistungsdatum, leistungsdatum_bis, lieferadresse, notizen")
       .order("datum", { ascending: false })
       .order("created_at", { ascending: false });
 
@@ -638,6 +638,21 @@ export default function Invoices() {
    *  davon nur "Entwurf" zu sehen sein. */
   const zeigeNummer = (nummer: string | null | undefined): string =>
     String(nummer || "").startsWith("ENTWURF-") ? "Entwurf" : (nummer || "—");
+
+  /**
+   * Betreff-Spalte einheitlich: vorne IMMER die Bezeichnung am Dokument und
+   * die Belegnummer ("Rechnung 2026-044"), dahinter der eigene Betreff
+   * (das Bauvorhaben). Bei den aus KingBill übernommenen Belegen steht die
+   * Nummer bereits im Betreff-Text — dann wird sie nicht doppelt gezeigt.
+   */
+  const betreffAnzeige = (inv: Invoice): { kopf: string; zusatz: string } => {
+    const nummer = String(inv.nummer || "");
+    const bezeichnung = String((inv as any).dokument_bezeichnung || "").trim()
+      || TYP_TITLES[inv.typ] || inv.typ;
+    const betreff = String((inv as any).betreff || "").trim();
+    if (nummer && betreff.includes(nummer)) return { kopf: betreff, zusatz: "" };
+    return { kopf: `${bezeichnung} ${zeigeNummer(inv.nummer)}`.trim(), zusatz: betreff };
+  };
 
   /**
    * Gemeinsame Ableitungen je Beleg. Desktop-Tabelle und Mobil-Karten nutzen
@@ -1377,7 +1392,7 @@ export default function Invoices() {
                             <div className="flex items-center gap-2">
                               <TypBadge typ={inv.typ} />
                               <span className="truncate font-medium">
-                                {((inv as any).betreff as string)?.trim() || inv.nummer}
+                                {(() => { const b = betreffAnzeige(inv); return b.zusatz ? `${b.kopf} · ${b.zusatz}` : b.kopf; })()}
                               </span>
                             </div>
                           </TableCell>

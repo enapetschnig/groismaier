@@ -69,6 +69,14 @@ interface InvoiceLivePreviewProps {
    * eine so verschickte Rechnung wäre buchhalterisch nicht auffindbar.
    */
   belegGespeichert?: boolean;
+  /**
+   * Warum darf der Beleg (noch) nicht raus? Steuert die Beschriftung:
+   * "entwurf" = muss erst erstellt werden (Rechnung bekommt dabei ihre
+   * Nummer), "ungespeichert" = einfach noch nicht gespeichert.
+   */
+  sperrGrund?: "entwurf" | "ungespeichert";
+  /** Beschriftung der Ausstell-Aktion, z. B. "Rechnung erstellen". */
+  aktionLabel?: string;
   /** Speichern direkt aus der Vorschau heraus. */
   onSpeichern?: () => void;
   speichertGerade?: boolean;
@@ -77,7 +85,7 @@ interface InvoiceLivePreviewProps {
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail, belegGespeichert = true, onSpeichern, speichertGerade }: InvoiceLivePreviewProps) {
+export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail, belegGespeichert = true, sperrGrund = "ungespeichert", aktionLabel, onSpeichern, speichertGerade }: InvoiceLivePreviewProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState<boolean>(() => {
     try {
@@ -364,8 +372,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     if (belegGespeichert) return true;
     toast({
       variant: "destructive",
-      title: "Beleg zuerst speichern",
-      description: `${aktion} ist erst nach dem Speichern möglich — die endgültige Belegnummer wird dabei vergeben.`,
+      title: sperrGrund === "entwurf" ? `${aktionLabel || "Beleg erstellen"} — dann geht es` : "Beleg zuerst speichern",
+      description: sperrGrund === "entwurf"
+        ? `${aktion} ist erst möglich, wenn der Beleg erstellt ist — dabei wird die endgültige Belegnummer vergeben.`
+        : `${aktion} ist erst nach dem Speichern möglich.`,
     });
     return false;
   };
@@ -538,19 +548,31 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         {!belegGespeichert && (
           <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] leading-snug text-amber-900">
             <div className="mb-1 flex items-center gap-1 font-bold">
-              <AlertTriangle className="h-3.5 w-3.5 shrink-0" /> Noch nicht gespeichert
+              <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+              {sperrGrund === "entwurf" ? "Noch nicht erstellt" : "Noch nicht gespeichert"}
             </div>
-            Senden, Drucken und E-Rechnung sind erst nach dem Speichern möglich —
-            die endgültige Belegnummer wird dabei vergeben.
-            {onSpeichern && (
-              <KBButton
-                className="mt-2 w-full"
-                icon={Save}
-                variant="green"
-                label={speichertGerade ? "Speichert…" : "Jetzt speichern"}
-                onClick={onSpeichern}
-                disabled={speichertGerade}
-              />
+            {sperrGrund === "entwurf" ? (
+              <>
+                Senden, Drucken und E-Rechnung sind erst möglich, wenn der Beleg
+                erstellt ist — dabei bekommt er seine endgültige Nummer.
+                {aktionLabel && (
+                  <> Dafür oben auf <span className="font-bold">„{aktionLabel}"</span>.</>
+                )}
+              </>
+            ) : (
+              <>
+                Senden, Drucken und E-Rechnung sind erst nach dem Speichern möglich.
+                {onSpeichern && (
+                  <KBButton
+                    className="mt-2 w-full"
+                    icon={Save}
+                    variant="green"
+                    label={speichertGerade ? "Speichert…" : "Jetzt speichern"}
+                    onClick={onSpeichern}
+                    disabled={speichertGerade}
+                  />
+                )}
+              </>
             )}
           </div>
         )}
@@ -560,7 +582,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           label="Drucken"
           onClick={handlePrint}
           disabled={!pdfUrl || !belegGespeichert}
-          title={belegGespeichert ? "Drucken — öffnet das PDF in neuem Tab mit Druckfunktion" : "Erst nach dem Speichern möglich"}
+          title={belegGespeichert ? "Drucken — öffnet das PDF in neuem Tab mit Druckfunktion" : (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")}
         />
         <KBButton
           className="w-full"
@@ -568,7 +590,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           label="Druck-Kopien"
           onClick={handlePrint}
           disabled={!pdfUrl || !belegGespeichert}
-          title={belegGespeichert ? "Öffnet den Druckdialog — die Kopienzahl dort einstellen" : "Erst nach dem Speichern möglich"}
+          title={belegGespeichert ? "Öffnet den Druckdialog — die Kopienzahl dort einstellen" : (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")}
         />
         <KBButton
           className="w-full"
@@ -576,7 +598,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           label="Export als PDF"
           onClick={handleExportPdf}
           disabled={!pdfUrl || !belegGespeichert}
-          title={belegGespeichert ? "Als PDF exportieren" : "Erst nach dem Speichern möglich"}
+          title={belegGespeichert ? "Als PDF exportieren" : (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")}
         />
         {/* E-Rechnung — nur bei rechnungsartigen Belegen (wie KingBill). */}
         {["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"].includes(String((formData as any)?.typ)) && (
@@ -588,7 +610,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
             disabled={!belegGespeichert}
             title={belegGespeichert
               ? "E-Rechnung als ebInterface-6.1-XML exportieren (österreichischer Standard, u.a. e-rechnung.gv.at)"
-              : "Erst nach dem Speichern möglich"}
+              : (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")}
           />
         )}
         <KBButton
@@ -598,7 +620,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           onClick={handleEmail}
           disabled={!belegGespeichert || (!onSendMail && !kundeEmail)}
           title={!belegGespeichert
-            ? "Erst nach dem Speichern möglich"
+            ? (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")
             : kundeEmail ? `Beleg per E-Mail an ${kundeEmail} senden` : "Beleg per E-Mail senden"}
         />
       </div>
