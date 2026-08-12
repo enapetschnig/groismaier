@@ -682,7 +682,9 @@ export default function InvoiceDetail() {
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [originalPdfPath, setOriginalPdfPath] = useState<string | null>(null);
   // Beleg per Mail senden (PDF-Anhang über das Firmenpostfach).
-  const [mailDialog, setMailDialog] = useState<{ pdf: Blob; datei: string } | null>(null);
+  const [mailDialog, setMailDialog] = useState<{
+    pdf: Blob; pdfDatei: string; xml?: Blob; xmlDatei?: string; xmlFehler?: string;
+  } | null>(null);
   /** Sicherheitsabfrage vor dem Ausstellen (danach ist der Beleg gesperrt). */
   const [erstellenDialogOffen, setErstellenDialogOffen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
@@ -7520,7 +7522,7 @@ export default function InvoiceDetail() {
              von formData/items, gelangt nie ins Kunden-PDF. */
           internProfit={zeigeVerdienst ? { gewinn: deckungsbeitrag, marge: margeProzent, farbe: margeFarbe } : undefined}
           fileName={form.nummer || typLabel}
-          onSendMail={(pdf, datei) => setMailDialog({ pdf, datei })}
+          onSendMail={(anhaenge) => setMailDialog(anhaenge)}
           /* Ausgabe (drucken/senden/E-Rechnung) erst, wenn der Beleg wirklich
              in der Datenbank steht UND seither nichts geändert wurde — sonst
              ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
@@ -7772,7 +7774,10 @@ export default function InvoiceDetail() {
           open={!!mailDialog}
           onOpenChange={(o) => { if (!o) setMailDialog(null); }}
           pdfBlob={mailDialog?.pdf || null}
-          dateiname={mailDialog?.datei || "Beleg.pdf"}
+          dateiname={mailDialog?.pdfDatei || "Beleg.pdf"}
+          xmlBlob={mailDialog?.xml || null}
+          xmlDateiname={mailDialog?.xmlDatei}
+          xmlFehler={mailDialog?.xmlFehler}
           empfaenger={form.kunde_email || ""}
           belegBezeichnung={typLabel}
           belegNummer={form.nummer || ""}

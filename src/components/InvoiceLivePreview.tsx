@@ -61,7 +61,11 @@ interface InvoiceLivePreviewProps {
    * direkt anhängen kann. Ohne diesen Callback fällt der Knopf auf den alten
    * mailto:-Weg zurück (ohne Anhang).
    */
-  onSendMail?: (pdf: Blob, dateiname: string) => void;
+  onSendMail?: (anhaenge: {
+    pdf: Blob; pdfDatei: string;
+    /** Nur bei rechnungsartigen Belegen und wenn erzeugbar. */
+    xml?: Blob; xmlDatei?: string; xmlFehler?: string;
+  }) => void;
   /**
    * Ist der Beleg gespeichert UND unverändert? Nur dann darf er das Haus
    * verlassen (drucken, exportieren, mailen, E-Rechnung). Vorher trägt er
@@ -282,9 +286,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
 
   // E-Rechnung: ebInterface-6.1-XML erzeugen und herunterladen (der
   // Generator wird im Repo gegen das offizielle XSD validiert).
-  const handleERechnung = async () => {
-    if (!darfRaus("Die E-Rechnung")) return;
-    try {
+  /** Erzeugt die E-Rechnung (ebInterface-6.1-XML) als Blob. Wird vom
+   *  Export-Knopf und vom Mailversand genutzt. Wirft bei fehlenden
+   *  Pflichtangaben (z. B. Firmen-UID) mit klarer Meldung. */
+  const eRechnungBlobBauen = async (): Promise<{ blob: Blob; datei: string }> => {
       const { buildEbInterfaceXml } = await import("@/lib/eRechnung");
       const fd: any = formData;
       const its: any[] = (items as any[]) || [];
@@ -343,11 +348,21 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         },
         settingsRef.current?.bank || {},
       );
-      const blob = new Blob([xml], { type: "application/xml" });
+      return {
+        blob: new Blob([xml], { type: "application/xml" }),
+        datei: `${fd.nummer || fileName || "Beleg"}_ebInterface.xml`,
+      };
+  };
+
+  // E-Rechnung: XML erzeugen und herunterladen.
+  const handleERechnung = async () => {
+    if (!darfRaus("Die E-Rechnung")) return;
+    try {
+      const { blob, datei } = await eRechnungBlobBauen();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `${fd.nummer || fileName || "Beleg"}_ebInterface.xml`;
+      a.download = datei;
       a.click();
       URL.revokeObjectURL(url);
       toast({ title: "E-Rechnung exportiert", description: "ebInterface-6.1-XML wurde heruntergeladen (u.a. für e-rechnung.gv.at)." });
@@ -397,7 +412,24 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     if (onSendMail) {
       const blob = await pdfBlobHolen();
       if (blob) {
-        onSendMail(blob, `${(formData as any)?.nummer || fileName || "Beleg"}.pdf`);
+        const basis = `${(formData as any)?.nummer || fileName || "Beleg"}`;
+        // E-Rechnung gleich mitliefern, damit sie im Dialog wählbar ist.
+        // Schlägt sie fehl (z. B. fehlende UID), wird nur der Grund gemeldet —
+        // der PDF-Versand bleibt davon unberührt.
+        let xml: Blob | undefined;
+        let xmlDatei: string | undefined;
+        let xmlFehler: string | undefined;
+        if (["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]
+          .includes(String((formData as any)?.typ))) {
+          try {
+            const e = await eRechnungBlobBauen();
+            xml = e.blob;
+            xmlDatei = e.datei;
+          } catch (err) {
+            xmlFehler = (err as Error)?.message || "E-Rechnung konnte nicht erzeugt werden";
+          }
+        }
+        onSendMail({ pdf: blob, pdfDatei: `${basis}.pdf`, xml, xmlDatei, xmlFehler });
         return;
       }
     }

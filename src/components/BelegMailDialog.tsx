@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Paperclip, Send } from "lucide-react";
+import { FileCode2, Loader2, Paperclip, Send } from "lucide-react";
 
 /** Absender-Postfächer (identisch zur Allowlist der Edge Function). */
 const POSTFAECHER = [
@@ -31,6 +31,11 @@ interface Props {
   /** Fertiges Beleg-PDF. */
   pdfBlob: Blob | null;
   dateiname: string;
+  /** E-Rechnung (ebInterface-XML) — nur bei rechnungsartigen Belegen. */
+  xmlBlob?: Blob | null;
+  xmlDateiname?: string;
+  /** Warum konnte die E-Rechnung nicht erzeugt werden (z. B. UID fehlt). */
+  xmlFehler?: string;
   /** Vorbelegung aus dem Beleg. */
   empfaenger: string;
   belegBezeichnung: string;
@@ -40,7 +45,7 @@ interface Props {
 }
 
 export function BelegMailDialog({
-  open, onOpenChange, pdfBlob, dateiname,
+  open, onOpenChange, pdfBlob, dateiname, xmlBlob, xmlDateiname, xmlFehler,
   empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName,
 }: Props) {
   const { toast } = useToast();
@@ -50,11 +55,14 @@ export function BelegMailDialog({
   const [betreff, setBetreff] = useState("");
   const [text, setText] = useState("");
   const [sendet, setSendet] = useState(false);
+  /** Was hängt an? „pdf" ist voreingestellt (Kundenwunsch). */
+  const [anhangWahl, setAnhangWahl] = useState<"pdf" | "beides" | "xml">("pdf");
 
   useEffect(() => {
     if (!open) return;
     setAn(empfaenger || "");
     setCc("");
+    setAnhangWahl("pdf");
     setBetreff(`${belegBezeichnung} ${belegNummer}`.trim());
     // Anrede aus den Kundendaten ableiten — „Frau Salat" statt „Damen und Herren".
     const nachname = (kundeName || "").trim().split(/\s+/).slice(-1)[0] || "";
@@ -66,7 +74,7 @@ export function BelegMailDialog({
     setText(
       `${anrede}\n\n` +
       `anbei erhalten Sie ${belegBezeichnung.toLowerCase().startsWith("a") ? "unser" : "unsere"} ` +
-      `${belegBezeichnung} ${belegNummer} als PDF.\n\n` +
+      `${belegBezeichnung} ${belegNummer}.\n\n` +
       `Bei Fragen stehen wir Ihnen gerne zur Verfügung.\n\n` +
       `Mit freundlichen Grüßen\nHolzbau Groismaier GmbH`,
     );
@@ -78,19 +86,36 @@ export function BelegMailDialog({
       toast({ title: "Empfänger fehlt", description: "Bitte eine E-Mail-Adresse eintragen.", variant: "destructive" });
       return;
     }
-    if (!pdfBlob) {
+    if (anhangWahl !== "xml" && !pdfBlob) {
       toast({ title: "Kein PDF", description: "Der Beleg konnte nicht erzeugt werden.", variant: "destructive" });
+      return;
+    }
+    if (anhangWahl !== "pdf" && !xmlBlob) {
+      toast({ title: "Keine E-Rechnung", description: xmlFehler || "Die E-Rechnung konnte nicht erzeugt werden.", variant: "destructive" });
       return;
     }
     setSendet(true);
     try {
-      // PDF als base64 (ohne data:-Präfix) — so erwartet es Microsoft Graph.
-      const base64: string = await new Promise((auf, ab) => {
+      // Dateien als base64 (ohne data:-Präfix) — so erwartet es Microsoft Graph.
+      const alsBase64 = (b: Blob): Promise<string> => new Promise((auf, ab) => {
         const r = new FileReader();
         r.onload = () => auf(String(r.result).split(",")[1] || "");
-        r.onerror = () => ab(new Error("PDF konnte nicht gelesen werden"));
-        r.readAsDataURL(pdfBlob);
+        r.onerror = () => ab(new Error("Datei konnte nicht gelesen werden"));
+        r.readAsDataURL(b);
       });
+
+      const anhaenge: { name: string; inhaltBase64: string; typ: string }[] = [];
+      if (anhangWahl !== "xml") {
+        anhaenge.push({ name: dateiname, inhaltBase64: await alsBase64(pdfBlob), typ: "application/pdf" });
+      }
+      if (anhangWahl !== "pdf" && xmlBlob) {
+        anhaenge.push({
+          name: xmlDateiname || "E-Rechnung.xml",
+          inhaltBase64: await alsBase64(xmlBlob),
+          typ: "application/xml",
+        });
+      }
+      if (anhaenge.length === 0) throw new Error("Kein Anhang gewählt");
 
       const { data, error } = await supabase.functions.invoke("mail-postfach", {
         body: {
@@ -101,7 +126,7 @@ export function BelegMailDialog({
           cc: cc.split(/[;,]/).map((x) => x.trim()).filter(Boolean),
           betreff,
           text,
-          anhaenge: [{ name: dateiname, inhaltBase64: base64, typ: "application/pdf" }],
+          anhaenge,
         },
       });
       if (error) throw new Error(error.message);
@@ -164,12 +189,69 @@ export function BelegMailDialog({
             <Label>Nachricht</Label>
             <Textarea rows={9} value={text} onChange={(e) => setText(e.target.value)} />
           </div>
-          <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-xs">
-            <Paperclip className="h-3.5 w-3.5 shrink-0 text-kb-blue" />
-            <span className="truncate">{dateiname}</span>
-            <span className="ml-auto shrink-0 text-muted-foreground">
-              {pdfBlob ? `${Math.max(1, Math.round(pdfBlob.size / 1024))} KB` : "wird erzeugt…"}
-            </span>
+          {/* Anhang wählen — „nur PDF" ist voreingestellt (Kundenwunsch).
+              Die E-Rechnung erscheint nur bei rechnungsartigen Belegen. */}
+          <div className="space-y-1.5">
+            <Label>Anhang</Label>
+            {(xmlBlob || xmlFehler) ? (
+              <div className="grid gap-1.5">
+                {([
+                  { wert: "pdf", titel: "Nur PDF", hinweis: "Das gewohnte Rechnungs-PDF" },
+                  { wert: "beides", titel: "PDF und E-Rechnung", hinweis: "Für Kunden, die beides brauchen" },
+                  { wert: "xml", titel: "Nur E-Rechnung", hinweis: "ebInterface-XML, z. B. für Behörden" },
+                ] as const).map((o) => {
+                  const gesperrt = o.wert !== "pdf" && !xmlBlob;
+                  return (
+                    <label
+                      key={o.wert}
+                      className={`flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 text-sm ${
+                        anhangWahl === o.wert ? "border-kb-blue bg-[hsl(210_60%_97%)]" : "bg-background"
+                      } ${gesperrt ? "cursor-not-allowed opacity-50" : ""}`}
+                    >
+                      <input
+                        type="radio"
+                        name="anhangWahl"
+                        className="mt-0.5 h-3.5 w-3.5 accent-kb-blue-dark"
+                        checked={anhangWahl === o.wert}
+                        disabled={gesperrt}
+                        onChange={() => setAnhangWahl(o.wert)}
+                      />
+                      <span className="min-w-0">
+                        <span className="font-medium">{o.titel}</span>
+                        <span className="block text-[11px] text-muted-foreground">{o.hinweis}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+                {xmlFehler && (
+                  <p className="text-[11px] text-amber-600">
+                    E-Rechnung nicht möglich: {xmlFehler}
+                  </p>
+                )}
+              </div>
+            ) : null}
+
+            {/* Was tatsächlich mitgeht */}
+            <div className="space-y-1">
+              {anhangWahl !== "xml" && (
+                <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                  <Paperclip className="h-3.5 w-3.5 shrink-0 text-kb-blue" />
+                  <span className="truncate">{dateiname}</span>
+                  <span className="ml-auto shrink-0 text-muted-foreground">
+                    {pdfBlob ? `${Math.max(1, Math.round(pdfBlob.size / 1024))} KB` : "wird erzeugt…"}
+                  </span>
+                </div>
+              )}
+              {anhangWahl !== "pdf" && xmlBlob && (
+                <div className="flex items-center gap-1.5 rounded-md border bg-muted/40 px-3 py-2 text-xs">
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-kb-blue" />
+                  <span className="truncate">{xmlDateiname || "E-Rechnung.xml"}</span>
+                  <span className="ml-auto shrink-0 text-muted-foreground">
+                    {`${Math.max(1, Math.round(xmlBlob.size / 1024))} KB`}
+                  </span>
+                </div>
+              )}
+            </div>
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
