@@ -57,6 +57,11 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
   // 70 € ist nur noch der Fallback, wenn der Wert dort fehlt.
   const [stundensatz, setStundensatz] = useState(70);
 
+  // Stabiler Schlüssel statt Array-Referenz: preselectedIds kommt vom Parent
+  // bei jedem Render als NEUES Array — als direkte Effect-Dependency würde
+  // jeder Parent-Render den Dialog neu laden und laufende Eingaben verwerfen.
+  const vorwahlKey = `${preselectedId || ""}|${(preselectedIds || []).join(",")}`;
+
   useEffect(() => {
     if (open) {
       fetchDisturbances();
@@ -77,7 +82,7 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
       })();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, preselectedId, preselectedIds]);
+  }, [open, vorwahlKey]);
 
   const fetchDisturbances = async () => {
     setLoading(true);
