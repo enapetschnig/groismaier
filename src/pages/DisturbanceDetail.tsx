@@ -18,6 +18,7 @@ import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
 import { DisturbanceMaschinen } from "@/components/DisturbanceMaschinen";
+import { parseDecimal } from "@/lib/num";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
 
@@ -379,7 +380,7 @@ const DisturbanceDetail = () => {
     if (masch && masch.length > 0) {
       const eur = (n: number) => n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
       const zeilen = (masch as any[]).map((m) => {
-        const menge = Number(String(m.menge ?? "").replace(",", ".")) || 0;
+        const menge = parseDecimal(String(m.menge ?? "")) ?? 0;
         const satz = m.einzelpreis != null ? Number(m.einzelpreis) : null;
         return [
           m.maschine || "",
@@ -390,7 +391,7 @@ const DisturbanceDetail = () => {
         ];
       });
       const summe = (masch as any[]).reduce((sum, m) => {
-        const menge = Number(String(m.menge ?? "").replace(",", ".")) || 0;
+        const menge = parseDecimal(String(m.menge ?? "")) ?? 0;
         return sum + (m.einzelpreis != null ? menge * Number(m.einzelpreis) : 0);
       }, 0);
 

@@ -17,6 +17,7 @@ import { loadDocumentTexts, applyDocumentTextsToInvoice } from "@/lib/documentTe
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 
 import { loadInvoiceLogo } from "@/lib/logoLoader";
+import { belegDateiBasis } from "@/lib/belegDateiname";
 
 async function getLogoDataUri(): Promise<string | undefined> {
   return loadInvoiceLogo();
@@ -148,7 +149,7 @@ export function InvoicePdfPreview({
     if (!pdfUrl) return;
     const a = document.createElement("a");
     a.href = pdfUrl;
-    a.download = `${fileName || "Dokument"}.pdf`;
+    a.download = `${belegDateiBasis((formData as any)?.dokument_bezeichnung, (formData as any)?.nummer || fileName, "Dokument")}.pdf`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

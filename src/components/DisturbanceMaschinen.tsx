@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wrench } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
+import { parseDecimal } from "@/lib/num";
 
 interface Maschine {
   id: string;
@@ -40,7 +41,7 @@ export function DisturbanceMaschinen({ disturbanceId, reloadKey = 0 }: { disturb
   if (maschinen.length === 0) return null;
 
   const betrag = (m: Maschine): number | null => {
-    const menge = Number(String(m.menge ?? "").replace(",", ".")) || 0;
+    const menge = parseDecimal(String(m.menge ?? "")) ?? 0;
     return m.einzelpreis != null && menge > 0 ? menge * Number(m.einzelpreis) : null;
   };
   const summe = maschinen.reduce((s, m) => s + (betrag(m) || 0), 0);

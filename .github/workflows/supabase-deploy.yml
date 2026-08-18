@@ -1,7 +1,7 @@
-# Supabase-Deploy per Hand-Auslösung (workflow_dispatch):
-#   1. spielt die beiden Migrationen 20260818* über die Management-API ein
-#   2. verifiziert, dass die neuen Spalten wirklich existieren
-#   3. deployt die Edge Function mail-postfach
+# Supabase-Deploy:
+#   1. spielt alle noch nicht eingespielten Migrationen ab 20260818 über die
+#      Management-API ein (Abgleich gegen supabase_migrations.schema_migrations)
+#   2. deployt die Edge Function mail-postfach
 #
 # Der Access Token kommt aus dem Repository-Secret SUPABASE_ACCESS_TOKEN
 # (Repo → Settings → Secrets and variables → Actions). Er taucht in keinem
@@ -52,13 +52,15 @@ jobs:
           sql_datei() {
             jq -Rs '{query: .}' < "$1" > /tmp/payload.json
             local http
+            # Transportfehler (DNS/TLS/Timeout) dürfen die Zuweisung unter
+            # set -e nicht sprengen — sie werden wie HTTP 000 behandelt.
             http=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
               -X POST "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
               -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
               -H "Content-Type: application/json" \
-              --data @/tmp/payload.json)
+              --data @/tmp/payload.json) || http="000"
             echo "→ $1: HTTP ${http}"
-            cat /tmp/resp.json; echo
+            cat /tmp/resp.json 2>/dev/null; echo
             if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
               [ "${2:-}" = "weich" ] && { echo "(weicher Schritt — wird übersprungen)"; return 0; }
               return 1
@@ -71,26 +73,39 @@ jobs:
           # Doppel-Einspielen alter Migrationen wäre gefährlich).
           FLOOR="20260818000000"
 
+          # Historie-Abfrage ist HART: Ohne verlässliche Antwort dürfen wir
+          # NICHT einspielen — sonst liefen alle Dateien ab FLOOR erneut
+          # (und z.B. Seed-Updates setzten Werte zurück).
           echo "select version from supabase_migrations.schema_migrations where version >= '${FLOOR}';" > /tmp/versions.sql
-          sql_datei /tmp/versions.sql weich
-          jq -r '.[].version // empty' /tmp/resp.json > /tmp/applied.txt 2>/dev/null || : > /tmp/applied.txt
+          sql_datei /tmp/versions.sql
+          jq -r '.[].version // empty' /tmp/resp.json > /tmp/applied.txt \
+            || { echo "::error::Antwort der Historie-Abfrage nicht lesbar — Abbruch statt Doppel-Einspielen."; exit 1; }
           echo "Bereits eingespielt (ab ${FLOOR}):"; cat /tmp/applied.txt || true
 
-          NEU=0
+          NEU=0; ALT=0
           for f in supabase/migrations/*.sql; do
             base=$(basename "$f"); ver="${base%%_*}"
+            # Version muss exakt 14 Ziffern sein — sonst würde ein Dateiname
+            # ohne Unterstrich die Historie verfälschen.
+            if ! [[ "$ver" =~ ^[0-9]{14}$ ]]; then
+              echo "::warning::${base}: Versionspräfix nicht erkennbar — übersprungen."
+              continue
+            fi
             # nur Versionen ab FLOOR (String-Vergleich reicht bei 14 Ziffern)
-            [ "$ver" \< "$FLOOR" ] && continue
+            [ "$ver" \< "$FLOOR" ] && { ALT=$((ALT + 1)); continue; }
             if grep -qx "$ver" /tmp/applied.txt; then
               echo "✓ ${base} — bereits eingespielt, übersprungen"
               continue
             fi
             sql_datei "$f"
+            # Historie-Eintrag ist HART: Scheitert er, gälte die Migration im
+            # nächsten Lauf als offen und liefe erneut.
             name="${base#*_}"; name="${name%.sql}"
             printf "insert into supabase_migrations.schema_migrations (version, name, statements) values ('%s','%s', array['-- eingespielt ueber Management-API (GitHub Action)']) on conflict (version) do nothing;" "$ver" "$name" > /tmp/hist.sql
-            sql_datei /tmp/hist.sql weich
+            sql_datei /tmp/hist.sql
             NEU=$((NEU + 1))
           done
+          echo "ℹ ${ALT} Migration(en) vor ${FLOOR} verwaltet dieser Workflow bewusst nicht."
           echo "✓ ${NEU} neue Migration(en) eingespielt."
 
       - name: Edge Function mail-postfach deployen

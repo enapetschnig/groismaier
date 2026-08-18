@@ -1060,13 +1060,57 @@ export async function generateInvoicePdf(
     y += Math.max(dims.h, lines.length * 4) + padBelow;
   };
 
+  // Der Zahlungs-Satz aus der ZAHLUNGSFRIST des Belegs — bei Rechnungsbelegen
+  // die eine Wahrheit über die Fälligkeit. Wird VOR dem Schlusstext berechnet,
+  // damit gleichlautende "Zahlbar …"-Zeilen aus dem Schlusstext entfernt
+  // werden können (siehe unten).
+  const zahlungsSatz = (() => {
+    if (!docCfg.isInvoiceLike || docCfg.typ === "gutschrift") return "";
+    const isIndividuell = zahlungsbedingungen.toLowerCase() === "individuell";
+    // Beleg-eigener Zahlungsbedingungen-Text (KingBill-Reiter) hat Vorrang.
+    const eigenerZahlungstext = String((invoice as any).zahlungstext || "").trim();
+    if (eigenerZahlungstext) return eigenerZahlungstext;
+    // „Zeige Fälligkeit" abgehakt: keine Zahlbar-Zeile drucken.
+    if ((invoice as any).zeige_faelligkeit === false) return "";
+    if (isZahlungSofort) return "Zahlbar sofort und ohne Abzug.";
+    if (isIndividuell && invoice.faellig_am) {
+      // Dropdown-Auswahl "Individuelles Datum" — das Fälligkeitsdatum
+      // ist die Wahrheit, kein Tage-Platzhalter.
+      return `Zahlbar bis ${fmtDate(invoice.faellig_am)} ohne Abzug.`;
+    }
+    if (zahlungsTageMatch) return L.closing_text_invoice.replace("{{tage}}", zahlungsTageMatch[1]);
+    // freier Text (z.B. Altdaten "bei Lieferung bar") → direkt übernehmen
+    if (zahlungsbedingungen && !isIndividuell) return zahlungsbedingungen;
+    return L.closing_text_invoice.replace("{{tage}}", "14");
+  })();
+
+  // Standard-"Zahlbar …"-Zeilen aus einem Text entfernen. Kundenmeldung
+  // 08/2026: Der Schlusstext der Vorlage ("Zahlbar innerhalb 14 Tagen ohne
+  // Abzug.") wurde ZUSÄTZLICH zum Zahlungs-Satz der gewählten Frist gedruckt
+  // — bei "Sofort fällig" standen zwei widersprüchliche Sätze am Beleg.
+  // Individuelle Sätze ("Zahlbar nach Erhalt der Rechnung, netto Kassa")
+  // beginnen nicht mit sofort/innerhalb/bis/prompt und bleiben stehen.
+  const ohneZahlbarZeilen = (text: string): string =>
+    text
+      .split("\n")
+      .filter((z) => !/^\s*zahlbar\s+(sofort|innerhalb|bis|prompt|umgehend)\b/i.test(z))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
   // Bei Rechnungen ist ein eigener Schlusstext eine ERGAENZUNG, kein Ersatz.
   // Frueher uebersteuerte er die gesamte Zahlungslogik: Jede Rechnung trug
   // dann den Standardsatz aus dem Textbaustein ("zahlbar innerhalb 14 Tagen")
   // — auch die sofort faellige und die mit individuellem Datum.
+  // Druckt der Zahlungsfrist-Block unten seinen eigenen Satz, fliegen
+  // gleichartige "Zahlbar …"-Zeilen aus dem Schlusstext (keine Doppelung).
+  const customClosingBereinigt =
+    customClosing && zahlungsSatz ? ohneZahlbarZeilen(customClosing) : customClosing;
   const eigenerSchlusstextZusaetzlich =
     !!customClosing && docCfg.isInvoiceLike && docCfg.typ !== "gutschrift";
-  if (eigenerSchlusstextZusaetzlich) renderMultilineText(customClosing!, 1);
+  if (eigenerSchlusstextZusaetzlich && customClosingBereinigt) {
+    renderMultilineText(customClosingBereinigt, 1);
+  }
 
   if (customClosing && !eigenerSchlusstextZusaetzlich) {
     renderMultilineText(customClosing);
@@ -1082,30 +1126,7 @@ export async function generateInvoicePdf(
       4,
     );
   } else if (docCfg.isInvoiceLike) {
-    let closingText: string;
-    const isIndividuell = zahlungsbedingungen.toLowerCase() === "individuell";
-    // Beleg-eigener Zahlungsbedingungen-Text (KingBill-Reiter) hat Vorrang.
-    const eigenerZahlungstext = String((invoice as any).zahlungstext || "").trim();
-    if (eigenerZahlungstext) {
-      closingText = eigenerZahlungstext;
-    } else if ((invoice as any).zeige_faelligkeit === false) {
-      // „Zeige Fälligkeit" abgehakt: keine Zahlbar-Zeile drucken.
-      closingText = "";
-    } else if (isZahlungSofort) {
-      closingText = "Zahlbar sofort ohne Abzug.";
-    } else if (isIndividuell && invoice.faellig_am) {
-      // Dropdown-Auswahl "Individuelles Datum" — das Fälligkeitsdatum
-      // ist die Wahrheit, kein Tage-Platzhalter.
-      closingText = `Zahlbar bis ${fmtDate(invoice.faellig_am)} ohne Abzug.`;
-    } else if (zahlungsTageMatch) {
-      closingText = L.closing_text_invoice.replace("{{tage}}", zahlungsTageMatch[1]);
-    } else if (zahlungsbedingungen && !isIndividuell) {
-      // freier Text (z.B. Altdaten "bei Lieferung bar") → direkt übernehmen
-      closingText = zahlungsbedingungen;
-    } else {
-      closingText = L.closing_text_invoice.replace("{{tage}}", "14");
-    }
-    if (closingText) renderMultilineText(closingText, 1);
+    if (zahlungsSatz) renderMultilineText(zahlungsSatz, 1);
     pdf.setFontSize(7.5);
     pdf.setTextColor(0, 0, 0);
     // Kundennummer nur nennen, wenn es sie gibt — sonst stand „und
