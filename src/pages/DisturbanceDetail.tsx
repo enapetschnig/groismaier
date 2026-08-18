@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
+import { DisturbanceMaschinen } from "@/components/DisturbanceMaschinen";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
 
@@ -946,6 +947,9 @@ const DisturbanceDetail = () => {
           disturbanceId={disturbance.id}
           canEdit={canEdit}
         />
+
+        {/* Maschinen / Werkzeug — bisher nur im PDF sichtbar */}
+        <DisturbanceMaschinen disturbanceId={disturbance.id} />
 
         {/* Löschen (nur wenn nicht gesperrt) */}
         {canEdit && (

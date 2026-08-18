@@ -97,12 +97,18 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
 
   useEffect(() => {
     (async () => {
+      // Alle Maschinen — plus Fahrzeuge, die einen Verrechnungssatz haben
+      // (Kundenwunsch 08/2026: auch Kran/LKW als Regie-Position buchbar).
       const { data } = await (supabase.from("vehicles" as never) as any)
-        .select("id, bezeichnung, verrechnungssatz, verrechnungseinheit")
-        .eq("art", "maschine")
+        .select("id, bezeichnung, art, verrechnungssatz, verrechnungseinheit")
         .eq("aktiv", true)
+        .order("art", { ascending: false }) // Maschinen vor Fahrzeugen
         .order("bezeichnung");
-      setMaschinenStamm((data as any) || []);
+      setMaschinenStamm(
+        (((data as any[]) || []) as any[]).filter(
+          (v) => v.art === "maschine" || v.verrechnungssatz != null,
+        ) as any,
+      );
     })();
   }, []);
 
