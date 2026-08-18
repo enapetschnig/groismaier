@@ -157,7 +157,9 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
       ((maschinen as any[]) || []).forEach(ma => {
         newItems.push({
           beschreibung: ma.maschine || "Maschine",
-          menge: parseDecimal(String(ma.menge ?? "")) ?? 1,
+          // Fehlende Menge = 0 statt still 1 — sonst landete eine vergessene
+          // Mengenangabe als voller Stundensatz auf der Rechnung (Review-Befund).
+          menge: parseDecimal(String(ma.menge ?? "")) ?? 0,
           einheit: ma.einheit || "h",
           einzelpreis: Number(ma.einzelpreis) || 0,
           selected: true,

@@ -83,7 +83,7 @@ const Disturbances = () => {
       return;
     }
     setRegieSatz(n);
-    setSatzText("");
+    setSatzText(n.toLocaleString("de-AT"));
     toast({ title: "Regiestundensatz gespeichert", description: `Ab jetzt gelten € ${n.toLocaleString("de-AT")} je Stunde.` });
   };
 
@@ -181,7 +181,11 @@ const Disturbances = () => {
           (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
       ]);
       const satz = parseDecimal(String(satzRes.data?.value ?? ""));
-      if (satz !== null && satz > 0) setRegieSatz(satz);
+      if (satz !== null && satz > 0) {
+        setRegieSatz(satz);
+        // Eingabefeld einmalig vorbelegen — laufende Tipparbeit nicht überschreiben.
+        setSatzText((alt) => (alt === "" ? satz.toLocaleString("de-AT") : alt));
+      }
       for (const res of blockRes) {
         for (const z of (((res as any).data as any[]) || [])) {
           const menge = parseDecimal(String(z.menge ?? "")) ?? 0;
@@ -378,32 +382,41 @@ const Disturbances = () => {
           </CardContent>
         </Card>
 
-        {/* Offene Summe je Projekt (nur Admin — Gelddaten) */}
-        {isAdmin && offeneGesamt > 0.005 && (
+        {/* Offene Summe je Projekt + Regiestundensatz (nur Admin — Gelddaten).
+            Die Karte bleibt AUCH ohne offene Berichte sichtbar, sonst wäre
+            der Satz genau dann unerreichbar, wenn alles verrechnet ist
+            (Review-Befund Runde 2). */}
+        {isAdmin && (
           <Card className="kb-panel mb-4 border-amber-300 bg-amber-50">
             <CardContent className="p-3 sm:p-4 space-y-1.5">
-              <p className="text-sm font-semibold text-amber-900">
-                Noch zu verrechnen: {eur(offeneGesamt)} · {offeneBerichte.length} Bericht{offeneBerichte.length === 1 ? "" : "e"}
-              </p>
-              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-800">
-                {offeneJeProjekt.map(([name, betrag]) => (
-                  <span key={name} className="whitespace-nowrap">
-                    {name}: <span className="font-medium tabular-nums">{eur(betrag)}</span>
-                  </span>
-                ))}
-              </div>
+              {offeneGesamt > 0.005 ? (
+                <>
+                  <p className="text-sm font-semibold text-amber-900">
+                    Noch zu verrechnen: {eur(offeneGesamt)} · {offeneBerichte.length} Bericht{offeneBerichte.length === 1 ? "" : "e"}
+                  </p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-800">
+                    {offeneJeProjekt.map(([name, betrag]) => (
+                      <span key={name} className="whitespace-nowrap">
+                        {name}: <span className="font-medium tabular-nums">{eur(betrag)}</span>
+                      </span>
+                    ))}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm font-semibold text-amber-900">Alle Regieberichte verrechnet. ✓</p>
+              )}
               <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-700">
-                <span>Stunden ×</span>
+                <span>Regiestundensatz:</span>
                 <Input
                   type="text"
                   inputMode="decimal"
-                  value={satzText === "" ? regieSatz.toLocaleString("de-AT") : satzText}
+                  value={satzText}
                   onChange={(e) => setSatzText(e.target.value)}
                   aria-label="Regiestundensatz"
                   className="h-7 w-16 border-amber-300 bg-white px-1.5 text-right text-[11px] tabular-nums"
                 />
-                <span>€/h (Standard-Regiestundensatz) + Material + Maschinen.</span>
-                {satzText !== "" && parseDecimal(satzText) !== regieSatz && (
+                <span>€/h — gilt für offene Summen und den Rechnungs-Import (Material + Maschinen kommen dazu).</span>
+                {parseDecimal(satzText) !== null && parseDecimal(satzText) !== regieSatz && (
                   <Button size="sm" className="h-7 px-2 text-[11px]" onClick={speichereRegieSatz} disabled={satzSpeichert}>
                     {satzSpeichert ? "Speichert…" : "Satz speichern"}
                   </Button>

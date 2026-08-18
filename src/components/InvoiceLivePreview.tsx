@@ -16,6 +16,7 @@ import { generateInvoicePdf } from "@/lib/pdfGenerator";
 import { loadDocumentTexts, applyDocumentTextsToInvoice } from "@/lib/documentTextsLoader";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from "@/lib/invoiceLayoutTypes";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
+import { belegDateiBasis } from "@/lib/belegDateiname";
 
 /**
  * Permanente Live-Vorschau des Belegs (KingBill-Stil) — wird auf breiten
@@ -280,7 +281,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
     if (!pdfUrl) return;
     const a = document.createElement("a");
     a.href = pdfUrl;
-    a.download = `${fileName || "Beleg"}.pdf`;
+    a.download = `${belegDateiBasis((formData as any)?.dokument_bezeichnung, (formData as any)?.nummer || fileName)}.pdf`;
     a.click();
   };
 
@@ -350,7 +351,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
       );
       return {
         blob: new Blob([xml], { type: "application/xml" }),
-        datei: `${fd.nummer || fileName || "Beleg"}_ebInterface.xml`,
+        datei: `${belegDateiBasis(fd.dokument_bezeichnung, fd.nummer || fileName)}_ebInterface.xml`,
       };
   };
 
@@ -415,10 +416,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
         // Dateiname trägt die Bezeichnung am Dokument mit (Kundenwunsch:
         // "genau so, wie ich die Rechnung taufe") — z.B.
         // "Anzahlungsrechnung_2026-044.pdf" statt nur "2026-044.pdf".
-        const bezeichnung = String((formData as any)?.dokument_bezeichnung || "").trim()
-          .replace(/[^\wäöüÄÖÜß-]+/g, "_").replace(/^_+|_+$/g, "");
-        const nummer = `${(formData as any)?.nummer || fileName || "Beleg"}`;
-        const basis = bezeichnung ? `${bezeichnung}_${nummer}` : nummer;
+        const basis = belegDateiBasis(
+          (formData as any)?.dokument_bezeichnung,
+          (formData as any)?.nummer || fileName,
+        );
         // E-Rechnung gleich mitliefern, damit sie im Dialog wählbar ist.
         // Schlägt sie fehl (z. B. fehlende UID), wird nur der Grund gemeldet —
         // der PDF-Versand bleibt davon unberührt.

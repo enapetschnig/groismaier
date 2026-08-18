@@ -498,23 +498,41 @@ export default function InvoiceDetail() {
       navigate("/invoices");
     }, 0);
   };
+  /**
+   * Kundenmeldung 08/2026: "Der Knopf links oben reagiert nicht." Der
+   * Browser-Verlauf ist im Belegeditor oft unbrauchbar (History-Eintrag beim
+   * Speichern/Erstellen ersetzt, Deep-Link) — navigate(-1) landet dann auf
+   * derselben URL und es passiert sichtbar NICHTS. Deshalb: Verlauf
+   * versuchen, und wenn sich die Adresse nicht ändert, absolut zur
+   * Belegliste. Das popstate-Event beendet die Wartezeit früh (auch wenn die
+   * Rückwärts-Navigation auf dieselbe URL führt); der Timer ist nur das
+   * Sicherheitsnetz, falls es nie eintrifft. Gilt für ALLE Ausgänge des
+   * Editors (Toolbar-Pfeil, "Speichern & Schließen", Vorschau-Dialog).
+   */
+  const backFallbackAktiv = useRef(false);
+  const zurueckMitFallback = () => {
+    if (backFallbackAktiv.current) return; // Doppelklick-Schutz
+    backFallbackAktiv.current = true;
+    const vorher = window.location.href;
+    let erledigt = false;
+    const pruefe = () => {
+      if (erledigt) return;
+      erledigt = true;
+      backFallbackAktiv.current = false;
+      if (window.location.href === vorher) navigate("/invoices");
+    };
+    window.addEventListener("popstate", () => window.setTimeout(pruefe, 0), { once: true });
+    window.setTimeout(pruefe, 400);
+    zurueck();
+  };
+
   const handleBackNav = () => {
     leaveZielRef.current = "zurueck";
     if (isDirty) {
       setLeaveDialogOpen(true);
       return;
     }
-    // Kundenmeldung 08/2026: "Der Knopf links oben reagiert nicht." Der
-    // Browser-Verlauf ist im Belegeditor oft unbrauchbar (History-Eintrag
-    // beim Speichern/Erstellen ersetzt, Deep-Link) — navigate(-1) landet
-    // dann auf derselben URL und es passiert sichtbar NICHTS. Deshalb:
-    // Verlauf versuchen, und wenn sich die Adresse nicht ändert, absolut
-    // zur Belegliste.
-    const vorher = window.location.href;
-    zurueck();
-    window.setTimeout(() => {
-      if (window.location.href === vorher) navigate("/invoices");
-    }, 150);
+    zurueckMitFallback();
   };
   const handleHomeNav = () => {
     leaveZielRef.current = "home";
@@ -2679,19 +2697,25 @@ export default function InvoiceDetail() {
       v === "sofort" ? "Zahlbar sofort und ohne Abzug."
         : v === "individuell" ? ""
           : `Zahlbar innerhalb ${v.replace(/\D/g, "") || "14"} Tagen ohne Abzug.`;
+    // NUR Standard-Frist-Sätze anfassen (sofort/innerhalb/bis/prompt) —
+    // ein individueller Satz wie "Zahlbar nach Erhalt der Rechnung, netto
+    // Kassa" bleibt unangetastet.
+    const istFristSatz = (z: string) => /^\s*zahlbar\s+(sofort|innerhalb|bis|prompt|umgehend)\b/i.test(z);
     const ersetzeZahlbarZeilen = (text: string): string => {
-      if (!/^\s*zahlbar\b/im.test(text)) return text;
+      if (!text.split("\n").some(istFristSatz)) return text;
       let ersetzt = false;
       return text
         .split("\n")
         .map((z) => {
-          if (!/^\s*zahlbar\b/i.test(z)) return z;
+          if (!istFristSatz(z)) return z;
           if (ersetzt || !neuerSatz) return null; // doppelte Frist-Sätze fallen weg
           ersetzt = true;
           return neuerSatz;
         })
         .filter((z): z is string => z !== null)
-        .join("\n");
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/^\n+/, "");
     };
     setForm(prev => ({
       ...prev,
@@ -2699,7 +2723,7 @@ export default function InvoiceDetail() {
       zahlungstext: ersetzeZahlbarZeilen(String((prev as any).zahlungstext || "")),
       custom_closing_text: ersetzeZahlbarZeilen(String((prev as any).custom_closing_text || "")),
     } as any));
-    setIsDirty(true);
+    if (!loading) setIsDirty(true);
   };
 
   // Auto-Sync zahlungsbedingungen → faellig_am. Immer wenn der User die
@@ -2708,7 +2732,10 @@ export default function InvoiceDetail() {
   // darf der User das faellig_am-Feld direkt editieren und wir greifen
   // nicht ein.
   useEffect(() => {
-    if (form.typ !== "rechnung") return;
+    // Auch AR/SR haben den Zahlungsbedingungen-Reiter — ohne sie blieb dort
+    // "faellig_am" beim alten Datum stehen, während der Text "Zahlbar sofort"
+    // sagte (Review-Befund Runde 2).
+    if (!["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ)) return;
     const zb = (form.zahlungsbedingungen || "").trim();
     if (!zb || zb === "individuell") return;
     if (!form.datum) return;
@@ -4461,7 +4488,7 @@ export default function InvoiceDetail() {
   if (form.status === "storniert" && !isNew && invoiceId) {
     return (
       <div className="kb-page min-h-screen">
-        <KBToolbar onBack={zurueck} title={`Storno: ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}`} />
+        <KBToolbar onBack={zurueckMitFallback} title={`Storno: ${hatPlatzhalterNummer(form.nummer) ? "Entwurf" : form.nummer}`} />
         <div className="mx-auto w-full px-4 py-6 max-w-[800px]">
           <div className="space-y-6">
             <Card className="kb-panel">
@@ -4479,7 +4506,7 @@ export default function InvoiceDetail() {
                   {form.storno_grund && <p>Grund: <strong>{form.storno_grund}</strong></p>}
                 </div>
                 <div className="flex justify-center gap-3 pt-4">
-                  <Button variant="outline" onClick={zurueck}>Zurück</Button>
+                  <Button variant="outline" onClick={zurueckMitFallback}>Zurück</Button>
                   <Button variant="default" className="gap-2" onClick={async () => {
                     try {
                       // Always load fresh from DB to ensure data is available
@@ -4626,7 +4653,7 @@ export default function InvoiceDetail() {
                   icon={CheckCircle2}
                   variant="green"
                   label={saving ? "Speichert..." : "Speichern & Schließen"}
-                  onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); zurueck(); } }}
+                  onClick={async () => { const ok = await handleSave(); if (ok) { toast({ title: "Gespeichert" }); zurueckMitFallback(); } }}
                   disabled={saving}
                 />
               )}
@@ -8113,7 +8140,7 @@ export default function InvoiceDetail() {
           open={previewOpen}
           onClose={() => setPreviewOpen(false)}
           onSave={handleSaveFromPreview}
-          onSavedClose={zurueck}
+          onSavedClose={zurueckMitFallback}
           saving={saving}
           saved={previewSaved}
           fileName={form.nummer || typLabel}

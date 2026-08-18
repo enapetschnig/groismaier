@@ -14,6 +14,7 @@ import { useEinheiten } from "@/hooks/useEinheiten";
 import { format } from "date-fns";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 import { CustomerSelect } from "@/components/CustomerSelect";
+import { parseDecimal } from "@/lib/num";
 
 type MaterialEntry = {
   id: string;
@@ -128,14 +129,27 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
       einzelpreis: v?.verrechnungssatz ?? m.einzelpreis,
       einheit: v?.verrechnungseinheit || m.einheit || "h",
     } : m));
+    // Rohtext des Satz-Felds verwerfen — sonst zeigt es den alten Tippstand
+    // statt des übernommenen Verrechnungssatzes.
+    setSatzRoh((alt) => { const n = { ...alt }; delete n[id]; return n; });
   };
+  /**
+   * Rohtext des Satz-Felds je Maschine — der State hält eine ZAHL, und ein
+   * kontrolliertes Input darauf machte "85,5" untippbar ("85," → 85 → das
+   * Komma verschwand, dann stand 855 im Feld; Review-Befund Runde 2).
+   */
+  const [satzRoh, setSatzRoh] = useState<Record<string, string>>({});
   const updateMaschine = (id: string, feld: "maschine" | "menge" | "einheit" | "einzelpreis", wert: string) => {
-    setMaschinen((alt) => alt.map((m) => m.id === id ? {
-      ...m,
-      [feld]: feld === "einzelpreis"
-        ? (wert.trim() === "" ? null : Number(wert.replace(",", ".")) || 0)
-        : wert,
-    } : m));
+    if (feld === "einzelpreis") {
+      setSatzRoh((alt) => ({ ...alt, [id]: wert }));
+      const n = wert.trim() === "" ? null : parseDecimal(wert);
+      setMaschinen((alt) => alt.map((m) => m.id === id
+        // unlesbare Zwischenzustände ("85,") lassen die Zahl unverändert
+        ? { ...m, einzelpreis: wert.trim() === "" ? null : (n ?? m.einzelpreis) }
+        : m));
+      return;
+    }
+    setMaschinen((alt) => alt.map((m) => m.id === id ? { ...m, [feld]: wert } : m));
   };
 
   const ladeMaschinen = async (disturbanceId: string) => {
@@ -1069,8 +1083,9 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                         <Input
                           placeholder="Satz"
                           inputMode="decimal"
-                          value={ma.einzelpreis ?? ""}
+                          value={satzRoh[ma.id] ?? (ma.einzelpreis ?? "")}
                           onChange={(e) => updateMaschine(ma.id, "einzelpreis", e.target.value)}
+                          onBlur={() => setSatzRoh((alt) => { const n = { ...alt }; delete n[ma.id]; return n; })}
                           className="h-11 pr-12"
                           title={`Verrechnungssatz je ${ma.einheit || "h"} — verrechnet wird Menge × Satz`}
                         />
@@ -1095,11 +1110,16 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                     {ma.menge.trim() && ma.einzelpreis != null && (
                       <p className="text-right text-xs">
                         <span className="text-muted-foreground">
-                          {ma.menge} {ma.einheit || "h"} × € {Number(ma.einzelpreis).toFixed(2)} ={" "}
+                          {ma.menge} {ma.einheit || "h"} × € {Number(ma.einzelpreis).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ={" "}
                         </span>
                         <span className="font-semibold">
-                          Verrechnet: € {((Number(ma.menge.replace(",", ".")) || 0) * ma.einzelpreis).toFixed(2)}
+                          Verrechnet: € {((parseDecimal(ma.menge) ?? 0) * ma.einzelpreis).toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
+                      </p>
+                    )}
+                    {!ma.menge.trim() && ma.einzelpreis != null && (
+                      <p className="text-right text-xs font-medium text-amber-700">
+                        Menge fehlt — ohne Menge wird nichts verrechnet.
                       </p>
                     )}
                   </div>
