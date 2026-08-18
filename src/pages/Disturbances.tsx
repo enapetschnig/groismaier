@@ -145,15 +145,21 @@ const Disturbances = () => {
   const ladeOffeneNebensummen = async (ids: string[]) => {
     const summen = new Map<string, number>();
     if (ids.length > 0) {
-      const [satzRes, matRes, maschRes] = await Promise.all([
+      // In 100er-Blöcken abfragen — hunderte UUIDs in EINEM .in() sprengen
+      // sonst die URL-Länge und die Summenkarte bliebe stumm unvollständig.
+      const bloecke: string[][] = [];
+      for (let i = 0; i < ids.length; i += 100) bloecke.push(ids.slice(i, i + 100));
+      const [satzRes, ...blockRes] = await Promise.all([
         supabase.from("app_settings").select("value").eq("key", "regie_stundensatz").maybeSingle(),
-        supabase.from("disturbance_materials").select("disturbance_id, menge, einzelpreis").in("disturbance_id", ids),
-        (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, menge, einzelpreis").in("disturbance_id", ids),
+        ...bloecke.map((block) =>
+          supabase.from("disturbance_materials").select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
+        ...bloecke.map((block) =>
+          (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
       ]);
       const satz = parseDecimal(String(satzRes.data?.value ?? ""));
       if (satz !== null && satz > 0) setRegieSatz(satz);
-      for (const zeilen of [((matRes as any).data as any[]) || [], ((maschRes as any).data as any[]) || []]) {
-        for (const z of zeilen) {
+      for (const res of blockRes) {
+        for (const z of (((res as any).data as any[]) || [])) {
           const menge = parseDecimal(String(z.menge ?? "")) ?? 0;
           const preis = Number(z.einzelpreis) || 0;
           if (menge > 0 && preis !== 0) {
@@ -212,10 +218,18 @@ const Disturbances = () => {
   const handleToggleVerrechnet = async (e: React.MouseEvent, disturbanceId: string, currentValue: boolean) => {
     e.stopPropagation();
 
-    const { error } = await supabase
-      .from("disturbances")
-      .update({ is_verrechnet: !currentValue })
+    // Beim Umschalten von Hand auch den Beleg-Verweis löschen — sonst zeigt
+    // ein wieder geöffneter Bericht auf eine Rechnung, die ihn nicht (mehr)
+    // enthält. Fallback ohne die Spalte, solange die Migration fehlt.
+    let { error } = await (supabase.from("disturbances") as any)
+      .update({ is_verrechnet: !currentValue, verrechnet_in_invoice_id: null })
       .eq("id", disturbanceId);
+    if (error) {
+      ({ error } = await supabase
+        .from("disturbances")
+        .update({ is_verrechnet: !currentValue })
+        .eq("id", disturbanceId));
+    }
 
     if (error) {
       toast({

@@ -21,3 +21,16 @@ create index if not exists disturbances_verrechnet_invoice_idx
 insert into public.app_settings (key, value)
 values ('regie_stundensatz', '70')
 on conflict (key) do nothing;
+
+-- 3. Leserecht: app_settings ist fuer Nicht-Admins auf unbedenkliche
+--    Schluessel beschraenkt (20260729110000). Der Regie-Stundensatz ist der
+--    KUNDENSEITIGE Verrechnungssatz (steht ohnehin auf jeder Rechnung) und
+--    kein Betriebsgeheimnis — ohne Leserecht fiele ein nicht-administrativer
+--    Rechnungsschreiber still auf den 70-EUR-Fallback zurueck.
+drop policy if exists "app_settings_read" on public.app_settings;
+create policy "app_settings_read" on public.app_settings
+  for select to authenticated
+  using (
+    public.has_role(auth.uid(), 'administrator'::app_role)
+    or key in ('einheiten', 'regie_stundensatz')
+  );

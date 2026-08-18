@@ -250,7 +250,11 @@ Deno.serve(async (req) => {
       if (!r.ok) return antwort({ error: `Graph ${r.status}` }, 502);
       const m = await r.json();
       let anhaenge: unknown[] = [];
-      if (m.hasAttachments) {
+      // IMMER abfragen, nicht nur bei hasAttachments: Graph meldet
+      // hasAttachments=false, wenn eine Mail AUSSCHLIESSLICH inline-Anhänge
+      // hat — genau der Frischeis-Fall (Rechnung mit inline-Disposition),
+      // für den der PDF-Durchlass unten gebaut ist.
+      {
         const a = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size,isInline`);
         if (a.ok) {
           anhaenge = ((await a.json()).value || [])

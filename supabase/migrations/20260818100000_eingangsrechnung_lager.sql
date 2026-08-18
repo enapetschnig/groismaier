@@ -21,12 +21,19 @@ alter table public.purchase_invoice_allocations
 alter table public.purchase_invoice_allocations
   add column if not exists ziel text not null default 'projekt';
 
-alter table public.purchase_invoice_allocations
-  add constraint purchase_invoice_allocations_ziel_check
-  check (ziel in ('projekt', 'lager'));
-
--- Ein Projekt-Teilbetrag braucht ein Projekt, ein Lager-Teilbetrag keines.
-alter table public.purchase_invoice_allocations
-  add constraint purchase_invoice_allocations_ziel_projekt_check
-  check ((ziel = 'projekt' and project_id is not null)
-      or (ziel = 'lager' and project_id is null));
+-- Constraints idempotent anlegen (ein erneuter db push derselben Datei darf
+-- nicht an "already exists" scheitern).
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'purchase_invoice_allocations_ziel_check') then
+    alter table public.purchase_invoice_allocations
+      add constraint purchase_invoice_allocations_ziel_check
+      check (ziel in ('projekt', 'lager'));
+  end if;
+  -- Ein Projekt-Teilbetrag braucht ein Projekt, ein Lager-Teilbetrag keines.
+  if not exists (select 1 from pg_constraint where conname = 'purchase_invoice_allocations_ziel_projekt_check') then
+    alter table public.purchase_invoice_allocations
+      add constraint purchase_invoice_allocations_ziel_projekt_check
+      check ((ziel = 'projekt' and project_id is not null)
+          or (ziel = 'lager' and project_id is null));
+  end if;
+end $$;

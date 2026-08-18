@@ -1845,6 +1845,10 @@ export default function InvoiceDetail() {
       beschreibung: v.bezeichnung,
       kurzbezeichnung: v.bezeichnung,
       produktgruppe: "Maschinen",
+      kategorie: "Maschinen",
+      // Kennzeichnet Pseudo-Artikel aus dem KFZ-Manager: kein Favoriten-Stern
+      // (schriebe ins Leere) und keine invoice_templates-Zeile dahinter.
+      ist_maschine: true,
       produktnummer: v.kennzeichen || "",
       einheit: v.verrechnungseinheit || "h",
       einzelpreis: Number(v.verrechnungssatz) || 0,
@@ -7696,9 +7700,16 @@ export default function InvoiceDetail() {
                   const netto = Number((t as any).netto_preis) || t.einzelpreis;
                   return (
                     <div key={t.id} className={`flex items-center gap-2 p-2 rounded hover:bg-accent text-sm ${isSelected ? "bg-primary/10" : ""}`}>
+                      {/* Maschinen aus dem KFZ-Manager haben keine
+                          invoice_templates-Zeile — ein Favoriten-Stern schriebe
+                          ins Leere und wäre nach dem nächsten Laden weg. */}
+                      {(t as any).ist_maschine ? (
+                        <span className="w-[18px] shrink-0" />
+                      ) : (
                       <button onClick={(e) => toggleFavorit(e, t.id)} className="shrink-0 p-0.5 hover:scale-110 transition-transform" title={t.ist_favorit ? "Favorit entfernen" : "Als Favorit markieren"}>
                         <Star className={`w-3.5 h-3.5 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground/40 hover:text-yellow-400"}`} />
                       </button>
+                      )}
                       <input type="checkbox" checked={isSelected} onChange={() => {
                         setSelectedTemplateIds(prev => isSelected ? prev.filter(id => id !== t.id) : [...prev, t.id]);
                         if (!isSelected) setTemplateMengen(prev => ({ ...prev, [t.id]: 1 }));

@@ -21,7 +21,7 @@ interface Maschine {
 
 const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export function DisturbanceMaschinen({ disturbanceId }: { disturbanceId: string }) {
+export function DisturbanceMaschinen({ disturbanceId, reloadKey = 0 }: { disturbanceId: string; reloadKey?: number }) {
   const [maschinen, setMaschinen] = useState<Maschine[]>([]);
 
   useEffect(() => {
@@ -34,7 +34,8 @@ export function DisturbanceMaschinen({ disturbanceId }: { disturbanceId: string 
         if (!cancelled) setMaschinen((data as Maschine[]) || []);
       });
     return () => { cancelled = true; };
-  }, [disturbanceId]);
+    // reloadKey: Bearbeiten-Dialog hat gespeichert → neu laden.
+  }, [disturbanceId, reloadKey]);
 
   if (maschinen.length === 0) return null;
 

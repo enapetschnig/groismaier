@@ -302,7 +302,11 @@ export function ProjektNachkalkulation() {
         // Umgebungen fehlen (Migration noch nicht eingespielt) → leer weiter.
         fetchAllRows<AllocationRaw>((f, t) =>
           (supabase.from("purchase_invoice_allocations" as never) as any)
-            .select("project_id, purchase_invoice_id, betrag_netto, beschreibung, ziel")
+            // BEWUSST ohne die neue Spalte `ziel`: Lager-Teilbeträge sind an
+            // project_id = NULL erkennbar (verteileEingangsrechnung), und ein
+            // Select auf eine noch nicht migrierte Spalte ließe wegen des
+            // .catch() unten ALLE Teilbeträge lautlos verschwinden.
+            .select("project_id, purchase_invoice_id, betrag_netto, beschreibung")
             .order("id")
             .range(f, t),
         ).catch(() => [] as AllocationRaw[]),

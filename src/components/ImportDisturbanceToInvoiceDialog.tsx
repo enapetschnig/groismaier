@@ -5,6 +5,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
 import { FileText, Clock, Package, Wrench } from "lucide-react";
 import { format } from "date-fns";
 import { parseDecimal } from "@/lib/num";
@@ -47,6 +48,7 @@ interface ImportDisturbanceToInvoiceDialogProps {
 }
 
 export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, preselectedId, preselectedIds }: ImportDisturbanceToInvoiceDialogProps) {
+  const { toast } = useToast();
   const [disturbances, setDisturbances] = useState<Disturbance[]>([]);
   // Auswahl-Phase: Checkboxen in der Liste; danach die Positions-Phase.
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -172,6 +174,15 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     });
     setItems(newItems);
     setDetailIds(ids);
+    // Die Rechnung bekommt die Kundendaten des ERSTEN Berichts — bei
+    // gemischten Kunden muss das sichtbar sein, bevor importiert wird.
+    if (kundenNamen.size > 1) {
+      toast({
+        title: "Verschiedene Kunden gewählt",
+        description: `Die Berichte gehören zu ${kundenNamen.size} Kunden — die Rechnung übernimmt die Daten des ersten Berichts. Bitte prüfen.`,
+        duration: 8000,
+      });
+    }
   };
 
   const toggle = (idx: number) => {

@@ -171,6 +171,17 @@ const istDetail = (it: any): boolean => !!grpOf(it) && !it?.ist_gruppensumme;
 export const istDetailOhneBetrag = (it: any): boolean => istDetail(it) && !hatBetrag(it);
 
 /**
+ * Reine Textzeile — z.B. die Titelzeile "Regiebericht 12.08.2026 — …" einer
+ * Sammelrechnung: keine Menge, kein Preis, keine Einheit. Solche Zeilen
+ * drucken NUR den Text; "0 Stk." und "0,00 €" würden wie ein Fehler wirken.
+ */
+export const istTextzeile = (it: any): boolean =>
+  !hatBetrag(it) &&
+  Math.abs(Number(it?.menge) || 0) < 0.0005 &&
+  Math.abs(Number(it?.einzelpreis) || 0) < 0.005 &&
+  !String(it?.einheit || "").trim();
+
+/**
  * Druckplan für die Positionstabelle: Kapitelüberschriften + sichtbare Zeilen.
  *
  * Bestandsschutz: Belege ohne Gruppen und ohne ausgeblendete Zeilen behalten
@@ -703,16 +714,19 @@ ${(() => {
       // Detailzeilen zeigen KEINEN Betrag (ihr gesamtpreis ist 0 — eine
       // 0,00-€-Spalte würde wie ein Fehler wirken). Sie sind eingerückt.
       const einrueckung = e.detail ? "padding-left:26px;color:#555;" : "";
-      const fett = e.summenzeile ? "font-weight:700;" : "";
+      const textzeile = istTextzeile(item);
+      const fett = e.summenzeile || textzeile ? "font-weight:700;" : "";
       const mengeText = `${fmt(Number(item.menge))} ${item.einheit || "Stk."}`;
       return `<tr>
       <td style="text-align:center;color:#888;">${e.nummer}</td>
       <td style="${einrueckung}${fett}">${item.beschreibung}</td>
       ${hidePrices
-        ? `<td style="text-align:right;">${mengeText}</td>`
-        : e.detail
-          ? `<td></td><td></td><td style="text-align:right;color:#555;">${mengeText}</td><td></td>`
-          : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
+        ? `<td style="text-align:right;">${textzeile ? "" : mengeText}</td>`
+        : textzeile
+          ? `<td></td><td></td><td></td><td></td>`
+          : e.detail
+            ? `<td></td><td></td><td style="text-align:right;color:#555;">${mengeText}</td><td></td>`
+            : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
       <td style="text-align:right;">${mengeText}</td>
       <td style="text-align:right;font-weight:600;">${fmtCurrency(Number(item.gesamtpreis))}</td>`}

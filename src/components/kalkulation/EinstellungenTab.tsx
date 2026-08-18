@@ -338,17 +338,27 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
    * eingetippten VK stillschweigend mit EK × Faktor (Kundenmeldung 08/2026:
    * "Zahl gelöscht und neu eingegeben — die Verbindung war gelöst").
    */
-  const leseAktuellenVk = async (a: KatalogArtikel): Promise<number | null> => {
+  const leseAktuellenVk = async (a: KatalogArtikel): Promise<number | null | "unbekannt"> => {
     if (a.quelle === "template") {
-      const { data } = (await supabase
+      const { data, error } = (await supabase
         .from("invoice_templates")
         .select("vk_netto, netto_preis, einzelpreis")
         .eq("id", a.id)
-        .maybeSingle()) as { data: Record<string, unknown> | null };
-      const vk = data?.vk_netto ?? data?.netto_preis ?? data?.einzelpreis;
-      return vk === null || vk === undefined ? null : Number(vk);
+        .maybeSingle()) as { data: Record<string, unknown> | null; error: unknown };
+      // Lesefehler (Netz/RLS) heißt NICHT "kein VK" — sonst würde ein
+      // gepflegter VK bei einem WLAN-Aussetzer mit EK × Faktor überschrieben.
+      if (error || !data) return "unbekannt";
+      const vk = data.vk_netto ?? data.netto_preis ?? data.einzelpreis;
+      if (vk === null || vk === undefined) return null;
+      // netto_preis/einzelpreis haben DB-Default 0: Ist vk_netto leer und die
+      // Spiegel stehen auf 0, wurde nie ein VK gepflegt (frischer Artikel) —
+      // dann darf abgeleitet werden. Ein BEWUSST gesetzter VK 0 schreibt
+      // alle drei Spalten und behält vk_netto = 0.
+      if (Number(vk) === 0 && (data.vk_netto === null || data.vk_netto === undefined)) return null;
+      return Number(vk);
     }
-    const { data } = await artTable().select("vk").eq("id", a.id).maybeSingle();
+    const { data, error } = await artTable().select("vk").eq("id", a.id).maybeSingle();
+    if (error) return "unbekannt";
     const vk = (data as Record<string, unknown> | null)?.vk;
     return vk === null || vk === undefined ? null : Number(vk);
   };
@@ -359,8 +369,9 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     if (ek === undefined) return;
     const patch: Record<string, unknown> = { ek };
     // Nur bei WIRKLICH leerem VK (null, frisch gelesen) ableiten. Ein VK von
-    // 0 bleibt stehen (kann Absicht sein), und die Ableitung wird gemeldet
-    // statt still zu passieren.
+    // 0 bleibt stehen (kann Absicht sein), "unbekannt" (Lesefehler) leitet
+    // sicherheitshalber NICHT ab, und die Ableitung wird gemeldet statt
+    // still zu passieren.
     if (ek !== null && (await leseAktuellenVk(a)) === null) {
       const faktor = typ === "lack" ? lackFaktor : vkFaktor;
       const vk = round4(ek * faktor);

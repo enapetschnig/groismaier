@@ -185,9 +185,14 @@ export default function PurchaseInvoices() {
       .order("created_at", { ascending: false });
 
     if (selectedProject === "lager") {
-      // Lager-Belege: Kopf aufs Lager gebucht (project_id ist dann NULL).
-      // Spalte fehlt noch in den generierten Typen → Cast (Repo-Muster).
-      q = (q as any).eq("lager", true);
+      // Lager-Belege: Kopf aufs Lager gebucht ODER mindestens ein Teilbetrag
+      // mit ziel='lager' — sonst wären positionsweise Lager-Buchungen im
+      // Filter unsichtbar. Spalten fehlen in den generierten Typen → Cast.
+      const { data: lagerAllocs } = await (supabase.from("purchase_invoice_allocations" as never) as any)
+        .select("purchase_invoice_id")
+        .eq("ziel", "lager");
+      const ids = [...new Set(((lagerAllocs as any[]) || []).map((r: any) => r.purchase_invoice_id))];
+      q = (q as any).or(ids.length > 0 ? `lager.eq.true,id.in.(${ids.join(",")})` : "lager.eq.true");
     } else if (selectedProject !== "alle") {
       q = q.eq("project_id", selectedProject);
     }
