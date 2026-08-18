@@ -504,7 +504,17 @@ export default function InvoiceDetail() {
       setLeaveDialogOpen(true);
       return;
     }
+    // Kundenmeldung 08/2026: "Der Knopf links oben reagiert nicht." Der
+    // Browser-Verlauf ist im Belegeditor oft unbrauchbar (History-Eintrag
+    // beim Speichern/Erstellen ersetzt, Deep-Link) — navigate(-1) landet
+    // dann auf derselben URL und es passiert sichtbar NICHTS. Deshalb:
+    // Verlauf versuchen, und wenn sich die Adresse nicht ändert, absolut
+    // zur Belegliste.
+    const vorher = window.location.href;
     zurueck();
+    window.setTimeout(() => {
+      if (window.location.href === vorher) navigate("/invoices");
+    }, 150);
   };
   const handleHomeNav = () => {
     leaveZielRef.current = "home";
@@ -2651,6 +2661,46 @@ export default function InvoiceDetail() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkedTemplateKey, docAufschlagOverride, isLocked]);
+
+  /**
+   * Zahlungsfrist wechseln UND die Beleg-Texte nachziehen.
+   *
+   * Kundenmeldung 08/2026: "Sofort fällig" erschien im Dokument ZUSÄTZLICH
+   * zum Zahlungsziel aus der Vorlage. Ursache: Der Frist-Wechsel änderte nur
+   * das Dropdown/Fällig-am — ein bereits im Beleg stehender "Zahlbar …"-Satz
+   * (zahlungstext bzw. Schlusstext aus der Vorlage) blieb unverändert stehen,
+   * und der neue Satz kam dazu. Jetzt werden Zeilen, die mit "Zahlbar"
+   * beginnen, durch den passenden Satz ERSETZT; alle anderen Zeilen (z.B.
+   * E-Banking-Hinweis) bleiben unangetastet. Texte ohne "Zahlbar …"-Zeile
+   * werden nicht angerührt.
+   */
+  const wechsleZahlungsfrist = (v: string) => {
+    const neuerSatz =
+      v === "sofort" ? "Zahlbar sofort und ohne Abzug."
+        : v === "individuell" ? ""
+          : `Zahlbar innerhalb ${v.replace(/\D/g, "") || "14"} Tagen ohne Abzug.`;
+    const ersetzeZahlbarZeilen = (text: string): string => {
+      if (!/^\s*zahlbar\b/im.test(text)) return text;
+      let ersetzt = false;
+      return text
+        .split("\n")
+        .map((z) => {
+          if (!/^\s*zahlbar\b/i.test(z)) return z;
+          if (ersetzt || !neuerSatz) return null; // doppelte Frist-Sätze fallen weg
+          ersetzt = true;
+          return neuerSatz;
+        })
+        .filter((z): z is string => z !== null)
+        .join("\n");
+    };
+    setForm(prev => ({
+      ...prev,
+      zahlungsbedingungen: v,
+      zahlungstext: ersetzeZahlbarZeilen(String((prev as any).zahlungstext || "")),
+      custom_closing_text: ersetzeZahlbarZeilen(String((prev as any).custom_closing_text || "")),
+    } as any));
+    setIsDirty(true);
+  };
 
   // Auto-Sync zahlungsbedingungen → faellig_am. Immer wenn der User die
   // Zahlungsfrist (Dropdown) oder das Rechnungsdatum ändert, rechnen wir
@@ -5616,7 +5666,7 @@ export default function InvoiceDetail() {
                                 })()}
                                 onValueChange={(v) => {
                                   if (v === "__eigene__") return; // nur Anzeige-Wert
-                                  updateField("zahlungsbedingungen", v);
+                                  wechsleZahlungsfrist(v);
                                 }}
                               >
                                 <SelectTrigger className="w-44"><SelectValue /></SelectTrigger>
@@ -5650,8 +5700,8 @@ export default function InvoiceDetail() {
                                   })()}
                                   onChange={(e) => {
                                     const n = parseInt(e.target.value.replace(/\D/g, ""), 10);
-                                    if (isFinite(n) && n > 0) updateField("zahlungsbedingungen", `${n} Tage`);
-                                    else if (e.target.value.trim() === "") updateField("zahlungsbedingungen", "14 Tage");
+                                    if (isFinite(n) && n > 0) wechsleZahlungsfrist(`${n} Tage`);
+                                    else if (e.target.value.trim() === "") wechsleZahlungsfrist("14 Tage");
                                   }}
                                 />
                                 <span className="text-sm text-muted-foreground">Tage</span>
@@ -7895,7 +7945,10 @@ export default function InvoiceDetail() {
           xmlDateiname={mailDialog?.xmlDatei}
           xmlFehler={mailDialog?.xmlFehler}
           empfaenger={form.kunde_email || ""}
-          belegBezeichnung={typLabel}
+          /* Kundenmeldung 08/2026: Die Mail hieß "Rechnung 2026-044", obwohl
+             am Dokument "Anzahlungsrechnung" steht. Die freie Bezeichnung am
+             Dokument gewinnt — genau so, wie der Beleg "getauft" wurde. */
+          belegBezeichnung={(form.dokument_bezeichnung || "").trim() || typLabel}
           belegNummer={form.nummer || ""}
           kundeAnrede={(form as any).kunde_anrede || ""}
           kundeName={form.kunde_name || ""}

@@ -71,9 +71,17 @@ export function BelegMailDialog({
       : kundeAnrede === "Herr" && nachname
         ? `Sehr geehrter Herr ${nachname},`
         : "Sehr geehrte Damen und Herren,";
+    // Artikel nach Wortendung: "unsere Rechnung/Anzahlungsrechnung/Gutschrift",
+    // "unseren Lieferschein", sonst "unser Angebot". Die alte Heuristik
+    // (Anfangsbuchstabe "a" → "unser") machte aus der Anzahlungsrechnung
+    // "unser Anzahlungsrechnung".
+    const b = belegBezeichnung.toLowerCase();
+    const artikel = /(rechnung|gutschrift|bestätigung|bestaetigung|mahnung)$/.test(b)
+      ? "unsere"
+      : /schein$/.test(b) ? "unseren" : "unser";
     setText(
       `${anrede}\n\n` +
-      `anbei erhalten Sie ${belegBezeichnung.toLowerCase().startsWith("a") ? "unser" : "unsere"} ` +
+      `anbei erhalten Sie ${artikel} ` +
       `${belegBezeichnung} ${belegNummer}.\n\n` +
       `Bei Fragen stehen wir Ihnen gerne zur Verfügung.\n\n` +
       `Mit freundlichen Grüßen\nHolzbau Groismaier GmbH`,
