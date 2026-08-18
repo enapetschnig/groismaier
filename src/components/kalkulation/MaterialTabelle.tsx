@@ -28,7 +28,7 @@ import { useState } from "react";
 import { Check, ChevronsUpDown, Database, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
-  newMaterialRow, fmt, fmtEuro, num,
+  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile,
 } from "@/lib/kalkulationEngine";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -223,8 +223,8 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     const erg = calcMaterialRow(row, m, bd);
     return {
       erg,
-      istRiegel: !row.manual && !row.calc && row.product.startsWith("Riegelkonstruktion"),
-      istDaemm: !row.manual && !row.calc && row.category === "Dämmstoffe",
+      istRiegel: istRiegelZeile(row),
+      istDaemm: istDaemmstoffZeile(row),
       // Frei eingetippt = steht (noch) nicht im Katalog.
       katFrei: !!row.category && !findeKategorie(kategorien, row.category),
       artFrei: !!row.product && !findeArtikel(kategorien, row.category, row.product),
