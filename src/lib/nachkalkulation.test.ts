@@ -178,4 +178,23 @@ describe("Eingangsrechnungen auf Projekte verteilen", () => {
     expect(m.get("P1")).toBe(4500);
     expect(m.get("P2")).toBe(1700);
   });
+
+  // Kundenwunsch 08/2026: Teilbeträge können aufs LAGER gebucht werden.
+  it("Lager-Teilbeträge zählen zu keinem Projekt, mindern aber den Rest", () => {
+    const a = verteileEingangsrechnung(r, [
+      { purchase_invoice_id: "er1", project_id: "P2", betrag_netto: 500, ziel: "projekt" },
+      { purchase_invoice_id: "er1", project_id: null, betrag_netto: 1500, ziel: "lager" },
+    ]);
+    expect(a.find(x => x.project_id === "P2")?.betrag).toBe(500);
+    // Rest beim Hauptprojekt: 5000 − 500 − 1500 (Lager) = 3000
+    expect(a.find(x => x.project_id === "P1")?.betrag).toBe(3000);
+    expect(a.reduce((s, x) => s + x.betrag, 0)).toBe(3500);
+  });
+
+  it("Rechnung komplett aufs Lager (kein Projekt) taucht in keinem Projekt auf", () => {
+    const a = verteileEingangsrechnung(
+      { id: "er4", project_id: null, status: "offen", betrag_netto: 800 },
+      [{ purchase_invoice_id: "er4", project_id: null, betrag_netto: 300, ziel: "lager" }]);
+    expect(a).toHaveLength(0);
+  });
 });

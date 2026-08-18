@@ -127,7 +127,10 @@ export interface ErRechnung {
 
 export interface ErZuordnung {
   purchase_invoice_id: string;
-  project_id: string;
+  /** null bei Lager-Teilbeträgen (ziel = 'lager'). */
+  project_id: string | null;
+  /** 'projekt' (Default) oder 'lager' — Lager zählt zu keinem Projekt. */
+  ziel?: string | null;
   betrag_netto: number | string | null;
   beschreibung?: string | null;
 }
@@ -158,17 +161,23 @@ export function verteileEingangsrechnung(
   if ((rechnung.status || "").toLowerCase() === "abgelehnt") return [];
   const kopf = Number(rechnung.betrag_netto) || 0;
   const eigene = (zuordnungen || []).filter((z) => z.purchase_invoice_id === rechnung.id);
+  const runde = (v: number | string | null) => Math.round(((Number(v) || 0) + Number.EPSILON) * 100) / 100;
+
+  // Lager-Teilbeträge (ziel='lager' bzw. ohne Projekt) zählen zu KEINEM
+  // Projekt, reduzieren aber den Rest, der beim Hauptprojekt verbleibt.
+  const istLager = (z: ErZuordnung) => (z.ziel || "projekt") === "lager" || !z.project_id;
 
   const anteile: ErAnteil[] = eigene
+    .filter((z) => !istLager(z))
     .map((z) => ({
-      project_id: z.project_id,
-      betrag: Math.round(((Number(z.betrag_netto) || 0) + Number.EPSILON) * 100) / 100,
+      project_id: z.project_id as string,
+      betrag: runde(z.betrag_netto),
       istAnteil: true,
       beschreibung: z.beschreibung ?? null,
     }))
     .filter((a) => Math.abs(a.betrag) > 0.005);
 
-  const zugeordnet = anteile.reduce((s, a) => s + a.betrag, 0);
+  const zugeordnet = eigene.reduce((s, z) => s + runde(z.betrag_netto), 0);
   const rest = Math.round((kopf - zugeordnet + Number.EPSILON) * 100) / 100;
   if (Math.abs(rest) > 0.005 && rechnung.project_id) {
     anteile.push({ project_id: rechnung.project_id, betrag: rest, istAnteil: false });

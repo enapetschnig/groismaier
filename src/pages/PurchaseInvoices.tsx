@@ -184,7 +184,11 @@ export default function PurchaseInvoices() {
       .order("rechnungsdatum", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false });
 
-    if (selectedProject !== "alle") {
+    if (selectedProject === "lager") {
+      // Lager-Belege: Kopf aufs Lager gebucht (project_id ist dann NULL).
+      // Spalte fehlt noch in den generierten Typen → Cast (Repo-Muster).
+      q = (q as any).eq("lager", true);
+    } else if (selectedProject !== "alle") {
       q = q.eq("project_id", selectedProject);
     }
 
@@ -436,6 +440,7 @@ export default function PurchaseInvoices() {
               <SelectTrigger className="h-11"><SelectValue placeholder="Projekt" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="alle">Alle Projekte</SelectItem>
+                <SelectItem value="lager">📦 Lager</SelectItem>
                 {projectOptions.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -531,6 +536,9 @@ export default function PurchaseInvoices() {
                             <Building2 className="h-3 w-3 shrink-0" />
                             <span className="truncate">{inv.projects.name}</span>
                           </span>
+                        )}
+                        {(inv as any).lager && (
+                          <Badge variant="outline" className="text-[10px] py-0 h-4">📦 Lager</Badge>
                         )}
                       </div>
                     </button>

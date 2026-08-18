@@ -101,33 +101,41 @@ export function ProjektNachkalkulation({ projectId }: Props) {
       }
 
       // --- Fremdkosten (Eingangsrechnungen netto, inkl. Projekt-Aufteilung) ---
-      // Regel: Teilbeträge (purchase_invoice_allocations) zählen immer zu ihrem
-      // Projekt. Der Kopf-Betrag einer Rechnung (project_id) zählt nur, wenn
-      // die Rechnung KEINE Teilbeträge hat — sonst würde doppelt gezählt.
+      // Regel (wie src/lib/nachkalkulation.ts, verteileEingangsrechnung):
+      // Teilbeträge zählen zu ihrem Projekt (bzw. zum Lager = kein Projekt);
+      // vom Kopf-Betrag der Rechnung zählt der REST nach Abzug aller
+      // Teilbeträge weiter zum Hauptprojekt. Früher fiel der Kopf-Betrag
+      // komplett weg, sobald irgendein Teilbetrag existierte — teilweise
+      // aufgeteilte Rechnungen verloren den Rest aus der Nachkalkulation.
       const purchases = (purRes.data as any[]) || [];
       const allocRows = ((allocRes.data as AllocationRow[]) || []);
       const headerIds = purchases.map(p => p.id);
-      let idsMitAufteilung = new Set<string>();
+      const zugeordnetJeRechnung = new Map<string, number>();
       if (headerIds.length > 0) {
         const { data: allocAny } = await (supabase.from("purchase_invoice_allocations" as never) as any)
-          .select("purchase_invoice_id")
+          .select("purchase_invoice_id, betrag_netto")
           .in("purchase_invoice_id", headerIds);
-        idsMitAufteilung = new Set(((allocAny as any[]) || []).map(r => r.purchase_invoice_id));
+        for (const r of ((allocAny as any[]) || [])) {
+          zugeordnetJeRechnung.set(
+            r.purchase_invoice_id,
+            (zugeordnetJeRechnung.get(r.purchase_invoice_id) || 0) + (Number(r.betrag_netto) || 0),
+          );
+        }
       }
       if (cancelled) return;
       const headerNetto = (p: any) => Number(p.betrag_netto) || (Number(p.betrag_brutto) || 0) / 1.2;
-      const purchasesOhneAufteilung = purchases.filter(p => !idsMitAufteilung.has(p.id));
+      const headerRest = (p: any) => headerNetto(p) - (zugeordnetJeRechnung.get(p.id) || 0);
       const fremd =
-        purchasesOhneAufteilung.reduce((s, p) => s + headerNetto(p), 0) +
+        purchases.reduce((s, p) => s + headerRest(p), 0) +
         allocRows.reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);
 
       // --- Unverrechnet-Radar ---
       const distRows = ((distRes.data as any[]) || []);
       const unverrechnetRegie = distRows.filter(x => !x.is_verrechnet).length;
       const unverrechnetFremd =
-        purchasesOhneAufteilung
+        purchases
           .filter(p => !p.verrechnet_in_invoice_id)
-          .reduce((s, p) => s + headerNetto(p), 0) +
+          .reduce((s, p) => s + headerRest(p), 0) +
         allocRows
           .filter(a => !a.purchase_invoices?.verrechnet_in_invoice_id)
           .reduce((s, a) => s + (Number(a.betrag_netto) || 0), 0);

@@ -13,6 +13,13 @@ import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
 import { istPdfDatei, istBildDatei } from "@/lib/dateiTyp";
 
+/**
+ * Sentinel-Wert in den Projekt-Selects: Buchung aufs LAGER statt auf ein
+ * Projekt (Kundenwunsch 08/2026). Gespeichert wird project_id = NULL plus
+ * purchase_invoices.lager = true bzw. allocations.ziel = 'lager'.
+ */
+export const LAGER = "lager";
+
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -632,7 +639,8 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           .from("purchase_invoices")
           .insert({
             created_by: user.id,
-            project_id: form.project_id || null,
+            project_id: form.project_id === LAGER ? null : form.project_id || null,
+            lager: form.project_id === LAGER,
             vehicle_id: (form as any).vehicle_id || null,
             lieferant: form.lieferant.trim(),
             rechnungsnummer: form.rechnungsnummer.trim() || null,
@@ -690,7 +698,10 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
             .filter(x => x.projectId)
             .map(x => ({
               purchase_invoice_id: inv.id,
-              project_id: x.projectId,
+              // Lager-Positionen: kein Projekt, ziel = 'lager' — die
+              // Nachkalkulation zählt sie zu keinem Projekt.
+              project_id: x.projectId === LAGER ? null : x.projectId,
+              ziel: x.projectId === LAGER ? "lager" : "projekt",
               beschreibung: x.p.beschreibung || null,
               betrag_netto: round2(positionNetto(x.p) || 0),
               position_index: x.idx,
@@ -701,16 +712,17 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
             .filter(r => Math.abs(r.betrag_netto) > 0.005);
           // Sobald allocations existieren, ignoriert die Nachkalkulation den
           // Kopf-Betrag der Rechnung. Damit der nicht zugeordnete Rest weiter
-          // zum Hauptprojekt zählt, wird er als eigene Teilbetrags-Zeile
-          // auf das Hauptprojekt gebucht.
+          // zum Hauptprojekt (bzw. Lager) zählt, wird er als eigene
+          // Teilbetrags-Zeile gebucht.
           if (rows.length > 0 && form.project_id) {
             const rowsSumme = rows.reduce((s, r) => s + r.betrag_netto, 0);
             const rest = round2(invoiceNetto() - rowsSumme);
             if (rest > 0.005) {
               rows.push({
                 purchase_invoice_id: inv.id,
-                project_id: form.project_id,
-                beschreibung: "Restbetrag (Hauptprojekt)",
+                project_id: form.project_id === LAGER ? null : form.project_id,
+                ziel: form.project_id === LAGER ? "lager" : "projekt",
+                beschreibung: form.project_id === LAGER ? "Restbetrag (Lager)" : "Restbetrag (Hauptprojekt)",
                 betrag_netto: rest,
                 position_index: null as any,
               });
@@ -934,6 +946,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                     <SelectTrigger className="h-11 text-xs flex-1 min-w-[8rem]"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Projekt wählen...</SelectItem>
+                      <SelectItem value={LAGER}>📦 Lager</SelectItem>
                       {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -1017,6 +1030,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">— Hauptprojekt —</SelectItem>
+                          <SelectItem value={LAGER}>📦 Lager</SelectItem>
                           {projects.map(pr => <SelectItem key={pr.id} value={pr.id}>{pr.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
@@ -1204,11 +1218,12 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
               </Select>
             </div>
             <div>
-              <Label>{positionen.length > 0 ? "Hauptprojekt (Rest)" : "Projekt (optional)"}</Label>
+              <Label>{positionen.length > 0 ? "Hauptprojekt / Lager (Rest)" : "Projekt / Lager (optional)"}</Label>
               <Select value={form.project_id || "none"} onValueChange={v => update("project_id", v === "none" ? "" : v)}>
                 <SelectTrigger data-testid="up-hauptprojekt"><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Kein Projekt</SelectItem>
+                  <SelectItem value={LAGER}>📦 Lager</SelectItem>
                   {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                 </SelectContent>
               </Select>
