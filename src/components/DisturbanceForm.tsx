@@ -1071,9 +1071,15 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                           inputMode="decimal"
                           value={ma.einzelpreis ?? ""}
                           onChange={(e) => updateMaschine(ma.id, "einzelpreis", e.target.value)}
-                          className="h-11 pr-7"
+                          className="h-11 pr-12"
+                          title={`Verrechnungssatz je ${ma.einheit || "h"} — verrechnet wird Menge × Satz`}
                         />
-                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+                        {/* Kundenmeldung 08/2026: das nackte "€" wurde als
+                            Gesamtbetrag gelesen ("stimmt das mit den 85 Euro?").
+                            €/Einheit macht klar: das ist der SATZ. */}
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                          €/{ma.einheit || "h"}
+                        </span>
                       </div>
                       <Button
                         type="button"
@@ -1087,8 +1093,13 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                       </Button>
                     </div>
                     {ma.menge.trim() && ma.einzelpreis != null && (
-                      <p className="text-right text-xs text-muted-foreground">
-                        Gesamt: € {((Number(ma.menge.replace(",", ".")) || 0) * ma.einzelpreis).toFixed(2)}
+                      <p className="text-right text-xs">
+                        <span className="text-muted-foreground">
+                          {ma.menge} {ma.einheit || "h"} × € {Number(ma.einzelpreis).toFixed(2)} ={" "}
+                        </span>
+                        <span className="font-semibold">
+                          Verrechnet: € {((Number(ma.menge.replace(",", ".")) || 0) * ma.einzelpreis).toFixed(2)}
+                        </span>
                       </p>
                     )}
                   </div>

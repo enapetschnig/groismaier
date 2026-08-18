@@ -62,6 +62,30 @@ const Disturbances = () => {
   // Material + Maschinen — für die Übersicht "offene Summe je Projekt".
   const [regieSatz, setRegieSatz] = useState(70);
   const [nebenSummen, setNebenSummen] = useState<Map<string, number>>(new Map());
+  // Der Satz ist direkt hier editierbar (Kundenwunsch 18.08.: "68 Euro
+  // hinterlegen" kam per Mail — das soll künftig ohne Entwickler gehen).
+  const [satzText, setSatzText] = useState("");
+  const [satzSpeichert, setSatzSpeichert] = useState(false);
+
+  const speichereRegieSatz = async () => {
+    const n = parseDecimal(satzText);
+    if (n === null || n <= 0) {
+      toast({ variant: "destructive", title: "Ungültiger Satz", description: "Bitte eine Zahl > 0 eingeben, z.B. 68." });
+      return;
+    }
+    setSatzSpeichert(true);
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert({ key: "regie_stundensatz", value: String(n) }, { onConflict: "key" });
+    setSatzSpeichert(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: `Satz konnte nicht gespeichert werden: ${error.message}` });
+      return;
+    }
+    setRegieSatz(n);
+    setSatzText("");
+    toast({ title: "Regiestundensatz gespeichert", description: `Ab jetzt gelten € ${n.toLocaleString("de-AT")} je Stunde.` });
+  };
 
   useEffect(() => {
     checkAuth();
@@ -368,9 +392,23 @@ const Disturbances = () => {
                   </span>
                 ))}
               </div>
-              <p className="text-[11px] text-amber-700">
-                Stunden × {regieSatz.toLocaleString("de-AT")} €/h (Einstellung „regie_stundensatz") + Material + Maschinen.
-              </p>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-amber-700">
+                <span>Stunden ×</span>
+                <Input
+                  type="text"
+                  inputMode="decimal"
+                  value={satzText === "" ? regieSatz.toLocaleString("de-AT") : satzText}
+                  onChange={(e) => setSatzText(e.target.value)}
+                  aria-label="Regiestundensatz"
+                  className="h-7 w-16 border-amber-300 bg-white px-1.5 text-right text-[11px] tabular-nums"
+                />
+                <span>€/h (Standard-Regiestundensatz) + Material + Maschinen.</span>
+                {satzText !== "" && parseDecimal(satzText) !== regieSatz && (
+                  <Button size="sm" className="h-7 px-2 text-[11px]" onClick={speichereRegieSatz} disabled={satzSpeichert}>
+                    {satzSpeichert ? "Speichert…" : "Satz speichern"}
+                  </Button>
+                )}
+              </div>
             </CardContent>
           </Card>
         )}

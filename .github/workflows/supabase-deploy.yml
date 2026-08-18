@@ -65,37 +65,33 @@ jobs:
             fi
           }
 
-          sql_datei supabase/migrations/20260818100000_eingangsrechnung_lager.sql
-          sql_datei supabase/migrations/20260818110000_regie_sammelrechnung.sql
+          # GENERISCH: alle noch nicht eingespielten Migrationen ab 20260818
+          # anwenden (ältere Dateien verwaltet dieser Workflow bewusst NICHT —
+          # ob sie in der Historie stehen, ist nicht garantiert, und ein
+          # Doppel-Einspielen alter Migrationen wäre gefährlich).
+          FLOOR="20260818000000"
 
-          # Migrations-Historie nachtragen, damit ein späterer `supabase db push`
-          # die beiden Dateien nicht erneut anwendet (best effort).
-          cat > /tmp/history.sql <<'SQL'
-          insert into supabase_migrations.schema_migrations (version, name, statements)
-          values
-            ('20260818100000', 'eingangsrechnung_lager', array['-- eingespielt über Management-API (GitHub Action)']),
-            ('20260818110000', 'regie_sammelrechnung',   array['-- eingespielt über Management-API (GitHub Action)'])
-          on conflict (version) do nothing;
-          SQL
-          sql_datei /tmp/history.sql weich
+          echo "select version from supabase_migrations.schema_migrations where version >= '${FLOOR}';" > /tmp/versions.sql
+          sql_datei /tmp/versions.sql weich
+          jq -r '.[].version // empty' /tmp/resp.json > /tmp/applied.txt 2>/dev/null || : > /tmp/applied.txt
+          echo "Bereits eingespielt (ab ${FLOOR}):"; cat /tmp/applied.txt || true
 
-          # Verifikation: alle vier Neuerungen müssen da sein.
-          cat > /tmp/verify.sql <<'SQL'
-          select
-            (select count(*) from information_schema.columns
-              where table_schema='public' and table_name='purchase_invoices' and column_name='lager')                as pi_lager,
-            (select count(*) from information_schema.columns
-              where table_schema='public' and table_name='purchase_invoice_allocations' and column_name='ziel')     as alloc_ziel,
-            (select count(*) from information_schema.columns
-              where table_schema='public' and table_name='disturbances' and column_name='verrechnet_in_invoice_id') as dist_link,
-            (select count(*) from public.app_settings where key='regie_stundensatz')                                as regie_satz;
-          SQL
-          sql_datei /tmp/verify.sql
-          echo "Verifikation:"
-          cat /tmp/resp.json | jq .
-          test "$(jq -r '.[0] | (.pi_lager|tostring)+(.alloc_ziel|tostring)+(.dist_link|tostring)+(.regie_satz|tostring)' /tmp/resp.json)" = "1111" \
-            || { echo "::error::Verifikation fehlgeschlagen — nicht alle Spalten/Seeds vorhanden"; exit 1; }
-          echo "✓ Beide Migrationen eingespielt und verifiziert."
+          NEU=0
+          for f in supabase/migrations/*.sql; do
+            base=$(basename "$f"); ver="${base%%_*}"
+            # nur Versionen ab FLOOR (String-Vergleich reicht bei 14 Ziffern)
+            [ "$ver" \< "$FLOOR" ] && continue
+            if grep -qx "$ver" /tmp/applied.txt; then
+              echo "✓ ${base} — bereits eingespielt, übersprungen"
+              continue
+            fi
+            sql_datei "$f"
+            name="${base#*_}"; name="${name%.sql}"
+            printf "insert into supabase_migrations.schema_migrations (version, name, statements) values ('%s','%s', array['-- eingespielt ueber Management-API (GitHub Action)']) on conflict (version) do nothing;" "$ver" "$name" > /tmp/hist.sql
+            sql_datei /tmp/hist.sql weich
+            NEU=$((NEU + 1))
+          done
+          echo "✓ ${NEU} neue Migration(en) eingespielt."
 
       - name: Edge Function mail-postfach deployen
         env:
