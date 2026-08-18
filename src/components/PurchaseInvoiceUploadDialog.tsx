@@ -11,6 +11,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
+import { istPdfDatei, istBildDatei } from "@/lib/dateiTyp";
 
 interface Props {
   open: boolean;
@@ -240,7 +241,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
 
   const handleFiles = (newFiles: FileList | File[]) => {
     const arr = Array.from(newFiles).filter(f => {
-      const ok = f.type === "application/pdf" || f.type.startsWith("image/");
+      const ok = istPdfDatei(f) || istBildDatei(f);
       if (!ok) toast({ variant: "destructive", title: "Nicht unterstützt", description: `${f.name}: nur PDF, JPG, PNG` });
       return ok;
     });
@@ -314,7 +315,12 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
       let pdfText = "";
       let imagesBase64: string[] = [];
 
-      if (file.type === "application/pdf") {
+      // Mail-Anhänge (z.B. von e-Billing-Absendern wie Frischeis) kommen oft
+      // als application/octet-stream — darum zählt auch die Dateiendung.
+      const istPdf = istPdfDatei(file);
+      const istBild = !istPdf && istBildDatei(file);
+
+      if (istPdf) {
         try {
           const data = new Uint8Array(await file.arrayBuffer());
           const pdfjs = await import("pdfjs-dist");
@@ -340,7 +346,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
         }
       }
 
-      if (!pdfText && file.type === "application/pdf") {
+      if (!pdfText && istPdf) {
         const { pdfAllPagesToJpegDataUrls } = await import("@/lib/pdfToImage");
         imagesBase64 = await pdfAllPagesToJpegDataUrls(file);
         // Mehrseitige Scans sprengen sonst das 6-MB-Body-Limit der Function.
@@ -351,7 +357,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
         if (total(imagesBase64) > MAX_SCAN_PAYLOAD) {
           imagesBase64 = await pdfAllPagesToJpegDataUrls(file, 1000, 0.6, 3);
         }
-      } else if (file.type.startsWith("image/")) {
+      } else if (istBild) {
         // Fotos/Scans: auf max 2400px/92% runterrechnen, bei Bedarf weiter.
         try {
           imagesBase64 = [await compressImageToLimit(file)];
@@ -369,9 +375,11 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           imagesBase64 = [raw];
         }
       } else if (!pdfText) {
-        // Weder PDF (mit oder ohne Textlayer) noch Bild → nichts zu scannen.
-        setScanning(false);
-        return;
+        // Weder PDF noch Bild → dem User sagen, warum nichts passiert,
+        // statt still auszusteigen (der Beleg kann manuell erfasst werden).
+        throw new Error(
+          `${file.name}: Dateityp „${file.type || "unbekannt"}" wird nicht unterstützt — der KI-Scan kann nur PDFs und Fotos lesen. Bitte die Beträge manuell erfassen.`
+        );
       }
 
       const { data, error } = await supabase.functions.invoke("parse-invoice-document", {
@@ -841,13 +849,13 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           {/* Live-Preview der ersten Datei */}
           {previewUrl && files[0] && (
             <div className="rounded-lg border overflow-hidden bg-muted/20">
-              {files[0].type === "application/pdf" ? (
+              {istPdfDatei(files[0]) ? (
                 <iframe
                   src={previewUrl}
                   title={files[0].name}
                   className="w-full h-[260px] sm:h-[420px] bg-white"
                 />
-              ) : files[0].type.startsWith("image/") ? (
+              ) : istBildDatei(files[0]) ? (
                 <img
                   src={previewUrl}
                   alt={files[0].name}

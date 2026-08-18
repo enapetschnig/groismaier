@@ -254,7 +254,14 @@ Deno.serve(async (req) => {
         const a = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size,isInline`);
         if (a.ok) {
           anhaenge = ((await a.json()).value || [])
-            .filter((x: Record<string, unknown>) => !x.isInline)
+            // Inline-Bilder (Signatur-Logos etc.) ausblenden — aber PDFs
+            // durchlassen: e-Billing-Absender (z.B. Frischeis) hängen die
+            // Rechnung teils mit inline-Disposition an, und die muss als
+            // Anhang sichtbar bleiben, sonst geht "Als Eingangsrechnung" nicht.
+            .filter((x: Record<string, unknown>) =>
+              !x.isInline ||
+              String(x.contentType || "").toLowerCase().includes("pdf") ||
+              /\.pdf$/i.test(String(x.name || "")))
             .map((x: Record<string, unknown>) => ({ id: x.id, name: x.name, typ: x.contentType, groesse: x.size }));
         }
       }

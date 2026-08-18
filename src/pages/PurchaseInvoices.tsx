@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PurchaseInvoiceUploadDialog } from "@/components/PurchaseInvoiceUploadDialog";
 import { PurchaseInvoiceDetailDialog } from "@/components/PurchaseInvoiceDetailDialog";
 import { heuteISO } from "@/lib/datum";
+import { normalisierterDateityp } from "@/lib/dateiTyp";
 
 type PurchaseInvoice = {
   id: string;
@@ -121,7 +122,7 @@ export default function PurchaseInvoices() {
         const inhalt = await mailRufe({ aktion: "anhang", postfach: v.postfach, id: v.id, anhangId: a.id });
         if (inhalt.inhaltBase64) {
           const bytes = Uint8Array.from(atob(inhalt.inhaltBase64), (c) => c.charCodeAt(0));
-          dateien.push(new File([bytes], inhalt.name || "anhang", { type: inhalt.typ || "application/octet-stream" }));
+          dateien.push(new File([bytes], inhalt.name || "anhang", { type: normalisierterDateityp(inhalt.name, inhalt.typ) }));
         }
       }
       if (dateien.length === 0) throw new Error("Anhänge konnten nicht geladen werden");
