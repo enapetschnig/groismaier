@@ -22,6 +22,8 @@ on:
   push:
     tags:
       - "supabase-deploy-*"
+    branches:
+      - "supabase-deploy/**"
 
 jobs:
   deploy:
