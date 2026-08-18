@@ -8,6 +8,9 @@
 # Log auf und steht nicht im Repo.
 name: Supabase Deploy
 
+# Zwei Auslöser: von Hand (Actions-Tab, sobald der Workflow auf main liegt)
+# ODER per Tag "supabase-deploy-*" — Letzteres, weil die GitHub-App der
+# Claude-Umgebung workflow_dispatch nicht aufrufen darf, Tags pushen aber schon.
 on:
   workflow_dispatch:
     inputs:
@@ -16,6 +19,9 @@ on:
         required: false
         default: "tdehljzmqwmfgfoyyoee"
         type: string
+  push:
+    tags:
+      - "supabase-deploy-*"
 
 jobs:
   deploy:
@@ -35,7 +41,7 @@ jobs:
       - name: Migrationen einspielen + verifizieren
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ inputs.project_ref }}
+          PROJECT_REF: ${{ inputs.project_ref || 'tdehljzmqwmfgfoyyoee' }}
         run: |
           set -euo pipefail
 
@@ -92,7 +98,7 @@ jobs:
       - name: Edge Function mail-postfach deployen
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          PROJECT_REF: ${{ inputs.project_ref }}
+          PROJECT_REF: ${{ inputs.project_ref || 'tdehljzmqwmfgfoyyoee' }}
         run: |
           set -euo pipefail
           npx --yes supabase@2 functions deploy mail-postfach --project-ref "${PROJECT_REF}" --use-api \
