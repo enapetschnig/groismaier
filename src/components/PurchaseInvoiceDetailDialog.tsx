@@ -36,15 +36,20 @@ interface Props {
   onUpdated: () => void;
 }
 
-// Teilbetrag/Position einer Eingangsrechnung, die einem Projekt zugeordnet ist.
+// Teilbetrag/Position einer Eingangsrechnung, die einem Projekt (oder dem
+// Lager, ziel = 'lager' mit project_id = null) zugeordnet ist.
 type Allocation = {
   id: string;
   purchase_invoice_id: string;
-  project_id: string;
+  project_id: string | null;
+  ziel?: string | null;
   beschreibung: string | null;
   betrag_netto: number;
   position_index: number | null;
 };
+
+/** Sentinel-Wert in den Projekt-Selects: Buchung aufs Lager (Kundenwunsch 08/2026). */
+const LAGER = "lager";
 
 const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -333,7 +338,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
     setAllocSaving(true);
     const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).insert({
       purchase_invoice_id: form.id,
-      project_id: newAlloc.project_id,
+      project_id: newAlloc.project_id === LAGER ? null : newAlloc.project_id,
+      ziel: newAlloc.project_id === LAGER ? "lager" : "projekt",
       beschreibung: newAlloc.beschreibung.trim() || null,
       betrag_netto: Math.round(betrag * 100) / 100,
     });
@@ -358,9 +364,13 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
     onUpdated();
   };
 
+  /** Ziel-Patch aus dem Select-Wert (Projekt-UUID oder LAGER-Sentinel). */
+  const zielPatch = (v: string) =>
+    v === LAGER ? { project_id: null, ziel: "lager" } : { project_id: v, ziel: "projekt" };
+
   const reassignAllocation = async (id: string, projectId: string) => {
     if (!form) return;
-    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).update({ project_id: projectId }).eq("id", id);
+    const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any).update(zielPatch(projectId)).eq("id", id);
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: error.message });
       return;
@@ -372,7 +382,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const assignAllocBulk = async () => {
     if (!form || !allocBulkProject || allocSelected.size === 0) return;
     const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any)
-      .update({ project_id: allocBulkProject })
+      .update(zielPatch(allocBulkProject))
       .in("id", [...allocSelected]);
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: error.message });
@@ -456,7 +466,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
       betrag_netto: netto,
       ust_satz: ustSatz,
       kategorie: form.kategorie,
-      project_id: form.project_id || null,
+      project_id: form.lager ? null : form.project_id || null,
+      lager: !!form.lager,
       vehicle_id: form.vehicle_id || null,
       status: form.status,
       zahlungsart: form.zahlungsart || null,
@@ -600,7 +611,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                 )}
               </div>
               <p className="text-[11px] text-muted-foreground">
-                Rechnung auf mehrere Projekte aufteilen (z.B. 3 Positionen → Projekt X, 5 → Projekt Z).
+                Rechnung auf mehrere Projekte aufteilen (z.B. 3 Positionen → Projekt X, 5 → Projekt Z) —
+                oder Teilbeträge aufs 📦 Lager buchen (zählen zu keinem Projekt).
                 Sobald Teilbeträge existieren, rechnet die Nachkalkulation je Projekt nur mit den
                 zugeordneten Teilbeträgen — das Projekt oben dient dann nur noch als Hauptzuordnung der Rechnung.
               </p>
@@ -612,6 +624,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                     <SelectTrigger className="h-11 text-xs flex-1 min-w-[8rem]"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Projekt wählen...</SelectItem>
+                      <SelectItem value={LAGER}>📦 Lager</SelectItem>
                       {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
@@ -646,11 +659,15 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                       <span className="text-xs font-mono tabular-nums whitespace-nowrap">
                         {eur(Number(a.betrag_netto) || 0)}
                       </span>
-                      <Select value={a.project_id} onValueChange={v => reassignAllocation(a.id, v)}>
+                      <Select
+                        value={(a.ziel === "lager" || !a.project_id) ? LAGER : a.project_id}
+                        onValueChange={v => reassignAllocation(a.id, v)}
+                      >
                         <SelectTrigger className="h-11 flex-1 min-w-[8rem] text-xs">
                           <SelectValue placeholder="Projekt" />
                         </SelectTrigger>
                         <SelectContent>
+                          <SelectItem value={LAGER}>📦 Lager</SelectItem>
                           {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
@@ -695,6 +712,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Projekt wählen...</SelectItem>
+                    <SelectItem value={LAGER}>📦 Lager</SelectItem>
                     {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                   </SelectContent>
                 </Select>
@@ -726,8 +744,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                     onClick={() => setNewAlloc(prev => ({
                       ...prev,
                       betrag: formatForInput(restBetrag, 2),
-                      project_id: prev.project_id || form.project_id || "",
-                      beschreibung: prev.beschreibung || "Restbetrag (Hauptprojekt)",
+                      project_id: prev.project_id || (form.lager ? LAGER : form.project_id) || "",
+                      beschreibung: prev.beschreibung || (form.lager ? "Restbetrag (Lager)" : "Restbetrag (Hauptprojekt)"),
                     }))}
                     title="Restbetrag in das Betragsfeld übernehmen"
                   >
@@ -884,11 +902,19 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                 </Select>
               </div>
               <div>
-                <Label>Projekt</Label>
-                <Select value={form.project_id || "none"} onValueChange={v => update("project_id", v === "none" ? null : v)}>
+                <Label>Projekt / Lager</Label>
+                <Select
+                  value={form.lager ? LAGER : form.project_id || "none"}
+                  onValueChange={v => setForm((prev: any) => ({
+                    ...prev,
+                    lager: v === LAGER,
+                    project_id: v === "none" || v === LAGER ? null : v,
+                  }))}
+                >
                   <SelectTrigger><SelectValue placeholder="Kein Projekt" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Kein Projekt</SelectItem>
+                    <SelectItem value={LAGER}>📦 Lager</SelectItem>
                     {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                   </SelectContent>
                 </Select>

@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { PurchaseInvoiceUploadDialog } from "@/components/PurchaseInvoiceUploadDialog";
+import { normalisierterDateityp } from "@/lib/dateiTyp";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -96,6 +97,10 @@ export default function Email() {
   const [erDialogOffen, setErDialogOffen] = useState(false);
   const [erDateien, setErDateien] = useState<File[]>([]);
   const [erNotiz, setErNotiz] = useState("");
+  // Mail, deren Anhänge gerade im ER-Dialog stecken — nach dem Anlegen wird
+  // sie als "übernommen" markiert, damit sie auf /eingangsrechnungen nicht
+  // weiter als Vorschlag auftaucht.
+  const erMail = useRef<{ postfach: string; id: string } | null>(null);
   const [uebernehmeLaeuft, setUebernehmeLaeuft] = useState(false);
 
   const rufe = useCallback(async (body: Record<string, unknown>) => {
@@ -163,7 +168,7 @@ export default function Email() {
     const a = await rufe({ aktion: "anhang", postfach, id: detail!.id, anhangId });
     if (!a.inhaltBase64) return null;
     const bytes = Uint8Array.from(atob(a.inhaltBase64), (c) => c.charCodeAt(0));
-    return new File([bytes], a.name || "anhang", { type: a.typ || "application/octet-stream" });
+    return new File([bytes], a.name || "anhang", { type: normalisierterDateityp(a.name, a.typ) });
   };
 
   const anhangLaden = async (anhang: MailDetail["anhaenge"][number]) => {
@@ -196,6 +201,7 @@ export default function Email() {
         if (f) dateien.push(f);
       }
       if (dateien.length === 0) throw new Error("Anhänge konnten nicht geladen werden");
+      erMail.current = { postfach, id: detail.id };
       setErDateien(dateien);
       setErNotiz(`Aus E-Mail: ${detail.von} <${detail.vonAdresse}> — „${detail.betreff}" (${new Date(detail.empfangen).toLocaleDateString("de-AT")})`);
       setErDialogOffen(true);
@@ -518,8 +524,15 @@ export default function Email() {
       {/* Der bewährte ER-Scan-Dialog, gefüttert mit den Mail-Anhängen. */}
       <PurchaseInvoiceUploadDialog
         open={erDialogOffen}
-        onOpenChange={(o) => { setErDialogOffen(o); if (!o) setErDateien([]); }}
-        onUploaded={() => toast({ title: "Eingangsrechnung angelegt", description: "Zu finden unter Eingangsrechnungen." })}
+        onOpenChange={(o) => { setErDialogOffen(o); if (!o) { setErDateien([]); erMail.current = null; } }}
+        onUploaded={() => {
+          toast({ title: "Eingangsrechnung angelegt", description: "Zu finden unter Eingangsrechnungen." });
+          const m = erMail.current;
+          if (m) {
+            erMail.current = null;
+            rufe({ aktion: "verarbeitet", postfach: m.postfach, id: m.id, mailAktion: "uebernommen" }).catch(() => {});
+          }
+        }}
         initialFiles={erDateien}
         prefillNotiz={erNotiz}
       />

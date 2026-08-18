@@ -581,10 +581,12 @@ export default function Fahrzeuge() {
       marke_modell: form.marke_modell.trim() || null,
       fahrgestellnummer: istMaschine ? null : (form.fahrgestellnummer.trim() || null),
       erstzulassung: istMaschine ? null : (form.erstzulassung || null),
-      // Verrechnungssatz nur bei Maschinen (für den Regiebericht).
-      verrechnungssatz: istMaschine && form.verrechnungssatz.trim()
+      // Verrechnungssatz für Maschinen UND Fahrzeuge (Kundenwunsch 08/2026:
+      // Grossgeraete wie Kran/LKW sollen in Regiebericht und Rechnung mit
+      // Preis/h buchbar sein — vorher wurde der Satz bei Fahrzeugen genullt).
+      verrechnungssatz: form.verrechnungssatz.trim()
         ? Number(form.verrechnungssatz.replace(",", ".")) || null : null,
-      verrechnungseinheit: istMaschine ? (form.verrechnungseinheit || "h") : null,
+      verrechnungseinheit: form.verrechnungseinheit || "h",
     };
     try {
       if (editId) {
@@ -741,37 +743,39 @@ export default function Fahrzeuge() {
                 placeholder={form.art === "maschine" ? "z.B. SN-884321" : "ZT-1234F"}
               />
             </div>
+            {/* Verrechnungssatz für BEIDE Arten — auch ein Kran/LKW wird in
+                Regieberichten und Rechnungen mit Preis/h verrechnet. */}
+            <div>
+              <label className="block text-xs font-semibold mb-1" htmlFor="ma-satz" title="Wird im Regiebericht und in der Rechnungs-Artikelliste als Vorschlag übernommen">
+                Verrechnungssatz
+              </label>
+              <div className="flex gap-1.5">
+                <input
+                  id="ma-satz"
+                  type="number"
+                  inputMode="decimal"
+                  step="any"
+                  className="kb-input w-full"
+                  value={form.verrechnungssatz}
+                  onChange={(e) => setForm(f => ({ ...f, verrechnungssatz: e.target.value }))}
+                  placeholder="z.B. 45,00"
+                />
+                <select
+                  className="kb-input w-24"
+                  aria-label="Einheit des Verrechnungssatzes"
+                  value={form.verrechnungseinheit}
+                  onChange={(e) => setForm(f => ({ ...f, verrechnungseinheit: e.target.value }))}
+                >
+                  <option value="h">€/h</option>
+                  <option value="Tag">€/Tag</option>
+                  <option value="Einsatz">€/Einsatz</option>
+                  <option value="Stk.">€/Stk.</option>
+                </select>
+              </div>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Vorschlag beim Buchen im Regiebericht und als Produkt in Rechnungen</p>
+            </div>
             {form.art === "maschine" && (
               <>
-                <div>
-                  <label className="block text-xs font-semibold mb-1" htmlFor="ma-satz" title="Wird im Regiebericht als Vorschlag übernommen">
-                    Verrechnungssatz
-                  </label>
-                  <div className="flex gap-1.5">
-                    <input
-                      id="ma-satz"
-                      type="number"
-                      inputMode="decimal"
-                      step="any"
-                      className="kb-input w-full"
-                      value={form.verrechnungssatz}
-                      onChange={(e) => setForm(f => ({ ...f, verrechnungssatz: e.target.value }))}
-                      placeholder="z.B. 45,00"
-                    />
-                    <select
-                      className="kb-input w-24"
-                      aria-label="Einheit des Verrechnungssatzes"
-                      value={form.verrechnungseinheit}
-                      onChange={(e) => setForm(f => ({ ...f, verrechnungseinheit: e.target.value }))}
-                    >
-                      <option value="h">€/h</option>
-                      <option value="Tag">€/Tag</option>
-                      <option value="Einsatz">€/Einsatz</option>
-                      <option value="Stk.">€/Stk.</option>
-                    </select>
-                  </div>
-                  <p className="mt-0.5 text-[10px] text-muted-foreground">Vorschlag beim Buchen im Regiebericht</p>
-                </div>
                 <div>
                   <label className="block text-xs font-semibold mb-1" htmlFor="ma-marke">Hersteller / Type</label>
                   <input

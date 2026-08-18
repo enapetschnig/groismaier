@@ -17,6 +17,7 @@ import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
 import { DisturbanceMaterials } from "@/components/DisturbanceMaterials";
+import { DisturbanceMaschinen } from "@/components/DisturbanceMaschinen";
 import { DisturbancePhotos } from "@/components/DisturbancePhotos";
 import { SignatureDialog } from "@/components/SignatureDialog";
 
@@ -71,6 +72,10 @@ const DisturbanceDetail = () => {
   const [loading, setLoading] = useState(true);
   const [deleting, setDeleting] = useState(false);
   const [showEditForm, setShowEditForm] = useState(false);
+  /** Zwingt die Maschinen-Karte nach dem Bearbeiten zum Neuladen. */
+  const [maschinenReload, setMaschinenReload] = useState(0);
+  /** Beleg, der diesen Bericht verrechnet hat (disturbances.verrechnet_in_invoice_id). */
+  const [verrechnetBeleg, setVerrechnetBeleg] = useState<{ id: string; nummer: string } | null>(null);
   const [showSignatureDialog, setShowSignatureDialog] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
@@ -221,6 +226,9 @@ const DisturbanceDetail = () => {
   const handleEditSuccess = () => {
     setShowEditForm(false);
     fetchDisturbance();
+    // Maschinen werden im Bearbeiten-Dialog gepflegt — die read-only-Karte
+    // unten muss danach neu laden, sonst zeigt sie den alten Stand bis F5.
+    setMaschinenReload((n) => n + 1);
   };
 
   const handleSignatureSuccess = async () => {
@@ -597,13 +605,35 @@ const DisturbanceDetail = () => {
     return <Badge variant="outline" className="text-base px-3 py-1">{d.status}</Badge>;
   };
 
+  // Verrechnenden Beleg (Nummer) nachladen — die Spalte wird beim Speichern
+  // der Rechnung gesetzt und war bisher nirgends sichtbar.
+  useEffect(() => {
+    const verId = (disturbance as any)?.verrechnet_in_invoice_id as string | undefined;
+    if (!verId) { setVerrechnetBeleg(null); return; }
+    let cancelled = false;
+    supabase.from("invoices").select("id, nummer").eq("id", verId).maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled) setVerrechnetBeleg(data ? { id: data.id, nummer: data.nummer } : null);
+      });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [(disturbance as any)?.verrechnet_in_invoice_id]);
+
   const handleToggleVerrechnet = async () => {
     if (!disturbance) return;
 
-    const { error } = await supabase
-      .from("disturbances")
-      .update({ is_verrechnet: !disturbance.is_verrechnet })
+    // Hand-Umschalten löscht auch den Beleg-Verweis (verrechnet_in_invoice_id)
+    // — sonst bleibt ein Verweis auf eine Rechnung stehen, die den Bericht
+    // nicht (mehr) deckt. Fallback ohne die Spalte, solange die Migration fehlt.
+    let { error } = await (supabase.from("disturbances") as any)
+      .update({ is_verrechnet: !disturbance.is_verrechnet, verrechnet_in_invoice_id: null })
       .eq("id", disturbance.id);
+    if (error) {
+      ({ error } = await supabase
+        .from("disturbances")
+        .update({ is_verrechnet: !disturbance.is_verrechnet })
+        .eq("id", disturbance.id));
+    }
 
     if (error) {
       toast({
@@ -750,6 +780,20 @@ const DisturbanceDetail = () => {
                 >
                   {disturbance.is_verrechnet ? "✓ Verrechnet" : "Als verrechnet markieren"}
                 </Button>
+              </div>
+            )}
+
+            {/* Welcher Beleg deckt diesen Bericht ab? (Sammelrechnung) */}
+            {isAdmin && disturbance.is_verrechnet && verrechnetBeleg && (
+              <div className="flex items-center gap-2 text-sm">
+                <Receipt className="h-4 w-4 text-muted-foreground shrink-0" />
+                <span className="text-muted-foreground">Verrechnet mit:</span>
+                <button
+                  className="font-medium text-primary hover:underline"
+                  onClick={() => navigate(`/invoices/${verrechnetBeleg.id}`)}
+                >
+                  Rechnung {verrechnetBeleg.nummer}
+                </button>
               </div>
             )}
 
@@ -946,6 +990,9 @@ const DisturbanceDetail = () => {
           disturbanceId={disturbance.id}
           canEdit={canEdit}
         />
+
+        {/* Maschinen / Werkzeug — bisher nur im PDF sichtbar */}
+        <DisturbanceMaschinen disturbanceId={disturbance.id} reloadKey={maschinenReload} />
 
         {/* Löschen (nur wenn nicht gesperrt) */}
         {canEdit && (

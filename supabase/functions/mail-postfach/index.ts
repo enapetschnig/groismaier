@@ -250,11 +250,22 @@ Deno.serve(async (req) => {
       if (!r.ok) return antwort({ error: `Graph ${r.status}` }, 502);
       const m = await r.json();
       let anhaenge: unknown[] = [];
-      if (m.hasAttachments) {
+      // IMMER abfragen, nicht nur bei hasAttachments: Graph meldet
+      // hasAttachments=false, wenn eine Mail AUSSCHLIESSLICH inline-Anhänge
+      // hat — genau der Frischeis-Fall (Rechnung mit inline-Disposition),
+      // für den der PDF-Durchlass unten gebaut ist.
+      {
         const a = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}/attachments?$select=id,name,contentType,size,isInline`);
         if (a.ok) {
           anhaenge = ((await a.json()).value || [])
-            .filter((x: Record<string, unknown>) => !x.isInline)
+            // Inline-Bilder (Signatur-Logos etc.) ausblenden — aber PDFs
+            // durchlassen: e-Billing-Absender (z.B. Frischeis) hängen die
+            // Rechnung teils mit inline-Disposition an, und die muss als
+            // Anhang sichtbar bleiben, sonst geht "Als Eingangsrechnung" nicht.
+            .filter((x: Record<string, unknown>) =>
+              !x.isInline ||
+              String(x.contentType || "").toLowerCase().includes("pdf") ||
+              /\.pdf$/i.test(String(x.name || "")))
             .map((x: Record<string, unknown>) => ({ id: x.id, name: x.name, typ: x.contentType, groesse: x.size }));
         }
       }

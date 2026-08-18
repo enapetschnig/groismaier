@@ -117,10 +117,12 @@ interface PurchaseRaw {
 // purchase_invoice_allocations ist (noch) nicht in den generierten Supabase-
 // Typen — lokales Interface + Cast (Repo-Muster, types.ts nicht regenerieren).
 interface AllocationRaw {
-  project_id: string;
+  /** null bei Lager-Teilbeträgen (ziel = 'lager'). */
+  project_id: string | null;
   purchase_invoice_id: string;
   betrag_netto: number;
   beschreibung: string | null;
+  ziel?: string | null;
 }
 
 interface DocRef {
@@ -300,6 +302,10 @@ export function ProjektNachkalkulation() {
         // Umgebungen fehlen (Migration noch nicht eingespielt) → leer weiter.
         fetchAllRows<AllocationRaw>((f, t) =>
           (supabase.from("purchase_invoice_allocations" as never) as any)
+            // BEWUSST ohne die neue Spalte `ziel`: Lager-Teilbeträge sind an
+            // project_id = NULL erkennbar (verteileEingangsrechnung), und ein
+            // Select auf eine noch nicht migrierte Spalte ließe wegen des
+            // .catch() unten ALLE Teilbeträge lautlos verschwinden.
             .select("project_id, purchase_invoice_id, betrag_netto, beschreibung")
             .order("id")
             .range(f, t),

@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calcMaterialRow, calcLohnkosten, calcLohnSelbstkosten, calcArbeitsstunden,
-  istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2,
+  istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
   type MaterialRow, type Betriebsdaten,
 } from "./kalkulationEngine";
 
@@ -69,6 +69,40 @@ describe("Materialzeile", () => {
     const r = calcMaterialRow(zeile({ product: "" }), modul, bd);
     expect(r.ekProM2).toBe(0);
     expect(r.vkProM2).toBe(0);
+  });
+
+  // Kundenfall (Mail 08/2026): Kategorie "Riegelkonstruktuion" (Tippfehler)
+  // mit Artikel "KVH 60 mm" — früher griff die Riegelgeometrie NUR, wenn der
+  // ARTIKELNAME mit "Riegelkonstruktion" begann; der m³-Preis (20,50 €) floss
+  // sonst 1:1 als €/m² ein und Holzmenge + Materialsumme waren falsch.
+  it("Riegelgeometrie greift über die Kategorie, auch mit Tippfehler", () => {
+    const erwartet = calcRiegelPreisProM2(modul.area, modul.wallHeight, modul.insulationThickness, 20.5, bd);
+    expect(erwartet).toBeGreaterThan(0);
+    for (const kategorie of ["Riegelkonstruktion", "Riegelkonstruktuion", "riegelkonstruktion "]) {
+      const r = calcMaterialRow(zeile({ category: kategorie, product: "KVH 60 mm", ekPrice: 20.5, vkPrice: 0 }), modul, bd);
+      expect(r.ekProM2).toBeCloseTo(erwartet, 6);
+      expect(r.vkProM2).toBeCloseTo(erwartet, 6); // EK = VK, kein Aufschlag
+    }
+  });
+
+  it("Riegelgeometrie greift weiterhin über den Artikelnamen", () => {
+    const erwartet = calcRiegelPreisProM2(modul.area, modul.wallHeight, modul.insulationThickness, 62.5, bd);
+    const r = calcMaterialRow(zeile({ category: "Vollholz", product: "Riegelkonstruktion KVH", ekPrice: 62.5, vkPrice: 0 }), modul, bd);
+    expect(r.ekProM2).toBeCloseTo(erwartet, 6);
+  });
+
+  it("Dämmstoff-Umrechnung übersteht Case-/Schreibvarianten der Kategorie", () => {
+    for (const kategorie of ["Dämmstoffe", "dämmstoffe", "Dämmstoff", "Daemmstoffe", " Dämmstoffe "]) {
+      const r = calcMaterialRow(zeile({ category: kategorie, ekPrice: 150, vkPrice: 200 }), modul, bd);
+      expect(r.ekProM2).toBeCloseTo(30, 2);
+      expect(r.vkProM2).toBeCloseTo(40, 2);
+    }
+  });
+
+  it("Riegelbretter u.Ä. lösen die Riegelgeometrie NICHT aus", () => {
+    const r = calcMaterialRow(zeile({ category: "Riegelbretter", ekPrice: 12, vkPrice: 18 }), modul, bd);
+    expect(r.ekProM2).toBe(12);
+    expect(r.vkProM2).toBe(18);
   });
 });
 

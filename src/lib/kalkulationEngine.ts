@@ -50,9 +50,39 @@ export interface MaterialRow {
   einheit?: string;
 }
 
-/** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten). */
+/** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten, auch als Preiseinheit "€ / m³"). */
 export const istVolumenEinheit = (einheit: string | null | undefined): boolean =>
-  /^\s*(m3|m³|fm|rm|srm)\s*$/i.test(String(einheit || ""));
+  /^\s*(?:(?:€|eur)\s*\/\s*)?(m3|m³|fm|rm|srm)\s*$/i.test(String(einheit || ""));
+
+/** Normalisierter Vergleichsname (wie der Katalog: trim + lowercase). */
+const normKalkName = (s: string | null | undefined): string =>
+  String(s || "").trim().toLowerCase();
+
+/**
+ * Erkennt eine Riegelkonstruktions-Zeile über die KATEGORIE oder den
+ * Artikelnamen. Früher zählte NUR row.product.startsWith("Riegelkonstruktion") —
+ * eine Zeile mit Kategorie "Riegelkonstruktion" und Artikel "KVH 60 mm" fiel
+ * daran vorbei, und der m³-Preis floss unbemerkt als €/m² ein (real passiert,
+ * inkl. Tippfehler "Riegelkonstruktuion"). Das Präfix "riegelkonstrukt" fängt
+ * beide Schreibweisen; "Riegelbretter" o.Ä. bleibt unberührt.
+ */
+export const istRiegelZeile = (row: Pick<MaterialRow, "category" | "product" | "manual" | "calc">): boolean =>
+  !row.manual && !row.calc && (
+    normKalkName(row.product).startsWith("riegelkonstrukt") ||
+    normKalkName(row.category).startsWith("riegelkonstrukt")
+  );
+
+/**
+ * Erkennt eine Dämmstoff-Zeile (m³-Preis wird über die Dämmstärke auf €/m²
+ * gebracht). Früher exakt row.category === "Dämmstoffe" — Case-Varianten,
+ * Singular oder ein Leerzeichen aus der Katalogpflege schalteten die
+ * Umrechnung still ab (Faktor-Fehler in Höhe der Dämmstärke).
+ */
+export const istDaemmstoffZeile = (row: Pick<MaterialRow, "category" | "manual" | "calc">): boolean =>
+  !row.manual && !row.calc && (
+    normKalkName(row.category).startsWith("dämmstoff") ||
+    normKalkName(row.category).startsWith("daemmstoff")
+  );
 
 export interface KalkModule {
   id: number;
@@ -454,11 +484,11 @@ export function calcMaterialRow(
     return { ...leer, ekAbsolut: betrag, vkAbsolut: betrag };
   }
   if (!row.category || !row.product) return leer;
-  if (row.product.startsWith("Riegelkonstruktion")) {
+  if (istRiegelZeile(row)) {
     const preis = calcRiegelPreisProM2(m.area, m.wallHeight, m.insulationThickness, row.ekPrice, bd);
     return { ...leer, ekProM2: preis, vkProM2: preis };
   }
-  if (row.category === "Dämmstoffe") {
+  if (istDaemmstoffZeile(row)) {
     const dicke = num(m.insulationThickness) / 100;
     const ekRoh = num(row.ekPrice);
     const vkRoh = num(row.vkPrice);
@@ -1267,6 +1297,9 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
             lmPerQm: num(r?.lmPerQm),
             dimension: num(r?.dimension),
             dimension2: num(r?.dimension2),
+            // Ohne die Einheit verlor die Zeile nach Speichern/Neuladen den
+            // "nach m³ bepreist"-Warnhinweis (einheitUnpassend).
+            einheit: typeof r?.einheit === "string" ? r.einheit : "",
           }))
         : base.materialRows;
       return {

@@ -17,6 +17,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PurchaseInvoiceUploadDialog } from "@/components/PurchaseInvoiceUploadDialog";
 import { PurchaseInvoiceDetailDialog } from "@/components/PurchaseInvoiceDetailDialog";
 import { heuteISO } from "@/lib/datum";
+import { normalisierterDateityp } from "@/lib/dateiTyp";
 
 type PurchaseInvoice = {
   id: string;
@@ -121,7 +122,7 @@ export default function PurchaseInvoices() {
         const inhalt = await mailRufe({ aktion: "anhang", postfach: v.postfach, id: v.id, anhangId: a.id });
         if (inhalt.inhaltBase64) {
           const bytes = Uint8Array.from(atob(inhalt.inhaltBase64), (c) => c.charCodeAt(0));
-          dateien.push(new File([bytes], inhalt.name || "anhang", { type: inhalt.typ || "application/octet-stream" }));
+          dateien.push(new File([bytes], inhalt.name || "anhang", { type: normalisierterDateityp(inhalt.name, inhalt.typ) }));
         }
       }
       if (dateien.length === 0) throw new Error("Anhänge konnten nicht geladen werden");
@@ -183,7 +184,16 @@ export default function PurchaseInvoices() {
       .order("rechnungsdatum", { ascending: false, nullsFirst: false })
       .order("created_at", { ascending: false });
 
-    if (selectedProject !== "alle") {
+    if (selectedProject === "lager") {
+      // Lager-Belege: Kopf aufs Lager gebucht ODER mindestens ein Teilbetrag
+      // mit ziel='lager' — sonst wären positionsweise Lager-Buchungen im
+      // Filter unsichtbar. Spalten fehlen in den generierten Typen → Cast.
+      const { data: lagerAllocs } = await (supabase.from("purchase_invoice_allocations" as never) as any)
+        .select("purchase_invoice_id")
+        .eq("ziel", "lager");
+      const ids = [...new Set(((lagerAllocs as any[]) || []).map((r: any) => r.purchase_invoice_id))];
+      q = (q as any).or(ids.length > 0 ? `lager.eq.true,id.in.(${ids.join(",")})` : "lager.eq.true");
+    } else if (selectedProject !== "alle") {
       q = q.eq("project_id", selectedProject);
     }
 
@@ -435,6 +445,7 @@ export default function PurchaseInvoices() {
               <SelectTrigger className="h-11"><SelectValue placeholder="Projekt" /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="alle">Alle Projekte</SelectItem>
+                <SelectItem value="lager">📦 Lager</SelectItem>
                 {projectOptions.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
               </SelectContent>
             </Select>
@@ -530,6 +541,9 @@ export default function PurchaseInvoices() {
                             <Building2 className="h-3 w-3 shrink-0" />
                             <span className="truncate">{inv.projects.name}</span>
                           </span>
+                        )}
+                        {(inv as any).lager && (
+                          <Badge variant="outline" className="text-[10px] py-0 h-4">📦 Lager</Badge>
                         )}
                       </div>
                     </button>

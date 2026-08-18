@@ -10,14 +10,14 @@
 // beschränkt; der Katalog ist für alle Mitarbeiter editierbar.
 // ============================================================================
 import { useEffect, useState } from "react";
-import { Plus, Save, Trash2, ArrowUp, ArrowDown } from "lucide-react";
+import { Plus, Save, Trash2, ArrowUp, ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { round4 } from "@/lib/kalkulationEngine";
 import { formatForInput, parseDecimal } from "@/lib/num";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable, mengenEinheit } from "./useKalkKatalog";
 
-const BETRIEBSDATEN_FELDER: { key: string; label: string; hinweis?: string }[] = [
+const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
   {
     key: "kalk_selbstkosten_lohn",
@@ -39,13 +39,23 @@ const BETRIEBSDATEN_FELDER: { key: string; label: string; hinweis?: string }[] =
   { key: "kalk_fahrt_lkw_maut", label: "LKW-Kosten pro km, Maut (€)" },
   { key: "kalk_riegel_abstand", label: "Lattungsabstand Riegelkonstruktion (cm)" },
   { key: "kalk_riegel_brett_dicke", label: "Dicke der Riegelbretter (cm)" },
-  { key: "kalk_lack_vierseitig_faktor", label: "Lackierung: Faktor 4-seitig" },
-  { key: "kalk_lack_kunde_satz", label: "Lackierung: Farbe beigestellt (€/m²)" },
-  { key: "kalk_lack_farbwechsel", label: "Lackierung: Farbwechsel (€)" },
-  { key: "kalk_lack_dimension", label: "Lackierung: Dimension/Farbton >50mm (€)" },
-  { key: "kalk_lack_anfahrt_km", label: "Lackierung: Anfahrt (€/km)" },
-  { key: "kalk_lack_fahrzeit_h", label: "Lackierung: Fahrzeit (€/h)" },
 ];
+
+// Kundenwunsch 08/2026 („Lackierung:Fahrzeit???? Ich glaub die müssen weg"):
+// Die Lack-Sätze gehören nicht zu den allgemeinen Betriebsdaten — sie wirken
+// ausschließlich im Tab „Oberflächenbeschichtung". Statt sie zu löschen (der
+// Lack-Tab braucht sie weiterhin) stehen sie in einem eigenen, standardmäßig
+// zugeklappten Block.
+const LACK_FELDER: { key: string; label: string; hinweis?: string }[] = [
+  { key: "kalk_lack_vierseitig_faktor", label: "Faktor 4-seitig" },
+  { key: "kalk_lack_kunde_satz", label: "Farbe beigestellt (€/m²)" },
+  { key: "kalk_lack_farbwechsel", label: "Farbwechsel (€)" },
+  { key: "kalk_lack_dimension", label: "Dimension/Farbton >50mm (€)" },
+  { key: "kalk_lack_anfahrt_km", label: "Anfahrt (€/km)", hinweis: "Nur Oberflächenbeschichtung: Anfahrt PKW/Anhänger in km." },
+  { key: "kalk_lack_fahrzeit_h", label: "Fahrzeit (€/h)", hinweis: "Nur Oberflächenbeschichtung: Fahrzeit der Mitarbeiter in Stunden." },
+];
+
+const BETRIEBSDATEN_FELDER = [...ALLGEMEINE_FELDER, ...LACK_FELDER];
 
 const TYP_BLOCKS: { typ: KatalogKategorie["typ"]; titel: string; ekLabel: string; vkLabel: string; hinweis: string }[] = [
   { typ: "material", titel: "Produkte (Aufbau Kalkulation)", ekLabel: "EK (€)", vkLabel: "VK (€)", hinweis: "VK leer lassen → automatisch EK × VK-Faktor (1,35). Artikel ganz ohne Preis erscheinen als „Preis manuell“." },
@@ -92,6 +102,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   /** Kategorie-Filter oben (Kundenwunsch 3.2): eine Kategorie wählen statt
    *  durch alle zu scrollen. */
   const [katFilter, setKatFilter] = useState<string>("alle");
+  /** Lack-Sätze standardmäßig zugeklappt — sie gehören nicht zum Alltag. */
+  const [lackOffen, setLackOffen] = useState(false);
 
   // Die DB speichert Zahlen immer mit Punkt; im Feld steht die österreichische
   // Schreibweise mit Komma (sonst liest der Anwender "0.85" als 85 Cent falsch
@@ -121,15 +133,32 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       fehler(`Negative Werte sind hier nicht sinnvoll: ${negativ.map((f) => f.label).join(", ")}`);
       return;
     }
+    // Geleerte Felder, für die ein Wert gespeichert ist: Eintrag löschen →
+    // der Standardwert gilt wieder. Vorher war das Leeren ein stilles No-Op —
+    // nach dem Speichern stand der alte Wert wieder im Feld ("Ich hab die
+    // Zahl gelöscht und sie kam zurück", Kundenmeldung 08/2026).
+    const geleert = BETRIEBSDATEN_FELDER.filter(
+      (f) => String(werte[f.key] ?? "").trim() === "" && katalog.settings[f.key] !== undefined,
+    );
     setSavingBd(true);
     const rows = befuellt.map((f) => ({ key: f.key, value: String(parseDecimal(werte[f.key])) }));
-    const { error } = await supabase.from("app_settings").upsert(rows, { onConflict: "key" });
+    const { error } = rows.length > 0
+      ? await supabase.from("app_settings").upsert(rows, { onConflict: "key" })
+      : { error: null };
+    const { error: delError } = geleert.length > 0
+      ? await supabase.from("app_settings").delete().in("key", geleert.map((f) => f.key))
+      : { error: null };
     setSavingBd(false);
-    if (error) {
-      fehler(`Betriebsdaten konnten nicht gespeichert werden (nur Administratoren): ${error.message}`);
+    if (error || delError) {
+      fehler(`Betriebsdaten konnten nicht gespeichert werden (nur Administratoren): ${(error || delError)!.message}`);
       return;
     }
-    toast({ title: "Gespeichert", description: "Betriebsdaten wurden aktualisiert." });
+    toast({
+      title: "Gespeichert",
+      description: geleert.length > 0
+        ? `Betriebsdaten aktualisiert. Geleerte Felder gelten wieder mit dem Standardwert: ${geleert.map((f) => f.label).join(", ")}.`
+        : "Betriebsdaten wurden aktualisiert.",
+    });
     katalog.reload();
   };
 
@@ -302,13 +331,55 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     return n;
   };
 
-  /** EK committen; VK automatisch ableiten, wenn er noch leer ist. */
-  const commitEk = (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
+  /**
+   * Aktuellen VK frisch aus der DB lesen. Der Snapshot `a` stammt vom letzten
+   * reload() und kann beim Blur-Wechsel VK-Feld → EK-Feld veraltet sein — die
+   * VK-Ableitung entschied dann auf altem Stand und überschrieb einen gerade
+   * eingetippten VK stillschweigend mit EK × Faktor (Kundenmeldung 08/2026:
+   * "Zahl gelöscht und neu eingegeben — die Verbindung war gelöst").
+   */
+  const leseAktuellenVk = async (a: KatalogArtikel): Promise<number | null | "unbekannt"> => {
+    if (a.quelle === "template") {
+      const { data, error } = (await supabase
+        .from("invoice_templates")
+        .select("vk_netto, netto_preis, einzelpreis")
+        .eq("id", a.id)
+        .maybeSingle()) as { data: Record<string, unknown> | null; error: unknown };
+      // Lesefehler (Netz/RLS) heißt NICHT "kein VK" — sonst würde ein
+      // gepflegter VK bei einem WLAN-Aussetzer mit EK × Faktor überschrieben.
+      if (error || !data) return "unbekannt";
+      const vk = data.vk_netto ?? data.netto_preis ?? data.einzelpreis;
+      if (vk === null || vk === undefined) return null;
+      // netto_preis/einzelpreis haben DB-Default 0: Ist vk_netto leer und die
+      // Spiegel stehen auf 0, wurde nie ein VK gepflegt (frischer Artikel) —
+      // dann darf abgeleitet werden. Ein BEWUSST gesetzter VK 0 schreibt
+      // alle drei Spalten und behält vk_netto = 0.
+      if (Number(vk) === 0 && (data.vk_netto === null || data.vk_netto === undefined)) return null;
+      return Number(vk);
+    }
+    const { data, error } = await artTable().select("vk").eq("id", a.id).maybeSingle();
+    if (error) return "unbekannt";
+    const vk = (data as Record<string, unknown> | null)?.vk;
+    return vk === null || vk === undefined ? null : Number(vk);
+  };
+
+  /** EK committen; VK automatisch ableiten, wenn er noch leer ist — mit Meldung. */
+  const commitEk = async (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
     const ek = preisEingabe(text, typ);
     if (ek === undefined) return;
     const patch: Record<string, unknown> = { ek };
-    if (ek !== null && (a.vk === null || a.vk === 0)) {
-      patch.vk = round4(ek * (typ === "lack" ? lackFaktor : vkFaktor));
+    // Nur bei WIRKLICH leerem VK (null, frisch gelesen) ableiten. Ein VK von
+    // 0 bleibt stehen (kann Absicht sein), "unbekannt" (Lesefehler) leitet
+    // sicherheitshalber NICHT ab, und die Ableitung wird gemeldet statt
+    // still zu passieren.
+    if (ek !== null && (await leseAktuellenVk(a)) === null) {
+      const faktor = typ === "lack" ? lackFaktor : vkFaktor;
+      const vk = round4(ek * faktor);
+      patch.vk = vk;
+      toast({
+        title: "VK automatisch abgeleitet",
+        description: `${a.name}: VK ${formatForInput(vk)} € = EK × ${formatForInput(faktor)} (Feld leer gelassen).`,
+      });
     }
     updateArtikel(a.id, patch, a.quelle);
   };
@@ -325,7 +396,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       <div className="kb-panel">
         <div className="border-b px-4 py-2.5 text-sm font-bold">Allgemeine Betriebsdaten (globale Standardwerte)</div>
         <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
-          {BETRIEBSDATEN_FELDER.map((f) => (
+          {ALLGEMEINE_FELDER.map((f) => (
             <label key={f.key} className="block text-xs" title={f.hinweis}>
               <span className="mb-0.5 block text-muted-foreground">{f.label}</span>
               <BlurInput
@@ -336,6 +407,35 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
               {f.hinweis && <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{f.hinweis}</span>}
             </label>
           ))}
+        </div>
+        {/* Lack-Sätze ausgelagert (Kundenwunsch 08/2026): wirken NUR im Tab
+            Oberflächenbeschichtung und standen zwischen den allgemeinen
+            Betriebsdaten — "Lackierung: Fahrzeit????" war dort nicht
+            erklärbar. Zugeklappt bleiben sie auffindbar, ohne zu stören. */}
+        <div className="border-t">
+          <button
+            type="button"
+            className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs font-semibold text-muted-foreground hover:text-foreground"
+            onClick={() => setLackOffen((o) => !o)}
+          >
+            {lackOffen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            Lackierung / Oberflächenbeschichtung — Sätze für den Tab „Oberflächenbeschichtung"
+          </button>
+          {lackOffen && (
+            <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2 lg:grid-cols-3">
+              {LACK_FELDER.map((f) => (
+                <label key={f.key} className="block text-xs" title={f.hinweis}>
+                  <span className="mb-0.5 block text-muted-foreground">{f.label}</span>
+                  <BlurInput
+                    numeric
+                    value={werte[f.key] ?? ""}
+                    onCommit={(v) => setWerte((p) => ({ ...p, [f.key]: v }))}
+                  />
+                  {f.hinweis && <span className="mt-0.5 block text-[11px] leading-snug text-muted-foreground">{f.hinweis}</span>}
+                </label>
+              ))}
+            </div>
+          )}
         </div>
         <div className="flex justify-end border-t px-4 py-2.5">
           <button type="button" className="kb-btn kb-btn-primary-green" onClick={saveBetriebsdaten} disabled={savingBd}>

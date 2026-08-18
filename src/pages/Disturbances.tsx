@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase } from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +14,9 @@ import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { DisturbanceForm } from "@/components/DisturbanceForm";
+import { parseDecimal } from "@/lib/num";
+
+const eur = (n: number) => `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 type Disturbance = {
   id: string;
@@ -51,6 +55,13 @@ const Disturbances = () => {
   const [statusFilter, setStatusFilter] = useState<string>("alle");
   const [prefillProjectId, setPrefillProjectId] = useState<string | null>(null);
   const projectFilter = searchParams.get("project");
+  // Sammelrechnung (Kundenwunsch 08/2026): mehrere Berichte anhaken und in
+  // EINE Rechnung übernehmen.
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  // Offene (nicht verrechnete) Beträge: Stunden × Regie-Stundensatz +
+  // Material + Maschinen — für die Übersicht "offene Summe je Projekt".
+  const [regieSatz, setRegieSatz] = useState(70);
+  const [nebenSummen, setNebenSummen] = useState<Map<string, number>>(new Map());
 
   useEffect(() => {
     checkAuth();
@@ -117,11 +128,72 @@ const Disturbances = () => {
         }));
 
         setDisturbances(enrichedData);
+        void ladeOffeneNebensummen(enrichedData.filter((d: any) => !d.is_verrechnet).map((d: any) => d.id));
       } else {
         setDisturbances([]);
+        setNebenSummen(new Map());
       }
     }
     setLoading(false);
+  };
+
+  /**
+   * Material- und Maschinenbeträge der noch nicht verrechneten Berichte
+   * (je Bericht aufsummiert) + Regie-Stundensatz aus den Einstellungen.
+   * Tabellen/Spalten können in frischen Umgebungen fehlen → leer weiter.
+   */
+  const ladeOffeneNebensummen = async (ids: string[]) => {
+    const summen = new Map<string, number>();
+    if (ids.length > 0) {
+      // In 100er-Blöcken abfragen — hunderte UUIDs in EINEM .in() sprengen
+      // sonst die URL-Länge und die Summenkarte bliebe stumm unvollständig.
+      const bloecke: string[][] = [];
+      for (let i = 0; i < ids.length; i += 100) bloecke.push(ids.slice(i, i + 100));
+      const [satzRes, ...blockRes] = await Promise.all([
+        supabase.from("app_settings").select("value").eq("key", "regie_stundensatz").maybeSingle(),
+        ...bloecke.map((block) =>
+          supabase.from("disturbance_materials").select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
+        ...bloecke.map((block) =>
+          (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
+      ]);
+      const satz = parseDecimal(String(satzRes.data?.value ?? ""));
+      if (satz !== null && satz > 0) setRegieSatz(satz);
+      for (const res of blockRes) {
+        for (const z of (((res as any).data as any[]) || [])) {
+          const menge = parseDecimal(String(z.menge ?? "")) ?? 0;
+          const preis = Number(z.einzelpreis) || 0;
+          if (menge > 0 && preis !== 0) {
+            summen.set(z.disturbance_id, (summen.get(z.disturbance_id) || 0) + menge * preis);
+          }
+        }
+      }
+    }
+    setNebenSummen(summen);
+  };
+
+  /** Offener (nicht verrechneter) Betrag eines Berichts. */
+  const offenBetrag = (d: Disturbance): number =>
+    d.is_verrechnet ? 0 : (Number(d.stunden) || 0) * regieSatz + (nebenSummen.get(d.id) || 0);
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const sammelrechnungErstellen = () => {
+    const gewaehlt = disturbances.filter(d => selectedIds.has(d.id));
+    if (gewaehlt.length === 0) return;
+    const kunden = new Set(gewaehlt.map(d => (d.kunde_name || "").trim()).filter(Boolean));
+    if (kunden.size > 1) {
+      toast({
+        title: "Verschiedene Kunden gewählt",
+        description: "Die Kundendaten der Rechnung kommen aus dem ersten Bericht — bitte prüfen.",
+      });
+    }
+    navigate(`/invoices/new?typ=rechnung&disturbance_ids=${gewaehlt.map(d => d.id).join(",")}`);
   };
 
   const handleFormSuccess = () => {
@@ -146,10 +218,18 @@ const Disturbances = () => {
   const handleToggleVerrechnet = async (e: React.MouseEvent, disturbanceId: string, currentValue: boolean) => {
     e.stopPropagation();
 
-    const { error } = await supabase
-      .from("disturbances")
-      .update({ is_verrechnet: !currentValue })
+    // Beim Umschalten von Hand auch den Beleg-Verweis löschen — sonst zeigt
+    // ein wieder geöffneter Bericht auf eine Rechnung, die ihn nicht (mehr)
+    // enthält. Fallback ohne die Spalte, solange die Migration fehlt.
+    let { error } = await (supabase.from("disturbances") as any)
+      .update({ is_verrechnet: !currentValue, verrechnet_in_invoice_id: null })
       .eq("id", disturbanceId);
+    if (error) {
+      ({ error } = await supabase
+        .from("disturbances")
+        .update({ is_verrechnet: !currentValue })
+        .eq("id", disturbanceId));
+    }
 
     if (error) {
       toast({
@@ -188,6 +268,23 @@ const Disturbances = () => {
   });
 
   const offeneAnzahl = disturbances.filter((d) => d.status !== "abgeschlossen").length;
+
+  // Offene (nicht verrechnete) Summen — gesamt und je Projekt (Kundenwunsch
+  // 08/2026: "Übersicht oben, wo die gesamt zu verrechnende offene Summe je
+  // Projekt ist"). Nur für Admins sichtbar (Gelddaten).
+  const offeneBerichte = disturbances.filter(
+    (d) => !d.is_verrechnet && (!projectFilter || d.project_id === projectFilter),
+  );
+  const offeneGesamt = offeneBerichte.reduce((s, d) => s + offenBetrag(d), 0);
+  const offeneJeProjekt = [...offeneBerichte
+    .reduce((m, d) => {
+      const name = d.project_name || "Ohne Projekt";
+      m.set(name, (m.get(name) || 0) + offenBetrag(d));
+      return m;
+    }, new Map<string, number>())
+    .entries()]
+    .filter(([, betrag]) => betrag > 0.005)
+    .sort((a, b) => b[1] - a[1]);
 
   if (loading) {
     return (
@@ -257,6 +354,48 @@ const Disturbances = () => {
           </CardContent>
         </Card>
 
+        {/* Offene Summe je Projekt (nur Admin — Gelddaten) */}
+        {isAdmin && offeneGesamt > 0.005 && (
+          <Card className="kb-panel mb-4 border-amber-300 bg-amber-50">
+            <CardContent className="p-3 sm:p-4 space-y-1.5">
+              <p className="text-sm font-semibold text-amber-900">
+                Noch zu verrechnen: {eur(offeneGesamt)} · {offeneBerichte.length} Bericht{offeneBerichte.length === 1 ? "" : "e"}
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-amber-800">
+                {offeneJeProjekt.map(([name, betrag]) => (
+                  <span key={name} className="whitespace-nowrap">
+                    {name}: <span className="font-medium tabular-nums">{eur(betrag)}</span>
+                  </span>
+                ))}
+              </div>
+              <p className="text-[11px] text-amber-700">
+                Stunden × {regieSatz.toLocaleString("de-AT")} €/h (Einstellung „regie_stundensatz") + Material + Maschinen.
+              </p>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Sammelrechnung: Auswahl-Leiste */}
+        {isAdmin && selectedIds.size > 0 && (
+          <Card className="kb-panel mb-4 border-primary/40 bg-primary/5">
+            <CardContent className="flex flex-wrap items-center gap-2 p-3">
+              <span className="text-sm font-medium">
+                {selectedIds.size} Bericht{selectedIds.size === 1 ? "" : "e"} ausgewählt
+                {" · "}
+                {eur(disturbances.filter(d => selectedIds.has(d.id)).reduce((s, d) => s + offenBetrag(d), 0))}
+              </span>
+              <span className="flex-1" />
+              <Button size="sm" className="h-10 gap-1.5" onClick={sammelrechnungErstellen}>
+                <Receipt className="h-4 w-4" />
+                {selectedIds.size === 1 ? "Rechnung erstellen" : "Sammelrechnung erstellen"}
+              </Button>
+              <Button size="sm" variant="ghost" className="h-10" onClick={() => setSelectedIds(new Set())}>
+                Auswahl aufheben
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
         {/* Liste — Karten, damit es am Handy gut bedienbar bleibt */}
         {filteredDisturbances.length === 0 ? (
           <Card className="kb-panel">
@@ -287,6 +426,20 @@ const Disturbances = () => {
                 <CardContent className="p-3 sm:p-4">
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2">
+                        {/* Auswahl für die Sammelrechnung (nur Admin, nur
+                            unverrechnete Berichte) */}
+                        {isAdmin && !disturbance.is_verrechnet && (
+                          <span
+                            className="flex h-8 w-8 shrink-0 items-center justify-center"
+                            onClick={(e) => { e.stopPropagation(); toggleSelected(disturbance.id); }}
+                          >
+                            <Checkbox
+                              checked={selectedIds.has(disturbance.id)}
+                              aria-label={`Regiebericht ${disturbance.kunde_name} für Sammelrechnung auswählen`}
+                            />
+                          </span>
+                        )}
                       <div className="min-w-0">
                         <h3 className="font-semibold text-base sm:text-lg flex items-center gap-2 break-words">
                           <User className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -297,6 +450,7 @@ const Disturbances = () => {
                             Erstellt von: {disturbance.profile_vorname} {disturbance.profile_nachname}
                           </p>
                         )}
+                      </div>
                       </div>
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         {getStatusBadge(disturbance)}

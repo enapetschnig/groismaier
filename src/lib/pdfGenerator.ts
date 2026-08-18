@@ -1,7 +1,7 @@
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { InvoiceHtmlData, InvoiceHtmlItem, BankData } from "./invoiceHtml";
-import { buildDruckplan, istDetailOhneBetrag } from "./invoiceHtml";
+import { buildDruckplan, istDetailOhneBetrag, istTextzeile } from "./invoiceHtml";
 import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, hexToRgb } from "./invoiceLayoutTypes";
 import { drawLetterhead, drawFooter, LETTERHEAD_MARGIN } from "./pdfLetterhead";
 import { DEFAULT_MAHNUNG_SETTINGS, renderMahnungText, type MahnungSettings } from "./mahnungSettings";
@@ -624,7 +624,17 @@ export async function generateInvoicePdf(
     // via minCellHeight.
     const mengeText = `${fmtMenge(p.menge)} ${item.einheit || "Stk."}`;
     const row = [e.nummer, kurztext];
-    if (hidePrices) {
+    if (istTextzeile(item)) {
+      // Reine Textzeile (z.B. Sammelrechnungs-Titel "Regiebericht 12.08."):
+      // keine "0 Stk."/"0,00 €"-Spalten, nur der Text.
+      if (hidePrices) {
+        row.push("");
+      } else {
+        row.push("");
+        if (hatRabattSpalte) row.push("");
+        row.push("", "");
+      }
+    } else if (hidePrices) {
       row.push(mengeText);
     } else if (e.detail) {
       // Detailzeilen tragen keinen eigenen Betrag (gesamtpreis 0). Eine

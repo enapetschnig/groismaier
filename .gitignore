@@ -31,3 +31,5 @@ supabase/.temp
 .supabase-db-pass.txt
 
 .claude/worktrees
+
+*.tsbuildinfo

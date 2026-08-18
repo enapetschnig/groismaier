@@ -658,6 +658,9 @@ export default function InvoiceDetail() {
   const [verrechnungZielOptions, setVerrechnungZielOptions] = useState<Array<{ id: string; nummer: string; brutto_summe: number; bezahlt_betrag: number; status: string }>>([]);
   const [verrechnungSaving, setVerrechnungSaving] = useState(false);
   const [fromAngebotId, setFromAngebotId] = useState<string | null>(null);
+  // Importierte Regieberichte: nach dem Speichern des Belegs werden sie als
+  // verrechnet markiert und mit dem Beleg verknüpft (Sammelrechnung).
+  const [regieImportIds, setRegieImportIds] = useState<string[]>([]);
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
   const [priceAdjustOpen, setPriceAdjustOpen] = useState(false);
@@ -1643,9 +1646,12 @@ export default function InvoiceDetail() {
       loadPayments(id);
       loadMahnungen();
     }
-    // Auto-open regiebericht import if disturbance_id is in URL
+    // Auto-open regiebericht import if disturbance_id(s) is in URL —
+    // disturbance_ids (kommagetrennt) kommt vom Sammelrechnungs-Knopf der
+    // Regiebericht-Liste.
     const distId = searchParams.get("disturbance_id");
-    if (distId && isNew) {
+    const distIds = searchParams.get("disturbance_ids");
+    if ((distId || distIds) && isNew) {
       setImportRegieOpen(true);
     }
 
@@ -1818,11 +1824,45 @@ export default function InvoiceDetail() {
   };
 
   const fetchTemplates = async () => {
-    const { data: tplData } = await supabase.from("invoice_templates").select("*").order("kategorie, name").limit(5000);
+    const [{ data: tplData }, { data: geraete }] = await Promise.all([
+      supabase.from("invoice_templates").select("*").order("kategorie, name").limit(5000),
+      // Maschinen/Fahrzeuge mit Verrechnungssatz als Produktgruppe "Maschinen"
+      // in die Artikelliste einmischen (Kundenwunsch 08/2026: Maschinen bei
+      // Rechnungen als Produkt auswählbar). Reine Anzeige-Objekte — sie leben
+      // im KFZ-Manager, nicht in invoice_templates.
+      (supabase.from("vehicles" as never) as any)
+        .select("id, bezeichnung, kennzeichen, verrechnungssatz, verrechnungseinheit")
+        .eq("aktiv", true)
+        .not("verrechnungssatz", "is", null)
+        .order("bezeichnung"),
+    ]);
     // Weich gelöschte Artikel (ist_aktiv=false) nirgends mehr anbieten —
     // gleiche Regel wie Kalkulation und Artikelliste (Ein-Katalog).
     const data = (tplData || []).filter((t: any) => t.ist_aktiv !== false);
-    if (data) setTemplates(data.map(t => ({ ...t, einzelpreis: Number(t.einzelpreis), ist_favorit: (t as any).ist_favorit || false })));
+    const maschinen = (((geraete as any[]) || [])).map((v: any) => ({
+      id: v.id,
+      name: v.bezeichnung,
+      beschreibung: v.bezeichnung,
+      kurzbezeichnung: v.bezeichnung,
+      produktgruppe: "Maschinen",
+      kategorie: "Maschinen",
+      // Kennzeichnet Pseudo-Artikel aus dem KFZ-Manager: kein Favoriten-Stern
+      // (schriebe ins Leere) und keine invoice_templates-Zeile dahinter.
+      ist_maschine: true,
+      produktnummer: v.kennzeichen || "",
+      einheit: v.verrechnungseinheit || "h",
+      einzelpreis: Number(v.verrechnungssatz) || 0,
+      netto_preis: Number(v.verrechnungssatz) || 0,
+      vk_netto: Number(v.verrechnungssatz) || 0,
+      ist_set: false,
+      ist_kalkuliert: false,
+      ist_aktiv: true,
+      ist_favorit: false,
+    }));
+    setTemplates([
+      ...data.map(t => ({ ...t, einzelpreis: Number(t.einzelpreis), ist_favorit: (t as any).ist_favorit || false })),
+      ...(maschinen as any[]),
+    ] as any);
   };
 
   const loadStoredPdfs = async (invId: string) => {
@@ -3262,6 +3302,24 @@ export default function InvoiceDetail() {
           hopCursor = (hop as any)?.parent_invoice_id || null;
         }
         setFromAngebotId(null);
+      }
+
+      // Importierte Regieberichte als verrechnet markieren + mit dem Beleg
+      // verknüpfen (Sammelrechnung) — nur bei rechnungsartigen Belegen; ein
+      // Angebot aus Regie-Positionen lässt die Berichte offen.
+      if (regieImportIds.length > 0 && savedId && _invoiceLikeTypesForVerrechnet.has(form.typ)) {
+        const { error: regieErr } = await (supabase.from("disturbances") as any)
+          .update({ is_verrechnet: true, verrechnet_in_invoice_id: savedId })
+          .in("id", regieImportIds);
+        if (regieErr) {
+          // Beleg ist gespeichert; die Markierung kann in der Regie-Liste
+          // nachgeholt werden — deshalb nur Hinweis statt Abbruch.
+          toast({
+            title: "Regieberichte nicht markiert",
+            description: `Der Beleg wurde gespeichert, aber ${regieImportIds.length} Regiebericht(e) konnten nicht als verrechnet markiert werden: ${regieErr.message}`,
+          });
+        }
+        setRegieImportIds([]);
       }
 
       setIsDirty(false);
@@ -7642,9 +7700,16 @@ export default function InvoiceDetail() {
                   const netto = Number((t as any).netto_preis) || t.einzelpreis;
                   return (
                     <div key={t.id} className={`flex items-center gap-2 p-2 rounded hover:bg-accent text-sm ${isSelected ? "bg-primary/10" : ""}`}>
+                      {/* Maschinen aus dem KFZ-Manager haben keine
+                          invoice_templates-Zeile — ein Favoriten-Stern schriebe
+                          ins Leere und wäre nach dem nächsten Laden weg. */}
+                      {(t as any).ist_maschine ? (
+                        <span className="w-[18px] shrink-0" />
+                      ) : (
                       <button onClick={(e) => toggleFavorit(e, t.id)} className="shrink-0 p-0.5 hover:scale-110 transition-transform" title={t.ist_favorit ? "Favorit entfernen" : "Als Favorit markieren"}>
                         <Star className={`w-3.5 h-3.5 ${t.ist_favorit ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground/40 hover:text-yellow-400"}`} />
                       </button>
+                      )}
                       <input type="checkbox" checked={isSelected} onChange={() => {
                         setSelectedTemplateIds(prev => isSelected ? prev.filter(id => id !== t.id) : [...prev, t.id]);
                         if (!isSelected) setTemplateMengen(prev => ({ ...prev, [t.id]: 1 }));
@@ -8168,7 +8233,8 @@ export default function InvoiceDetail() {
           open={importRegieOpen}
           onClose={() => setImportRegieOpen(false)}
           preselectedId={searchParams.get("disturbance_id")}
-          onImport={(importedItems, kundeData) => {
+          preselectedIds={(searchParams.get("disturbance_ids") || "").split(",").filter(Boolean)}
+          onImport={(importedItems, kundeData, disturbanceIds) => {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
               beschreibung: item.beschreibung,
@@ -8178,6 +8244,8 @@ export default function InvoiceDetail() {
               gesamtpreis: round2(round3(item.menge) * round2(item.einzelpreis)),
             }));
             setItemsDirty(prev => mergeItems(prev, newItems));
+            // Beim Speichern werden diese Berichte als verrechnet markiert.
+            setRegieImportIds(prev => [...new Set([...prev, ...disturbanceIds])]);
             if (kundeData && !form.kunde_name) {
               setForm(prev => ({
                 ...prev,
