@@ -1,0 +1,95 @@
+# Supabase-Deploy per Hand-Auslösung (workflow_dispatch):
+#   1. spielt die beiden Migrationen 20260818* über die Management-API ein
+#   2. verifiziert, dass die neuen Spalten wirklich existieren
+#   3. deployt die Edge Function mail-postfach
+#
+# Der Access Token wird beim Auslösen als Eingabe übergeben (kein Secret im
+# Repo, taucht in keinem Log auf). Nach Gebrauch den Token unter
+# supabase.com → Account → Access Tokens widerrufen.
+name: Supabase Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      supabase_access_token:
+        description: "Supabase Access Token (sbp_...)"
+        required: true
+        type: string
+      project_ref:
+        description: "Supabase Projekt-Ref"
+        required: false
+        default: "tdehljzmqwmfgfoyyoee"
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Migrationen einspielen + verifizieren
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase_access_token }}
+          PROJECT_REF: ${{ inputs.project_ref }}
+        run: |
+          set -euo pipefail
+
+          # SQL-Datei/-String über die Management-API ausführen.
+          # $2 = "weich": Fehler nur melden, Job läuft weiter.
+          sql_datei() {
+            jq -Rs '{query: .}' < "$1" > /tmp/payload.json
+            local http
+            http=$(curl -sS -o /tmp/resp.json -w "%{http_code}" \
+              -X POST "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
+              -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data @/tmp/payload.json)
+            echo "→ $1: HTTP ${http}"
+            cat /tmp/resp.json; echo
+            if [ "${http}" -lt 200 ] || [ "${http}" -ge 300 ]; then
+              [ "${2:-}" = "weich" ] && { echo "(weicher Schritt — wird übersprungen)"; return 0; }
+              return 1
+            fi
+          }
+
+          sql_datei supabase/migrations/20260818100000_eingangsrechnung_lager.sql
+          sql_datei supabase/migrations/20260818110000_regie_sammelrechnung.sql
+
+          # Migrations-Historie nachtragen, damit ein späterer `supabase db push`
+          # die beiden Dateien nicht erneut anwendet (best effort).
+          cat > /tmp/history.sql <<'SQL'
+          insert into supabase_migrations.schema_migrations (version, name, statements)
+          values
+            ('20260818100000', 'eingangsrechnung_lager', array['-- eingespielt über Management-API (GitHub Action)']),
+            ('20260818110000', 'regie_sammelrechnung',   array['-- eingespielt über Management-API (GitHub Action)'])
+          on conflict (version) do nothing;
+          SQL
+          sql_datei /tmp/history.sql weich
+
+          # Verifikation: alle vier Neuerungen müssen da sein.
+          cat > /tmp/verify.sql <<'SQL'
+          select
+            (select count(*) from information_schema.columns
+              where table_schema='public' and table_name='purchase_invoices' and column_name='lager')                as pi_lager,
+            (select count(*) from information_schema.columns
+              where table_schema='public' and table_name='purchase_invoice_allocations' and column_name='ziel')     as alloc_ziel,
+            (select count(*) from information_schema.columns
+              where table_schema='public' and table_name='disturbances' and column_name='verrechnet_in_invoice_id') as dist_link,
+            (select count(*) from public.app_settings where key='regie_stundensatz')                                as regie_satz;
+          SQL
+          sql_datei /tmp/verify.sql
+          echo "Verifikation:"
+          cat /tmp/resp.json | jq .
+          test "$(jq -r '.[0] | (.pi_lager|tostring)+(.alloc_ziel|tostring)+(.dist_link|tostring)+(.regie_satz|tostring)' /tmp/resp.json)" = "1111" \
+            || { echo "::error::Verifikation fehlgeschlagen — nicht alle Spalten/Seeds vorhanden"; exit 1; }
+          echo "✓ Beide Migrationen eingespielt und verifiziert."
+
+      - name: Edge Function mail-postfach deployen
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ inputs.supabase_access_token }}
+          PROJECT_REF: ${{ inputs.project_ref }}
+        run: |
+          set -euo pipefail
+          npx --yes supabase@2 functions deploy mail-postfach --project-ref "${PROJECT_REF}" --use-api \
+            || npx --yes supabase@2 functions deploy mail-postfach --project-ref "${PROJECT_REF}"
+          echo "✓ mail-postfach deployt."
