@@ -44,6 +44,7 @@ import Ausschreibungen from "./pages/Ausschreibungen";
 import Fahrzeuge from "./pages/Fahrzeuge";
 import ScheduleBoard from "./pages/ScheduleBoard";
 import FreelancerHours from "./pages/FreelancerHours";
+import Aufgaben from "./pages/Aufgaben";
 import NotFound from "./pages/NotFound";
 
 // Wrapper that forces re-mount when id or query params change
@@ -109,6 +110,10 @@ function AppContent() {
           <Route path="/passwoerter" element={<ProtectedRoute feature="admin"><PasswordManager /></ProtectedRoute>} />
           <Route path="/email" element={<ProtectedRoute feature="admin"><Email /></ProtectedRoute>} />
           <Route path="/notepad" element={<ProtectedRoute><Notepad /></ProtectedRoute>} />
+          {/* Aufgaben (Kundenwunsch 19.08.2026): bewusst OHNE Feature-Gate —
+              jeder Mitarbeiter soll seine zugewiesenen Aufgaben sehen und
+              eigene einreichen; die Sichtbarkeit der Daten regelt die RLS. */}
+          <Route path="/aufgaben" element={<ProtectedRoute><Aufgaben /></ProtectedRoute>} />
           <Route path="/disturbances" element={<ProtectedRoute feature="regieberichte"><Disturbances /></ProtectedRoute>} />
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />

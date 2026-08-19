@@ -26,7 +26,9 @@ import ChangePasswordDialog from "@/components/ChangePasswordDialog";
 import { QuickFotoDialog } from "@/components/QuickFotoDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
+import { AufgabenWidget } from "@/components/aufgaben/AufgabenWidget";
 import { KBButton, KBSearchRow, KBSectionHeader } from "@/components/kingbill";
+import { ListTodo } from "lucide-react";
 
 /** Bereichs-Spalte im KingBill-Startmasken-Stil:
  *  halbtransparenter grauer Icon-Kopf + Button-Zeilen direkt auf dem Blauverlauf. */
@@ -398,6 +400,14 @@ export default function Index() {
           </div>
         )}
 
+        {/* Aufgaben (Kundenwunsch 19.08.2026): Status-Übersicht für den Admin,
+            „Meine Aufgaben" als Nachricht an die zugewiesene Person. */}
+        {user && (
+          <div className="mb-4 sm:mb-6">
+            <AufgabenWidget userId={user.id} isAdmin={isAdmin} />
+          </div>
+        )}
+
         {/* Handy-Schnellzugriff: Was man unterwegs tatsächlich macht — Zeit
             buchen, Beleg abfotografieren, Regiebericht schreiben. Ohne das
             muss sich der Chef am Telefon durch sieben Bereiche scrollen, bis
@@ -590,6 +600,7 @@ export default function Index() {
           {/* ── Betrieb — für alle sichtbar ───────────────────── */}
           <KBBereich icon={HardHat} title="Betrieb">
             <KBButton className="w-full" icon={Clock} label="Zeiterfassung" onClick={() => navigate("/time-tracking")} />
+            <KBButton className="w-full" icon={ListTodo} label="Aufgaben" onClick={() => navigate("/aufgaben")} />
             {canView("plantafel") && (
               <KBButton className="w-full" icon={LayoutGrid} label="Plantafel" onClick={() => navigate("/schedule")} />
             )}
