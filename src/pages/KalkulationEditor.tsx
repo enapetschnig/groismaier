@@ -429,6 +429,19 @@ export default function KalkulationEditor() {
   const removeRow = (moduleId: number, idx: number) =>
     update((s) => { const m = s.modules.find((x) => x.id === moduleId); if (m) m.materialRows.splice(idx, 1); });
 
+  // Materialzeilen umsortieren (Kundenwunsch 2026-08-19: „die einzelnen
+  // Schichten in der Reihenfolge verschieben") — Desktop per Drag-Griff,
+  // Handy per Pfeiltasten; beides landet hier.
+  const moveRow = (moduleId: number, from: number, to: number) =>
+    update((s) => {
+      const m = s.modules.find((x) => x.id === moduleId);
+      if (!m) return;
+      const n = m.materialRows.length;
+      if (from === to || from < 0 || to < 0 || from >= n || to >= n) return;
+      const [r] = m.materialRows.splice(from, 1);
+      m.materialRows.splice(to, 0, r);
+    });
+
   const addModule = () => {
     if (state.modules.length >= MAX_MODULE) {
       toast({ variant: "destructive", title: "Maximum erreicht", description: `Maximal ${MAX_MODULE} Aufbauten.` });
@@ -909,6 +922,7 @@ export default function KalkulationEditor() {
                 onReplaceRow={(idx, row) => replaceRow(z.module.id, idx, row)}
                 onAddRow={() => addRow(z.module.id)}
                 onRemoveRow={(idx) => removeRow(z.module.id, idx)}
+                onMoveRow={(from, to) => moveRow(z.module.id, from, to)}
                 onClone={() => cloneModule(z.module.id)}
                 onRemove={() => removeModule(z.module.id)}
                 dragProps={{

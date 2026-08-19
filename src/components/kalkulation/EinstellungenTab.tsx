@@ -10,12 +10,13 @@
 // beschränkt; der Katalog ist für alle Mitarbeiter editierbar.
 // ============================================================================
 import { useEffect, useState } from "react";
-import { Plus, Save, Trash2, ArrowUp, ArrowDown, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Save, Trash2, ArrowUp, ArrowDown, Calculator, ChevronDown, ChevronRight } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { round4 } from "@/lib/kalkulationEngine";
 import { formatForInput, parseDecimal } from "@/lib/num";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable, mengenEinheit } from "./useKalkKatalog";
+import { ArtikelKalkulationDialog } from "./ArtikelKalkulationDialog";
 
 const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
@@ -58,14 +59,15 @@ const LACK_FELDER: { key: string; label: string; hinweis?: string }[] = [
 const BETRIEBSDATEN_FELDER = [...ALLGEMEINE_FELDER, ...LACK_FELDER];
 
 const TYP_BLOCKS: { typ: KatalogKategorie["typ"]; titel: string; ekLabel: string; vkLabel: string; hinweis: string }[] = [
-  { typ: "material", titel: "Produkte (Aufbau Kalkulation)", ekLabel: "EK (€)", vkLabel: "VK (€)", hinweis: "VK leer lassen → automatisch EK × VK-Faktor (1,35). Artikel ganz ohne Preis erscheinen als „Preis manuell“." },
+  { typ: "material", titel: "Produkte (Aufbau Kalkulation)", ekLabel: "EK (€)", vkLabel: "VK (€)", hinweis: "VK leer lassen → automatisch EK × VK-Faktor (1,35). Artikel ganz ohne Preis erscheinen als „Preis manuell“. Über das Taschenrechner-Symbol lässt sich ein Artikel kalkulieren: Der VK wird dann aus EK + Kostenbausteinen (Maschine, Transport …) + Arbeitszeit + Aufschlag berechnet." },
   { typ: "lack", titel: "Produkte (Lohnlackierung)", ekLabel: "3-seitig (€/m²)", vkLabel: "4-seitig (€/m²)", hinweis: "4-seitig leer lassen → automatisch 3-seitig × 1,65. „Farbe beigestellt“ ist der globale Satz in den Betriebsdaten." },
   { typ: "aufpreis", titel: "Auf-/Minderpreise (Lohnlackierung)", ekLabel: "", vkLabel: "Betrag (€/Einheit)", hinweis: "Minderpreise als negativen Betrag erfassen (z.B. -0,1)." },
 ];
 
 /** Unkontrolliertes Eingabefeld, committet erst bei Blur (kein DB-Spam). */
-function BlurInput({ value, onCommit, className, numeric }: {
+function BlurInput({ value, onCommit, className, numeric, disabled, title }: {
   value: string; onCommit: (v: string) => void; className?: string; numeric?: boolean;
+  disabled?: boolean; title?: string;
 }) {
   const [text, setText] = useState(value);
   useEffect(() => { setText(value); }, [value]);
@@ -74,6 +76,8 @@ function BlurInput({ value, onCommit, className, numeric }: {
       className={className || "kb-input h-11 min-h-0 px-2 py-1 text-sm sm:h-8"}
       inputMode={numeric ? "decimal" : undefined}
       value={text}
+      disabled={disabled}
+      title={title}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => { if (text !== value) onCommit(text); }}
       onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
@@ -104,6 +108,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const [katFilter, setKatFilter] = useState<string>("alle");
   /** Lack-Sätze standardmäßig zugeklappt — sie gehören nicht zum Alltag. */
   const [lackOffen, setLackOffen] = useState(false);
+  /** Artikel, dessen Kalkulieren-Dialog offen ist (Kundenwunsch 2026-08-19). */
+  const [kalkArtikel, setKalkArtikel] = useState<KatalogArtikel | null>(null);
 
   // Die DB speichert Zahlen immer mit Punkt; im Feld steht die österreichische
   // Schreibweise mit Komma (sonst liest der Anwender "0.85" als 85 Cent falsch
@@ -502,14 +508,25 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                         {block.typ !== "aufpreis" && <th className="w-28 px-2 py-1 text-right font-semibold">{block.ekLabel}</th>}
                         <th className="w-28 px-2 py-1 text-right font-semibold">{block.vkLabel}</th>
                         <th className="w-24 px-2 py-1 font-semibold">Einheit</th>
+                        {block.typ === "material" && <th className="w-9 px-1 py-1" title="Artikel kalkulieren" />}
                         <th className="w-9 px-2 py-1" />
                       </tr>
                     </thead>
                     <tbody>
                       {kat.artikel.length === 0 && (
-                        <tr><td colSpan={6} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
+                        <tr><td colSpan={block.typ === "material" ? 7 : 6} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
                       )}
-                      {kat.artikel.map((a, aIdx) => (
+                      {kat.artikel.map((a, aIdx) => {
+                        // Kalkulierte Artikel (Kundenwunsch 2026-08-19): der VK
+                        // ist BERECHNET — Direkt-Edits an EK/VK würden beim
+                        // nächsten Kalkulations-Speichern überschrieben, darum
+                        // sind die Felder gesperrt und alles läuft über den
+                        // Kalkulieren-Dialog (Taschenrechner-Knopf).
+                        const kalkuliert = block.typ === "material" && !!a.kalkuliert;
+                        const preisSperrHinweis = kalkuliert
+                          ? "Wird aus der Kalkulation berechnet — über den Taschenrechner-Knopf ändern."
+                          : undefined;
+                        return (
                         <tr key={a.id} className="border-b last:border-b-0">
                           <td className="w-14 px-1 py-1">
                             {/* Reihenfolge verschieben (Kundenwunsch 3.1) */}
@@ -529,23 +546,50 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                           <td className="px-2 py-1">
                             <BlurInput value={a.name} onCommit={(v) => v.trim() && updateArtikel(a.id, { name: v.trim() }, a.quelle)}
                               className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
+                            {kalkuliert && (
+                              <span className="mt-0.5 block text-[10px] font-semibold text-kb-green">VK aus Kalkulation</span>
+                            )}
                           </td>
                           {block.typ !== "aufpreis" && (
                             <td className="px-2 py-1">
                               <BlurInput numeric value={dbZuAnzeige(a.ek)}
                                 onCommit={(v) => commitEk(a, block.typ, v)}
-                                className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums sm:h-7" />
+                                disabled={kalkuliert} title={preisSperrHinweis}
+                                className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums disabled:bg-muted disabled:opacity-60 sm:h-7" />
                             </td>
                           )}
                           <td className="px-2 py-1">
                             <BlurInput numeric value={dbZuAnzeige(a.vk)}
                               onCommit={(v) => commitVk(a, block.typ, v)}
-                              className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums sm:h-7" />
+                              disabled={kalkuliert} title={preisSperrHinweis}
+                              className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums disabled:bg-muted disabled:opacity-60 sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
                             <BlurInput value={a.einheit || ""} onCommit={(v) => updateArtikel(a.id, { einheit: v }, a.quelle)}
                               className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
                           </td>
+                          {block.typ === "material" && (
+                            <td className="px-1 py-1">
+                              {/* Nur Artikelstamm-Artikel tragen die kalk-Felder;
+                                  Alt-Artikel (kalkulation_artikel) müssten erst
+                                  in den Artikelstamm übernommen werden. */}
+                              {a.quelle === "template" && (
+                                <button
+                                  type="button"
+                                  className={`flex h-11 w-11 items-center justify-center rounded sm:h-7 sm:w-7 ${
+                                    kalkuliert
+                                      ? "bg-kb-green/15 text-kb-green hover:bg-kb-green/25"
+                                      : "text-muted-foreground hover:bg-muted"
+                                  }`}
+                                  onClick={() => setKalkArtikel(a)}
+                                  title={kalkuliert
+                                    ? "VK wird aus der Kalkulation berechnet — klicken zum Bearbeiten"
+                                    : "Artikel kalkulieren: VK aus EK + Kostenbausteinen + Arbeitszeit ableiten"}
+                                  aria-label="Artikel kalkulieren"
+                                ><Calculator className="h-3.5 w-3.5" /></button>
+                              )}
+                            </td>
+                          )}
                           <td className="px-2 py-1">
                             <button
                               type="button"
@@ -555,7 +599,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                             ><Trash2 className="h-3.5 w-3.5" /></button>
                           </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                   </div>
@@ -577,6 +622,16 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
           </div>
         );
       })}
+
+      {/* Kalkulieren-Dialog (Kundenwunsch 2026-08-19): VK eines Artikels aus
+          EK + Kostenbausteinen + Arbeitszeit + Aufschlag ableiten. */}
+      <ArtikelKalkulationDialog
+        artikel={kalkArtikel}
+        onClose={(gespeichert) => {
+          setKalkArtikel(null);
+          if (gespeichert) katalog.reload();
+        }}
+      />
     </div>
   );
 }

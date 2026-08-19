@@ -6,6 +6,10 @@
 // Modus-Zyklus je Zeile: DB → Manuell → (nur Decke/Dach: Berechnet) → DB;
 // jeder Wechsel setzt die Zeile zurück (wie Original).
 //
+// Umsortieren der Zeilen (Kundenwunsch 2026-08-19: „die einzelnen Schichten
+// in der Reihenfolge verschieben"): Desktop per Drag-Griff am Zeilenanfang,
+// Handy per Pfeiltasten in der Karte.
+//
 // FREIE POSITIONEN (Kundenwunsch 2026-07-22): Kategorie und Artikel sind im
 // DB-Modus keine reinen Dropdowns mehr, sondern Comboboxen — man wählt einen
 // Katalog-Eintrag ODER tippt einen neuen Namen ein („… neu anlegen"). Frei
@@ -24,8 +28,8 @@
 //         nur befüllte Zeilen + EINE freie Zeile gezeigt — sonst müsste man
 //         sich am Handy durch 10 leere Zeilen scrollen.
 // ============================================================================
-import { useState } from "react";
-import { Check, ChevronsUpDown, Database, Grid3x3, Pencil, Plus, X } from "lucide-react";
+import { useRef, useState } from "react";
+import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
   newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit,
@@ -44,6 +48,8 @@ interface Props {
   onReplaceRow: (idx: number, row: MaterialRow) => void;
   onAddRow: () => void;
   onRemoveRow: (idx: number) => void;
+  /** Zeile von Position `from` nach `to` verschieben (Kundenwunsch 2026-08-19). */
+  onMoveRow: (from: number, to: number) => void;
 }
 
 /** Zeile ohne jeden Inhalt (Handy: nur eine davon anzeigen). */
@@ -174,11 +180,23 @@ function KatalogCombobox({
   );
 }
 
-export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onReplaceRow, onAddRow, onRemoveRow }: Props) {
+export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow }: Props) {
   const summen = calcMaterialSummen(m, bd);
   const istDecke = m.aufbauKategorie === "Decke" || m.aufbauKategorie === "Dach";
   const rows = m.materialRows || [];
   const ersterLeerIdx = rows.findIndex(istLeereZeile);
+
+  // Umsortieren (Kundenwunsch 2026-08-19: „die einzelnen Schichten in der
+  // Reihenfolge verschieben — am sympathischsten ein Knopf zum Ziehen"):
+  // Desktop per Drag-Griff (HTML5-Drag wie bei den Aufbau-Karten), Handy per
+  // Pfeiltasten — Touch löst kein HTML5-Drag aus.
+  const dragZeileRef = useRef<number | null>(null);
+  // Am Handy werden leere Zeilen (bis auf die erste) ausgeblendet — die
+  // Pfeile müssen zwischen SICHTBAREN Nachbarn tauschen, sonst „hängt" eine
+  // Zeile scheinbar fest, weil sie nur mit einer unsichtbaren getauscht hat.
+  const sichtbareIdx = rows
+    .map((_, i) => i)
+    .filter((i) => !istLeereZeile(rows[i]) || i === ersterLeerIdx);
 
   const toggleMode = (idx: number, row: MaterialRow) => {
     // DB → Manuell → (Decke/Dach: Berechnet) → DB; Reset aller Felder je Wechsel.
@@ -251,7 +269,8 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
   const artikelOptionen = (row: MaterialRow) =>
     (findeKategorie(kategorien, row.category)?.artikel || []).map((a) => ({
       name: a.name,
-      hinweis: a.ek === null && a.vk === null ? "Preis manuell" : undefined,
+      hinweis: a.kalkuliert ? "kalkuliert"
+        : a.ek === null && a.vk === null ? "Preis manuell" : undefined,
     }));
 
   // Bewusst Render-FUNKTIONEN statt lokaler Komponenten: eine im Render
@@ -345,6 +364,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
         {rows.map((row, idx) => {
           if (istLeereZeile(row) && idx !== ersterLeerIdx) return null;
           const r = info(row);
+          const pos = sichtbareIdx.indexOf(idx);
           return (
             <div key={idx} className="rounded border bg-white p-2">
               <div className="mb-1.5 flex items-center gap-2">
@@ -358,6 +378,22 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                 <span className="flex-1 text-[11px] font-semibold text-muted-foreground">
                   {row.manual ? "Manuell (€-Beträge)" : row.calc ? "Holz berechnen" : "Katalog / frei"}
                 </span>
+                <button
+                  type="button"
+                  disabled={pos <= 0}
+                  onClick={() => onMoveRow(idx, sichtbareIdx[pos - 1])}
+                  className="flex h-11 w-9 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-25"
+                  title="Zeile nach oben"
+                  aria-label="Zeile nach oben"
+                ><ArrowUp className="h-4 w-4" /></button>
+                <button
+                  type="button"
+                  disabled={pos < 0 || pos >= sichtbareIdx.length - 1}
+                  onClick={() => onMoveRow(idx, sichtbareIdx[pos + 1])}
+                  className="flex h-11 w-9 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-25"
+                  title="Zeile nach unten"
+                  aria-label="Zeile nach unten"
+                ><ArrowDown className="h-4 w-4" /></button>
                 <button
                   type="button"
                   onClick={() => onRemoveRow(idx)}
@@ -422,9 +458,10 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       <div className="hidden overflow-x-auto sm:block">
         {/* table-fixed: sonst fressen die (jetzt breiteren) Namensspalten die
             Preisfelder auf — EK/VK waren nur noch ~30 px schmal. */}
-        <table className="w-full min-w-[440px] table-fixed text-xs">
+        <table className="w-full min-w-[460px] table-fixed text-xs">
           <thead>
             <tr className="border-b text-left text-muted-foreground">
+              <th className="w-6 py-1" title="Zeile ziehen zum Umsortieren" />
               <th className="w-7 py-1" title="Zeilenmodus: Datenbank / Manuell / Berechnet" />
               <th className="py-1 pr-1 font-semibold">Kategorie</th>
               <th className="py-1 pr-1 font-semibold">Artikel</th>
@@ -437,7 +474,33 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
             {rows.map((row, idx) => {
               const r = info(row);
               return (
-                <tr key={idx} className="border-b align-top last:border-b-0">
+                <tr
+                  key={idx}
+                  className="border-b align-top last:border-b-0"
+                  // Nur bei aktivem ZEILEN-Drag reagieren — ein Modul-Drag
+                  // (Aufbau-Karten umsortieren) muss zur Karte durchfallen.
+                  onDragOver={(e) => {
+                    if (dragZeileRef.current === null) return;
+                    e.preventDefault(); e.stopPropagation();
+                    e.dataTransfer.dropEffect = "move";
+                  }}
+                  onDrop={(e) => {
+                    if (dragZeileRef.current === null) return;
+                    e.preventDefault(); e.stopPropagation();
+                    if (dragZeileRef.current !== idx) onMoveRow(dragZeileRef.current, idx);
+                    dragZeileRef.current = null;
+                  }}
+                >
+                  <td className="py-1">
+                    <span
+                      draggable
+                      onDragStart={(e) => { dragZeileRef.current = idx; e.dataTransfer.effectAllowed = "move"; }}
+                      onDragEnd={() => { dragZeileRef.current = null; }}
+                      className="flex h-7 w-5 cursor-grab items-center justify-center text-muted-foreground active:cursor-grabbing"
+                      title="Zeile ziehen zum Umsortieren"
+                      aria-label="Zeile verschieben"
+                    ><GripVertical className="h-3.5 w-3.5" /></span>
+                  </td>
                   <td className="py-1 pr-1">
                     <button
                       type="button"
