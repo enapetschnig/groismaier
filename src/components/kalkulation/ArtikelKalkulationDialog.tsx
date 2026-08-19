@@ -73,7 +73,9 @@ export function ArtikelKalkulationDialog({ artikel, onClose }: Props) {
         stundensatz: Number(data.stundensatz) || DEFAULT_STUNDENSATZ,
         bausteine: Array.isArray(data.kalk_bausteine) ? (data.kalk_bausteine as KalkulationInput["bausteine"]) : [],
       });
-      setUst(Number(data.ust_satz) || 20);
+      // USt 0 ist ein gueltiger Satz (z.B. Reverse Charge) — nur bei fehlendem
+      // Wert auf den Standard 20 zurueckfallen, nicht bei 0.
+      setUst(data.ust_satz === null || data.ust_satz === undefined ? 20 : Number(data.ust_satz));
       setWarKalkuliert(!!data.ist_kalkuliert);
     })();
     return () => { aktiv = false; };
@@ -90,6 +92,12 @@ export function ArtikelKalkulationDialog({ artikel, onClose }: Props) {
     if (!artikel) return;
     const bausteine = (input.bausteine || []).filter((b) => b.bezeichnung.trim() || Number(b.betrag));
     const vk = calcEinzelpreis({ ...input, bausteine });
+    // Schutz vor dem Preis-Wipe: Eine leere Kalkulation ergibt 0 € und würde
+    // beim Speichern einen manuell gepflegten VK stillschweigend auf "kein
+    // Preis" setzen. Nachfragen statt löschen.
+    if (vk === 0 && !window.confirm(
+      `Die Kalkulation ergibt 0 € — „${artikel.name}" würde ohne Preis gespeichert (ein vorhandener VK geht verloren). Trotzdem speichern?`,
+    )) return;
     const vkOderNull = vk === 0 ? null : vk;
     const ek = rund2(Number(input.ek_preis) || 0);
     const payload = {
