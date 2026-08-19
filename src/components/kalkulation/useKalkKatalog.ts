@@ -31,6 +31,13 @@ export interface KatalogArtikel {
    * lack/aufpreis-Artikel tragen weiterhin "kalk".
    */
   quelle?: "template" | "kalk";
+  /**
+   * true: Der VK dieses Artikels wird aus der Artikel-Kalkulation berechnet
+   * (invoice_templates.ist_kalkuliert — EK + Verschnitt/Aufschlag + Bausteine
+   * + Arbeitszeit). Direkt-Edits von EK/VK sind dann gesperrt; geändert wird
+   * über den Kalkulieren-Dialog (Kundenwunsch 2026-08-19).
+   */
+  kalkuliert?: boolean;
 }
 
 export interface KatalogKategorie {
@@ -107,11 +114,12 @@ export function useKalkKatalog(): KalkKatalog {
     );
     let extraSort = Math.max(0, ...kats.map((k) => Number(k.sort) || 0));
     for (const t of ((tplRes.data as any[]) || [])) {
-      // ist_kalkuliert-Artikel haben einen BERECHNETEN VK (Verschnitt/
-      // Aufschlag/Lohn in der Artikelmaske) — ein Direkt-Edit hier würde
-      // beim nächsten Masken-Speichern überschrieben. Sie bleiben in der
-      // Artikelmaske zuhause, wie Sets.
-      if (t.ist_aktiv === false || t.ist_set || t.ist_kalkuliert) continue;
+      // ist_kalkuliert-Artikel sind SICHTBAR (Kundenwunsch 2026-08-19: in der
+      // Produktliste einzelne Positionen kalkulieren) — ihr VK ist aber
+      // BERECHNET, darum sperrt der EinstellungenTab dort die EK/VK-Felder
+      // und bietet stattdessen den Kalkulieren-Dialog an. Nur Sets bleiben
+      // in der Artikelmaske zuhause.
+      if (t.ist_aktiv === false || t.ist_set) continue;
       const gName = String(t.produktgruppe || "Sonstige").trim() || "Sonstige";
       let kat = materialByName.get(norm(gName));
       if (!kat) {
@@ -149,6 +157,7 @@ export function useKalkKatalog(): KalkKatalog {
           : altIdx >= 0 ? kat.artikel[altIdx].sort : (kat.artikel.length + 1) * 10,
         aktiv: true,
         quelle: "template",
+        kalkuliert: !!t.ist_kalkuliert,
       };
       if (altIdx >= 0) kat.artikel[altIdx] = neu;
       else kat.artikel.push(neu);

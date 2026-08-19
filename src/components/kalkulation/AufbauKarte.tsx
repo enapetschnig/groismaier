@@ -38,6 +38,7 @@ interface Props {
   onReplaceRow: (idx: number, row: MaterialRow) => void;
   onAddRow: () => void;
   onRemoveRow: (idx: number) => void;
+  onMoveRow: (from: number, to: number) => void;
   onClone: () => void;
   onRemove: () => void;
   dragProps: DragProps;
@@ -58,7 +59,7 @@ const Feld = ({ label, children }: { label: string; children: React.ReactNode })
 
 export function AufbauKarte({
   module: m, index, ergebnis: erg, faktor, bd, kategorien,
-  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onClone, onRemove, dragProps,
+  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onRemove, dragProps,
 }: Props) {
   const titel = m.name || `Aufbau ${index + 1}`;
   const materialAdj = erg.material.vkTotal * faktor;
@@ -152,7 +153,7 @@ export function AufbauKarte({
               <MaterialTabelle
                 module={m} bd={bd} kategorien={kategorien}
                 onPatchRow={onPatchRow} onReplaceRow={onReplaceRow}
-                onAddRow={onAddRow} onRemoveRow={onRemoveRow}
+                onAddRow={onAddRow} onRemoveRow={onRemoveRow} onMoveRow={onMoveRow}
               />
             </div>
 
