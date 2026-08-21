@@ -71,22 +71,38 @@ describe("Materialzeile", () => {
     expect(r.vkProM2).toBe(0);
   });
 
+  // Christians Rechenweg (Mail 21.08.2026): KVH 60 mm × Wanddicke 240 mm ×
+  // 3,5 lfm/m² × m³-Preis × Aufschlag — "das ist dann schon mit Verschnitt
+  // und eventuellen Querhölzern". 620 €/m³: 0,06 × 0,24 × 3,5 × 620 = 31,25 €/m².
+  it("KVH-Wand rechnet nach Christians Pauschal-Formel inkl. Aufschlag", () => {
+    const wand = { ...modul, insulationThickness: 24 };
+    const r = calcMaterialRow(zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 620, vkPrice: 0 }), wand, bd);
+    expect(r.ekProM2).toBeCloseTo(0.06 * 0.24 * 3.5 * 620, 4);       // 31,25 €/m²
+    expect(r.vkProM2).toBeCloseTo(0.06 * 0.24 * 3.5 * 620 * 1.35, 4); // × Aufschlag 1,35
+    expect(r.vkAbgeleitet).toBe(true);
+  });
+
+  it("KVH-Wand: eingetragener VK (€/m³) gewinnt vor dem Aufschlag", () => {
+    const wand = { ...modul, insulationThickness: 24 };
+    const r = calcMaterialRow(zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 620, vkPrice: 900 }), wand, bd);
+    expect(r.vkProM2).toBeCloseTo(0.06 * 0.24 * 3.5 * 900, 4);
+    expect(r.vkAbgeleitet).toBe(false);
+  });
+
   // Kundenfall (Mail 08/2026): Kategorie "Riegelkonstruktuion" (Tippfehler)
-  // mit Artikel "KVH 60 mm" — früher griff die Riegelgeometrie NUR, wenn der
-  // ARTIKELNAME mit "Riegelkonstruktion" begann; der m³-Preis (20,50 €) floss
-  // sonst 1:1 als €/m² ein und Holzmenge + Materialsumme waren falsch.
-  it("Riegelgeometrie greift über die Kategorie, auch mit Tippfehler", () => {
-    const erwartet = calcRiegelPreisProM2(modul.area, modul.wallHeight, modul.insulationThickness, 20.5, bd);
+  // mit Artikel "KVH 60 mm" — die Erkennung muss über Kategorie UND
+  // Artikelnamen greifen, sonst fließt der m³-Preis 1:1 als €/m² ein.
+  it("Riegel-Formel greift über die Kategorie, auch mit Tippfehler", () => {
+    const erwartet = calcRiegelPreisProM2(modul.insulationThickness, 20.5, bd);
     expect(erwartet).toBeGreaterThan(0);
     for (const kategorie of ["Riegelkonstruktion", "Riegelkonstruktuion", "riegelkonstruktion "]) {
       const r = calcMaterialRow(zeile({ category: kategorie, product: "KVH 60 mm", ekPrice: 20.5, vkPrice: 0 }), modul, bd);
       expect(r.ekProM2).toBeCloseTo(erwartet, 6);
-      expect(r.vkProM2).toBeCloseTo(erwartet, 6); // EK = VK, kein Aufschlag
     }
   });
 
-  it("Riegelgeometrie greift weiterhin über den Artikelnamen", () => {
-    const erwartet = calcRiegelPreisProM2(modul.area, modul.wallHeight, modul.insulationThickness, 62.5, bd);
+  it("Riegel-Formel greift weiterhin über den Artikelnamen", () => {
+    const erwartet = calcRiegelPreisProM2(modul.insulationThickness, 62.5, bd);
     const r = calcMaterialRow(zeile({ category: "Vollholz", product: "Riegelkonstruktion KVH", ekPrice: 62.5, vkPrice: 0 }), modul, bd);
     expect(r.ekProM2).toBeCloseTo(erwartet, 6);
   });

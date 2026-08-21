@@ -9,8 +9,8 @@
 // Hinweis: app_settings-Schreibrechte sind per RLS auf Administratoren
 // beschränkt; der Katalog ist für alle Mitarbeiter editierbar.
 // ============================================================================
-import { useEffect, useState } from "react";
-import { Plus, Save, Trash2, ArrowUp, ArrowDown, Calculator, ChevronDown, ChevronRight } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Plus, Save, Trash2, ArrowUp, ArrowDown, Calculator, ChevronDown, ChevronRight, Copy, GripVertical } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { round4 } from "@/lib/kalkulationEngine";
@@ -38,7 +38,11 @@ const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_fahrt_bus_maut", label: "Bus-Kosten pro km, Maut (€)" },
   { key: "kalk_fahrt_lkw", label: "LKW-Kosten pro km (€)" },
   { key: "kalk_fahrt_lkw_maut", label: "LKW-Kosten pro km, Maut (€)" },
-  { key: "kalk_riegel_abstand", label: "Lattungsabstand Riegelkonstruktion (cm)" },
+  {
+    key: "kalk_riegel_lfm_pro_m2",
+    label: "Riegel: Laufmeter je m² Wand (lfm)",
+    hinweis: "KVH-Preis je m² = lfm × Brettdicke × Wanddicke (Dämmstärke) × m³-Preis × Aufschlag. 3,5 lfm inkl. Verschnitt und Querhölzern.",
+  },
   { key: "kalk_riegel_brett_dicke", label: "Dicke der Riegelbretter (cm)" },
 ];
 
@@ -110,6 +114,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const [lackOffen, setLackOffen] = useState(false);
   /** Artikel, dessen Kalkulieren-Dialog offen ist (Kundenwunsch 2026-08-19). */
   const [kalkArtikel, setKalkArtikel] = useState<KatalogArtikel | null>(null);
+  /** Laufender Zeilen-Drag: Kategorie + Start-Index (nur innerhalb einer Kategorie). */
+  const dragRef = useRef<{ katId: string; idx: number } | null>(null);
 
   // Die DB speichert Zahlen immer mit Punkt; im Feld steht die österreichische
   // Schreibweise mit Komma (sonst liest der Anwender "0.85" als 85 Cent falsch
@@ -245,6 +251,61 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
     if (e1 || e2) {
       fehler((e1 || e2)!.message);
       return;
+    }
+    katalog.reload();
+  };
+
+  /**
+   * Zeile per Drag an eine beliebige Position (Kundenwunsch 21.08.2026) —
+   * statt Nachbar-Tausch wird die ganze Kategorie neu durchnummeriert
+   * (sort = 10, 20, 30 …); geschrieben wird nur, was sich ändert.
+   */
+  const verschiebeArtikelAnPosition = async (kat: KatalogKategorie, von: number, nach: number) => {
+    if (von === nach || von < 0 || nach < 0 || von >= kat.artikel.length || nach >= kat.artikel.length) return;
+    const neu = [...kat.artikel];
+    const [zeile] = neu.splice(von, 1);
+    neu.splice(nach, 0, zeile);
+    const schreibe = (art: KatalogArtikel, sort: number) =>
+      art.quelle === "template"
+        ? (supabase.from("invoice_templates").update({ sort } as never).eq("id", art.id) as any)
+        : artTable().update({ sort }).eq("id", art.id);
+    const updates = neu
+      .map((a, i) => ({ a, sort: (i + 1) * 10 }))
+      .filter(({ a, sort }) => a.sort !== sort)
+      .map(({ a, sort }) => schreibe(a, sort));
+    const ergebnisse = await Promise.all(updates);
+    const fehlgeschlagen = ergebnisse.find((r: { error?: { message: string } }) => r?.error);
+    if (fehlgeschlagen?.error) { fehler(fehlgeschlagen.error.message); return; }
+    katalog.reload();
+  };
+
+  /**
+   * Artikel duplizieren (Kundenwunsch 21.08.2026: "wenn Artikel gleich sind
+   * bis auf die Stärke") — die Kopie übernimmt ALLE Felder inklusive einer
+   * hinterlegten Artikel-Kalkulation und landet direkt unter dem Original.
+   */
+  const kopiereArtikel = async (a: KatalogArtikel) => {
+    if (a.quelle === "template") {
+      const { data, error } = await supabase.from("invoice_templates").select("*").eq("id", a.id).maybeSingle();
+      if (error || !data) { fehler(error?.message || "Artikel nicht gefunden."); return; }
+      const kopie: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+      delete kopie.id; delete kopie.created_at; delete kopie.updated_at;
+      const name = `${a.name} (Kopie)`;
+      kopie.name = name; kopie.kurzbezeichnung = name; kopie.beschreibung = name;
+      kopie.sort = (Number(kopie.sort) || a.sort) + 1;
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user?.id) kopie.user_id = user.id;
+      const { error: insError } = await supabase.from("invoice_templates").insert(kopie as never);
+      if (insError) { fehler(insError.message); return; }
+    } else {
+      const { data, error } = await artTable().select("*").eq("id", a.id).maybeSingle();
+      if (error || !data) { fehler(error?.message || "Artikel nicht gefunden."); return; }
+      const kopie: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+      delete kopie.id; delete kopie.created_at;
+      kopie.name = `${a.name} (Kopie)`;
+      kopie.sort = (Number(kopie.sort) || a.sort) + 1;
+      const { error: insError } = await artTable().insert(kopie);
+      if (insError) { fehler(insError.message); return; }
     }
     katalog.reload();
   };
@@ -503,18 +564,19 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                   <table className="w-full min-w-[420px] text-xs">
                     <thead>
                       <tr className="border-b text-left text-muted-foreground">
-                        <th className="w-14 px-1 py-1" />
+                        <th className="w-20 px-1 py-1" />
                         <th className="px-2 py-1 font-semibold">Bezeichnung</th>
                         {block.typ !== "aufpreis" && <th className="w-28 px-2 py-1 text-right font-semibold">{block.ekLabel}</th>}
                         <th className="w-28 px-2 py-1 text-right font-semibold">{block.vkLabel}</th>
                         <th className="w-24 px-2 py-1 font-semibold">Einheit</th>
                         {block.typ === "material" && <th className="w-9 px-1 py-1" title="Artikel kalkulieren" />}
+                        <th className="w-9 px-1 py-1" title="Artikel kopieren" />
                         <th className="w-9 px-2 py-1" />
                       </tr>
                     </thead>
                     <tbody>
                       {kat.artikel.length === 0 && (
-                        <tr><td colSpan={block.typ === "material" ? 7 : 6} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
+                        <tr><td colSpan={block.typ === "material" ? 8 : 7} className="px-2 py-3 text-center text-muted-foreground">Noch keine Artikel.</td></tr>
                       )}
                       {kat.artikel.map((a, aIdx) => {
                         // Kalkulierte Artikel (Kundenwunsch 2026-08-19): der VK
@@ -527,10 +589,36 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                           ? "Wird aus der Kalkulation berechnet — über den Taschenrechner-Knopf ändern."
                           : undefined;
                         return (
-                        <tr key={a.id} className="border-b last:border-b-0">
-                          <td className="w-14 px-1 py-1">
-                            {/* Reihenfolge verschieben (Kundenwunsch 3.1) */}
-                            <span className="flex">
+                        <tr
+                          key={a.id}
+                          className="border-b last:border-b-0"
+                          onDragOver={(e) => {
+                            if (dragRef.current?.katId !== kat.id) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = "move";
+                          }}
+                          onDrop={(e) => {
+                            if (dragRef.current?.katId !== kat.id) return;
+                            e.preventDefault();
+                            const von = dragRef.current.idx;
+                            dragRef.current = null;
+                            if (von !== aIdx) verschiebeArtikelAnPosition(kat, von, aIdx);
+                          }}
+                        >
+                          <td className="w-20 px-1 py-1">
+                            {/* Reihenfolge: ziehen am Griff (Kundenwunsch 21.08.2026)
+                                oder Pfeile (Touch/Tastatur, Kundenwunsch 3.1) */}
+                            <span className="flex items-center">
+                              <span
+                                draggable
+                                onDragStart={(e) => {
+                                  dragRef.current = { katId: kat.id, idx: aIdx };
+                                  e.dataTransfer.effectAllowed = "move";
+                                }}
+                                onDragEnd={() => { dragRef.current = null; }}
+                                className="flex h-7 w-6 cursor-grab items-center justify-center rounded text-muted-foreground hover:bg-muted active:cursor-grabbing"
+                                title="Zeile mit der Maus an eine andere Position ziehen"
+                              ><GripVertical className="h-3.5 w-3.5" /></span>
                               <button type="button" aria-label="Nach oben" disabled={aIdx === 0}
                                 className="flex h-7 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted disabled:opacity-25"
                                 onClick={() => verschiebeArtikel(kat, aIdx, -1)}>
@@ -590,6 +678,15 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                               )}
                             </td>
                           )}
+                          <td className="px-1 py-1">
+                            <button
+                              type="button"
+                              className="flex h-11 w-11 items-center justify-center rounded text-muted-foreground hover:bg-muted sm:h-7 sm:w-7"
+                              onClick={() => kopiereArtikel(a)}
+                              title="Artikel kopieren (z. B. gleicher Artikel in anderer Stärke)"
+                              aria-label="Artikel kopieren"
+                            ><Copy className="h-3.5 w-3.5" /></button>
+                          </td>
                           <td className="px-2 py-1">
                             <button
                               type="button"

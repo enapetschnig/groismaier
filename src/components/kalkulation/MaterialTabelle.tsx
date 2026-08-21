@@ -125,7 +125,7 @@ function KatalogCombobox({
           <ChevronsUpDown className="h-3 w-3 shrink-0 opacity-50" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-[min(92vw,340px)] p-0">
+      <PopoverContent align="start" className="w-[min(92vw,560px)] p-0">
         <Command shouldFilter={false}>
           <CommandInput
             value={suche}
@@ -163,7 +163,7 @@ function KatalogCombobox({
                   className="min-h-[44px] sm:min-h-[32px]"
                 >
                   <Check className={cn("mr-2 h-4 w-4 shrink-0", normName(o.name) === normName(value) ? "opacity-100" : "opacity-0")} />
-                  <span className="truncate">{o.name}</span>
+                  <span className="min-w-0 break-words">{o.name}</span>
                   {o.hinweis && <span className="ml-1 shrink-0 text-[10px] text-muted-foreground">{o.hinweis}</span>}
                 </CommandItem>
               ))}
@@ -311,7 +311,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     <>
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
-          Riegelgeometrie ({fmt(bd.riegelAbstand)} cm Abstand): {fmtEuro(r.erg.vkProM2)} / m²{num(m.wallHeight) <= 0 ? " (Näherung 3,5 lfm/m² — Wandhöhe eintragen!)" : ""}
+          KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke × m³-Preis → {fmtEuro(r.erg.vkProM2)} / m² (inkl. Aufschlag)
         </div>
       )}
       {r.istDaemm && row.product && (

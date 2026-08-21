@@ -9,10 +9,10 @@
 // (nachkalk.actualDays, materialRows[].actualVK) bleiben unangetastet, damit
 // Altdaten nicht kaputtgehen — ausgewertet wird auf der Seite /nachkalkulation.
 // ============================================================================
-import { AlertTriangle, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
 import {
   KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten,
-  DAEMMSTAERKEN, fmt, fmtEuro, num, wandhoeheWarnung,
+  DAEMMSTAERKEN, fmt, fmtEuro, num,
 } from "@/lib/kalkulationEngine";
 import { KatalogKategorie } from "./useKalkKatalog";
 import { MaterialTabelle } from "./MaterialTabelle";
@@ -66,9 +66,6 @@ export function AufbauKarte({
   const laborAdj = erg.laborTotal * faktor;
   const gesamtAdj = materialAdj + laborAdj;
   const area = num(m.area);
-  // Unplausible Wandhöhen (0,1 m, kleiner als 2× Brettdicke) wurden früher
-  // wortlos durchgerechnet — jetzt steht der Hinweis direkt am Feld.
-  const hoehenWarnung = wandhoeheWarnung(m.wallHeight, bd);
 
   return (
     <div
@@ -127,17 +124,6 @@ export function AufbauKarte({
                 </Feld>
                 <Feld label="Fläche in qm">
                   <NumInput min={0} value={m.area} onCommit={(n) => onPatch({ area: n ?? 0 })} className={FELD_H} />
-                </Feld>
-                <Feld label="Wandhöhe in m (Riegel)">
-                  <NumInput min={0} value={m.wallHeight} onCommit={(n) => onPatch({ wallHeight: n ?? 0 })}
-                    className={`${FELD_H} ${hoehenWarnung ? "border-amber-500 bg-amber-50" : ""}`}
-                    title="Für die Riegelkonstruktions-Geometrie (Excel-Formel). Leer = Näherung 3,5 lfm/m²." />
-                  {hoehenWarnung && (
-                    <span className="mt-0.5 flex items-start gap-1 text-[10px] font-semibold leading-snug text-amber-700">
-                      <AlertTriangle className="mt-px h-3 w-3 shrink-0" />
-                      <span>{hoehenWarnung}</span>
-                    </span>
-                  )}
                 </Feld>
                 <Feld label="Dämmstärke in cm">
                   <select className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`} value={String(m.insulationThickness)}

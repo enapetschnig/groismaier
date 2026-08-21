@@ -10,9 +10,10 @@
 //   - Globaler Faktor ADDITIV: 1 + Aufschlag% − Skonto%   (Excel S6;
 //     das HTML rechnete multiplikativ (1+a)×(1−s))
 //   - 9-h-Tag, VK-Faktor 1,35, Fahrtkosten-Staffel min(km, 55)
-//   - Riegelkonstruktion: EK-Basis (€/m³) wie Excel-Module 2–20; der
-//     VK-Sonderfall in Excel-Modul 1 ist ein Excel-Bug (Risiko R1) und wird
-//     NICHT übernommen. EK = VK (kein 1,35-Aufschlag, Risiko R2 — gewollt).
+//   - Riegelkonstruktion: seit 21.08.2026 Christians Pauschal-Formel
+//     (3,5 lfm/m² × Brettdicke × Wanddicke × m³-Preis, VK über den
+//     Aufschlag) — die Excel-Ständergeometrie ist abgelöst, siehe
+//     calcRiegelPreisProM2().
 //
 // Gefixte HTML-Bugs (Excel-Semantik):
 //   1. Doppel-Flächen-Bug: "berechnet"-Zeilen (Holzvolumen) sind ABSOLUTE
@@ -158,7 +159,7 @@ export interface Betriebsdaten {
   lkwKm: number;
   lkwKmMaut: number;
   kranSatz: number;          // € / h
-  riegelAbstand: number;     // Lattungsabstand Riegelkonstruktion in cm
+  riegelLfmProM2: number;    // Riegel-Laufmeter je m² Wand (inkl. Verschnitt/Querhölzer)
   riegelBrettDicke: number;  // Dicke der Riegelbretter in cm
   /**
    * Deckungsbeitrags-Rechnung: echte Lohn-SELBSTKOSTEN je Stunde inkl.
@@ -181,7 +182,7 @@ export const DEFAULT_BETRIEBSDATEN: Betriebsdaten = {
   lkwKm: 1.2,
   lkwKmMaut: 1.85,
   kranSatz: 180,
-  riegelAbstand: 62.5,
+  riegelLfmProM2: 3.5,
   riegelBrettDicke: 6,
   selbstkostenLohn: 38,
   warnMargeProzent: 35,
@@ -216,7 +217,7 @@ const SETTINGS_KEY_MAP: Record<string, keyof Betriebsdaten> = {
   kalk_fahrt_lkw: "lkwKm",
   kalk_fahrt_lkw_maut: "lkwKmMaut",
   kalk_kran_stundensatz: "kranSatz",
-  kalk_riegel_abstand: "riegelAbstand",
+  kalk_riegel_lfm_pro_m2: "riegelLfmProM2",
   kalk_riegel_brett_dicke: "riegelBrettDicke",
   kalk_selbstkosten_lohn: "selbstkostenLohn",
   kalk_warn_marge_prozent: "warnMargeProzent",
@@ -242,7 +243,7 @@ const BUSINESS_DATA_KEYS: Record<keyof Betriebsdaten, string> = {
   lkwKm: "LKW-Kosten pro km",
   lkwKmMaut: "LKW-Kosten pro km (Maut)",
   kranSatz: "Krankosten pro Stunde",
-  riegelAbstand: "Lattungsabstand Riegelkonstruktion",
+  riegelLfmProM2: "Riegel-Laufmeter je m²",
   riegelBrettDicke: "Dicke der Riegelbretter",
   selbstkostenLohn: "Selbstkosten Lohn",
   warnMargeProzent: "Warnschwelle Marge",
@@ -352,61 +353,27 @@ export function calcArbeitsstunden(workers: number, days: number, bd: Betriebsda
 }
 
 /**
- * Riegelkonstruktion → €/m² Wandfläche (Excel getBaseWallConstructionPrice,
- * EK-Basis wie Module 2–20; EK = VK, kein 1,35-Aufschlag):
+ * Riegelkonstruktion → €/m² Wandfläche. Christians Rechenweg (Mail 21.08.2026):
  *
- *   länge         = qm / wandhöhe
- *   ständerAnzahl = AUFRUNDEN(länge / (abstand/100)) + 1      (Ständer alle 62,5 cm)
- *   ständerLänge  = wandhöhe − 2 × brettDicke                 (Bretter 6 cm)
- *   gesamtLänge   = ständerAnzahl × ständerLänge + 2 × länge  (oben + unten)
- *   volumen       = gesamtLänge × dämmDicke × brettDicke      (m³)
- *   €/m²          = volumen × preisProM3 / qm
+ *   KVH 60 mm (Brettdicke) × Wanddicke (= Dämmstärke, z. B. 240 mm)
+ *   × 3,5 lfm je m² Wand × m³-Preis  —  „das ist dann schon mit Verschnitt
+ *   und eventuellen Querhölzern"
  *
- * Fallback ohne Wandhöhe (Alt-Daten, Feld war im HTML tot): HTML-Näherung
- * 3,5 lfm Riegel je m² → 3,5 × brettDicke × dämmDicke × preisProM3.
+ * Die frühere Excel-Ständergeometrie (Lattungsabstand 62,5 cm + Wandhöhe)
+ * ergab rund ein Drittel weniger Holz, weil Verschnitt und Querhölzer
+ * fehlten — die Wand wird IMMER pauschal mit 3,5 lfm/m² gerechnet
+ * (Betriebsdatum riegelLfmProM2). Der Aufschlag (VK-Faktor) kommt wie bei
+ * jedem Material über die VK-Ableitung in calcMaterialRow dazu; das frühere
+ * EK = VK ist damit ebenfalls abgelöst.
  */
 export function calcRiegelPreisProM2(
-  qm: number, wandhoehe: number, daemmstaerkeCm: number, preisProM3: number, bd: Betriebsdaten,
+  daemmstaerkeCm: number, preisProM3: number, bd: Betriebsdaten,
 ): number {
-  const area = num(qm); const h = num(wandhoehe);
   const daemm = num(daemmstaerkeCm) / 100;
   const brett = bd.riegelBrettDicke / 100;
   const preis = num(preisProM3);
-  if (area <= 0 || daemm <= 0 || preis <= 0) return 0;
-  if (h <= 0) {
-    // HTML-Näherung (kein Excel-Widerspruch: Excel verlangt die Wandhöhe)
-    return 3.5 * brett * daemm * preis;
-  }
-  const abstand = bd.riegelAbstand / 100;
-  const laenge = area / h;
-  const staenderAnzahl = Math.ceil(laenge / abstand) + 1;
-  // Bei unplausibel niedriger Wandhöhe (h < 2 × Brettdicke) wäre die
-  // Ständerlänge negativ und die Zeile käme mit einem NEGATIVEN Betrag in die
-  // Summe. Auf 0 klemmen; die Oberfläche warnt zusätzlich am Feld
-  // (siehe wandhoeheWarnung()).
-  const staenderLaenge = Math.max(0, h - 2 * brett);
-  const gesamtLaenge = staenderAnzahl * staenderLaenge + 2 * laenge;
-  const volumen = gesamtLaenge * daemm * brett;
-  return (volumen * preis) / area;
-}
-
-/**
- * Plausibilitätsprüfung der Wandhöhe für die Riegelkonstruktion.
- * Liefert einen Klartext-Hinweis oder null (alles in Ordnung).
- * Ohne Wandhöhe (0) greift die dokumentierte Näherung — das ist keine Warnung,
- * sondern wird an der Materialzeile eigens angezeigt.
- */
-export function wandhoeheWarnung(wandhoehe: number, bd: Betriebsdaten): string | null {
-  const h = num(wandhoehe);
-  if (h <= 0) return null; // 0 = dokumentierte Näherung, wird an der Zeile angezeigt
-  const mindest = (2 * bd.riegelBrettDicke) / 100;
-  if (h < mindest) {
-    return `Wandhöhe ${fmt(h)} m ist kleiner als 2 × Brettdicke (${fmt(mindest)} m) — ` +
-      "die Riegelkonstruktion ergibt so keinen sinnvollen Wert. Bitte prüfen.";
-  }
-  if (h < 1.5) return `Wandhöhe ${fmt(h)} m ist ungewöhnlich niedrig — bitte prüfen (Angabe in Metern).`;
-  if (h > 12) return `Wandhöhe ${fmt(h)} m ist ungewöhnlich hoch — bitte prüfen (Angabe in Metern).`;
-  return null;
+  if (daemm <= 0 || preis <= 0) return 0;
+  return bd.riegelLfmProM2 * brett * daemm * preis;
 }
 
 // ----------------------------------------------------------------------------
@@ -485,8 +452,15 @@ export function calcMaterialRow(
   }
   if (!row.category || !row.product) return leer;
   if (istRiegelZeile(row)) {
-    const preis = calcRiegelPreisProM2(m.area, m.wallHeight, m.insulationThickness, row.ekPrice, bd);
-    return { ...leer, ekProM2: preis, vkProM2: preis };
+    // ekPrice/vkPrice der Zeile sind m³-Preise; der Aufschlag wirkt wie bei
+    // jedem Material über die VK-Ableitung („× m³ Preis × Aufschlag").
+    const { vk: vkM3, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
+    return {
+      ...leer,
+      ekProM2: calcRiegelPreisProM2(m.insulationThickness, row.ekPrice, bd),
+      vkProM2: calcRiegelPreisProM2(m.insulationThickness, vkM3, bd),
+      vkAbgeleitet: abgeleitet,
+    };
   }
   if (istDaemmstoffZeile(row)) {
     const dicke = num(m.insulationThickness) / 100;
@@ -1194,7 +1168,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
 // Factories & Konverter für Alt-Daten
 // ----------------------------------------------------------------------------
 
-export const DAEMMSTAERKEN = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28];
+export const DAEMMSTAERKEN = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50];
 export const AUFSCHLAG_OPTIONEN = [2, 3, 4, 5];
 export const SKONTO_OPTIONEN = [2, 3];
 export const MAX_MODULE = 20;
