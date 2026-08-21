@@ -361,13 +361,21 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       t.vk_netto = vk; t.netto_preis = vk; t.einzelpreis = vk;
     }
     if ("einheit" in patch) t.einheit = patch.einheit;
+    if ("vkManuell" in patch) t.vk_preis_manuell = patch.vkManuell;
+    return t;
+  };
+
+  /** kalk-Patch für den Spezial-Katalog: vkManuell → Spaltenname übersetzen. */
+  const kalkPatch = (patch: Record<string, unknown>): Record<string, unknown> => {
+    const t = { ...patch };
+    if ("vkManuell" in t) { t.vk_preis_manuell = t.vkManuell; delete t.vkManuell; }
     return t;
   };
 
   const updateArtikel = async (id: string, patch: Record<string, unknown>, quelle?: "template" | "kalk") => {
     const { error } = quelle === "template"
       ? await supabase.from("invoice_templates").update(templatePatch(patch) as any).eq("id", id)
-      : await artTable().update(patch).eq("id", id);
+      : await artTable().update(kalkPatch(patch)).eq("id", id);
     if (error) { fehler(error.message); return; }
     katalog.reload();
   };
@@ -403,62 +411,97 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   };
 
   /**
-   * Aktuellen VK frisch aus der DB lesen. Der Snapshot `a` stammt vom letzten
-   * reload() und kann beim Blur-Wechsel VK-Feld → EK-Feld veraltet sein — die
-   * VK-Ableitung entschied dann auf altem Stand und überschrieb einen gerade
-   * eingetippten VK stillschweigend mit EK × Faktor (Kundenmeldung 08/2026:
-   * "Zahl gelöscht und neu eingegeben — die Verbindung war gelöst").
+   * Aktuellen Stand (EK, VK, Manuell-Flag) frisch aus der DB lesen. Der
+   * Snapshot `a` stammt vom letzten reload() und kann beim Blur-Wechsel
+   * zwischen den Feldern veraltet sein — die VK-Ableitung entschied dann auf
+   * altem Stand (Kundenmeldung 08/2026: "Zahl gelöscht und neu eingegeben —
+   * die Verbindung war gelöst"). "unbekannt" (Netz-/RLS-Fehler) leitet
+   * sicherheitshalber NICHT ab.
    */
-  const leseAktuellenVk = async (a: KatalogArtikel): Promise<number | null | "unbekannt"> => {
+  const leseStand = async (
+    a: KatalogArtikel,
+  ): Promise<{ ek: number | null; vk: number | null; manuell: boolean } | "unbekannt"> => {
     if (a.quelle === "template") {
       const { data, error } = (await supabase
         .from("invoice_templates")
-        .select("vk_netto, netto_preis, einzelpreis")
+        .select("ek_netto, vk_netto, netto_preis, einzelpreis, vk_preis_manuell")
         .eq("id", a.id)
         .maybeSingle()) as { data: Record<string, unknown> | null; error: unknown };
-      // Lesefehler (Netz/RLS) heißt NICHT "kein VK" — sonst würde ein
-      // gepflegter VK bei einem WLAN-Aussetzer mit EK × Faktor überschrieben.
       if (error || !data) return "unbekannt";
-      const vk = data.vk_netto ?? data.netto_preis ?? data.einzelpreis;
-      if (vk === null || vk === undefined) return null;
+      const ek = data.ek_netto === null || data.ek_netto === undefined ? null : Number(data.ek_netto);
+      const vkRoh = data.vk_netto ?? data.netto_preis ?? data.einzelpreis;
       // netto_preis/einzelpreis haben DB-Default 0: Ist vk_netto leer und die
-      // Spiegel stehen auf 0, wurde nie ein VK gepflegt (frischer Artikel) —
-      // dann darf abgeleitet werden. Ein BEWUSST gesetzter VK 0 schreibt
-      // alle drei Spalten und behält vk_netto = 0.
-      if (Number(vk) === 0 && (data.vk_netto === null || data.vk_netto === undefined)) return null;
-      return Number(vk);
+      // Spiegel stehen auf 0, wurde nie ein VK gepflegt (frischer Artikel).
+      const vk = vkRoh === null || vkRoh === undefined
+        || (Number(vkRoh) === 0 && (data.vk_netto === null || data.vk_netto === undefined))
+        ? null
+        : Number(vkRoh);
+      return { ek, vk, manuell: !!data.vk_preis_manuell };
     }
-    const { data, error } = await artTable().select("vk").eq("id", a.id).maybeSingle();
-    if (error) return "unbekannt";
-    const vk = (data as Record<string, unknown> | null)?.vk;
-    return vk === null || vk === undefined ? null : Number(vk);
+    const { data, error } = await artTable().select("ek, vk, vk_preis_manuell").eq("id", a.id).maybeSingle();
+    if (error || !data) return "unbekannt";
+    const d = data as Record<string, unknown>;
+    return {
+      ek: d.ek === null || d.ek === undefined ? null : Number(d.ek),
+      vk: d.vk === null || d.vk === undefined ? null : Number(d.vk),
+      manuell: !!d.vk_preis_manuell,
+    };
   };
 
-  /** EK committen; VK automatisch ableiten, wenn er noch leer ist — mit Meldung. */
+  /**
+   * EK committen; VK mitrechnen, solange er an der Formel hängt.
+   *
+   * Kundenmeldung 21.08.2026: "die Formeln dahinter rechnen nur beim ersten
+   * Anlegen" — früher wurde der VK NUR abgeleitet, wenn er komplett leer war;
+   * jede spätere EK-Änderung ließ den alten VK stehen. Jetzt entscheidet das
+   * Manuell-Flag: Nur ein von Hand eingetippter VK (vk_preis_manuell) bleibt
+   * unangetastet, alles andere rechnet bei jeder EK-Änderung mit — und die
+   * Ableitung wird gemeldet statt still zu passieren.
+   */
   const commitEk = async (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
     const ek = preisEingabe(text, typ);
     if (ek === undefined) return;
     const patch: Record<string, unknown> = { ek };
-    // Nur bei WIRKLICH leerem VK (null, frisch gelesen) ableiten. Ein VK von
-    // 0 bleibt stehen (kann Absicht sein), "unbekannt" (Lesefehler) leitet
-    // sicherheitshalber NICHT ab, und die Ableitung wird gemeldet statt
-    // still zu passieren.
-    if (ek !== null && (await leseAktuellenVk(a)) === null) {
-      const faktor = typ === "lack" ? lackFaktor : vkFaktor;
-      const vk = round4(ek * faktor);
-      patch.vk = vk;
-      toast({
-        title: "VK automatisch abgeleitet",
-        description: `${a.name}: VK ${formatForInput(vk)} € = EK × ${formatForInput(faktor)} (Feld leer gelassen).`,
-      });
+    if (ek !== null) {
+      const stand = await leseStand(a);
+      if (stand !== "unbekannt" && (!stand.manuell || stand.vk === null)) {
+        const faktor = typ === "lack" ? lackFaktor : vkFaktor;
+        const vk = round4(ek * faktor);
+        patch.vk = vk;
+        patch.vkManuell = false;
+        toast({
+          title: "VK mitgerechnet",
+          description: `${a.name}: VK ${formatForInput(vk)} € = EK × ${formatForInput(faktor)}.`,
+        });
+      }
     }
     updateArtikel(a.id, patch, a.quelle);
   };
 
-  const commitVk = (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
+  const commitVk = async (a: KatalogArtikel, typ: KatalogKategorie["typ"], text: string) => {
     const vk = preisEingabe(text, typ);
     if (vk === undefined) return;
-    updateArtikel(a.id, { vk }, a.quelle);
+    if (vk !== null) {
+      // Eingetippter VK ist eine bewusste Entscheidung — Formel gelöst.
+      updateArtikel(a.id, { vk, vkManuell: true }, a.quelle);
+      return;
+    }
+    // Feld geleert = "Formel wieder aktivieren" (Kundenmeldung 21.08.2026:
+    // "Preis lösche und neu eingebe" soll wieder rechnen): sofort frisch aus
+    // dem EK ableiten statt ein leeres Feld zu hinterlassen.
+    const stand = await leseStand(a);
+    const ek = stand === "unbekannt" ? null : stand.ek;
+    if (ek !== null && ek > 0) {
+      const faktor = typ === "lack" ? lackFaktor : vkFaktor;
+      const neu = round4(ek * faktor);
+      toast({
+        title: "Formel wieder aktiv",
+        description: `${a.name}: VK ${formatForInput(neu)} € = EK × ${formatForInput(faktor)} — rechnet ab jetzt bei EK-Änderungen mit.`,
+      });
+      updateArtikel(a.id, { vk: neu, vkManuell: false }, a.quelle);
+    } else {
+      updateArtikel(a.id, { vk: null, vkManuell: false }, a.quelle);
+    }
   };
 
   return (

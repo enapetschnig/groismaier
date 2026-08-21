@@ -224,6 +224,8 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     // (deckt "???"-Artikel ohne Preis und den editierbaren Riegel-m³-Preis ab).
     onPatchRow(idx, {
       product: artikelName, ekPrice: num(art?.ek), vkPrice: num(art?.vk),
+      // Vergleichswerte für den Stammdaten-Abgleich (kalkKatalogSync).
+      katalogEk: num(art?.ek), katalogVk: num(art?.vk),
       // Einheit mitnehmen: Nur damit kann die Kalkulation merken, dass ein
       // nach m³ bepreister Artikel als €/m² Aufbauflaeche eingesetzt wird.
       einheit: art?.einheit || "",

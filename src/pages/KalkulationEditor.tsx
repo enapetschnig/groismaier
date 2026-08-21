@@ -54,6 +54,7 @@ import {
   AUFSCHLAG_OPTIONEN, SKONTO_OPTIONEN, MAX_MODULE,
   fmt, fmtEuro, round2, num,
 } from "@/lib/kalkulationEngine";
+import { syncePreiseMitKatalog } from "@/lib/kalkKatalogSync";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getDocConfig } from "@/lib/documentTypes";
 import {
@@ -289,6 +290,29 @@ export default function KalkulationEditor() {
   }, [id]);
 
   useEffect(() => { void ladeBestehendesAngebot(); }, [ladeBestehendesAngebot]);
+
+  // -------------------------------------- Stammdaten-Preise nachführen
+  /**
+   * Kundenmeldung 21.08.2026: "wenn ich den Preis in den Stammdaten ändere
+   * passt es wieder nicht". Zeilen kopieren den Katalogpreis beim Auswählen —
+   * dieser Abgleich zieht sie beim Laden UND nach jeder Stammdaten-Änderung
+   * (katalog.reload über den Einstellungen-Tab) nach. Bewusst editierte
+   * Zeilenpreise (≠ Vergleichswert) bleiben stehen; Details im Helfer.
+   * Stabil: Nach der Übernahme findet der zweite Lauf nichts mehr.
+   */
+  useEffect(() => {
+    if (!loaded || katalog.loading) return;
+    const r = syncePreiseMitKatalog(state.modules, katalog.materialKategorien);
+    if (r.modules === state.modules) return;
+    setState((prev) => ({ ...prev, modules: r.modules }));
+    if (r.preisZeilen > 0) {
+      setDirty(true);
+      toast({
+        title: "Preise aus den Stammdaten übernommen",
+        description: `${r.preisZeilen} Materialzeile${r.preisZeilen === 1 ? " wurde" : "n wurden"} an die aktuellen Katalogpreise angepasst.`,
+      });
+    }
+  }, [loaded, katalog.loading, katalog.materialKategorien, state.modules, toast]);
 
   // ---------------------------------------------------------- Berechnungen
   const bd = useMemo(

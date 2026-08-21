@@ -475,7 +475,10 @@ export default function InvoiceTemplates() {
       vk_netto: vkOderNull,
       bezugseinheit: form.ist_set ? (form.bezugseinheit || null) : null,
       aufschlag_prozent: (form.ist_set || form.ist_kalkuliert) ? Number(form.aufschlag_prozent) || 0 : 0,
-      vk_preis_manuell: form.ist_set ? form.vk_preis_manuell : false,
+      // Flag NICHT hart zurücksetzen: Der Kalkulations-Katalog nutzt es seit
+      // 21.08.2026 für alle Artikel („VK von Hand gesetzt → Formel gelöst");
+      // ein Speichern hier (z. B. Foto anhängen) darf das nicht löschen.
+      vk_preis_manuell: form.ist_kalkuliert ? false : form.vk_preis_manuell,
       ist_kalkuliert: form.ist_kalkuliert,
       verschnitt_prozent: form.ist_kalkuliert ? Number(form.verschnitt_prozent) || 0 : 0,
       befestigung_preis: form.ist_kalkuliert ? Number(form.befestigung_preis) || 0 : 0,

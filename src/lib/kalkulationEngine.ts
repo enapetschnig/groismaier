@@ -49,6 +49,15 @@ export interface MaterialRow {
    * €/m² Aufbaufläche einfließen; bei 668,25 €/m³ ist das Faktor-Unsinn.
    */
   einheit?: string;
+  /**
+   * Katalogpreis zum Zeitpunkt der Übernahme (Vergleichswert für den
+   * Stammdaten-Abgleich, siehe src/lib/kalkKatalogSync.ts). Stimmt der
+   * Zeilenpreis mit ihm überein, folgt die Zeile künftigen Stammdaten-
+   * Änderungen; weicht er ab, hat der Anwender ihn bewusst editiert.
+   * null/undefined = Alt-Zeile vor 21.08.2026.
+   */
+  katalogEk?: number | null;
+  katalogVk?: number | null;
 }
 
 /** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten, auch als Preiseinheit "€ / m³"). */
@@ -1274,6 +1283,8 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
             // Ohne die Einheit verlor die Zeile nach Speichern/Neuladen den
             // "nach m³ bepreist"-Warnhinweis (einheitUnpassend).
             einheit: typeof r?.einheit === "string" ? r.einheit : "",
+            katalogEk: numOrNull(r?.katalogEk),
+            katalogVk: numOrNull(r?.katalogVk),
           }))
         : base.materialRows;
       return {

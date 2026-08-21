@@ -32,6 +32,12 @@ export interface KatalogArtikel {
    */
   quelle?: "template" | "kalk";
   /**
+   * true: Der VK wurde bewusst von Hand gesetzt — die automatische Ableitung
+   * (EK × Faktor) lässt ihn in Ruhe. false/undefined: VK hängt an der Formel
+   * und rechnet bei jeder EK-Änderung mit (Kundenmeldung 21.08.2026).
+   */
+  vkManuell?: boolean;
+  /**
    * true: Der VK dieses Artikels wird aus der Artikel-Kalkulation berechnet
    * (invoice_templates.ist_kalkuliert — EK + Verschnitt/Aufschlag + Bausteine
    * + Arbeitszeit). Direkt-Edits von EK/VK sind dann gesperrt; geändert wird
@@ -81,10 +87,10 @@ export function useKalkKatalog(): KalkKatalog {
     // unverändert im Spezial-Katalog (Oberflächenbeschichtung).
     const [katRes, artRes, tplRes, setRes] = await Promise.all([
       katTable().select("id, name, typ, einheit, sort, aktiv").order("sort"),
-      artTable().select("id, kategorie_id, name, ek, vk, einheit, sort, aktiv").order("sort"),
+      artTable().select("id, kategorie_id, name, ek, vk, einheit, sort, aktiv, vk_preis_manuell").order("sort"),
       supabase
         .from("invoice_templates")
-        .select("id, name, kurzbezeichnung, produktgruppe, einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv, ist_set, ist_kalkuliert, sort")
+        .select("id, name, kurzbezeichnung, produktgruppe, einheit, ek_netto, vk_netto, netto_preis, einzelpreis, ist_aktiv, ist_set, ist_kalkuliert, sort, vk_preis_manuell")
         .order("produktgruppe")
         .order("kurzbezeichnung"),
       supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
@@ -102,6 +108,7 @@ export function useKalkKatalog(): KalkKatalog {
           ek: a.ek === null ? null : Number(a.ek),
           vk: a.vk === null ? null : Number(a.vk),
           quelle: "kalk",
+          vkManuell: !!a.vk_preis_manuell,
         });
       }
     }
@@ -158,6 +165,7 @@ export function useKalkKatalog(): KalkKatalog {
         aktiv: true,
         quelle: "template",
         kalkuliert: !!t.ist_kalkuliert,
+        vkManuell: !!t.vk_preis_manuell,
       };
       if (altIdx >= 0) kat.artikel[altIdx] = neu;
       else kat.artikel.push(neu);
