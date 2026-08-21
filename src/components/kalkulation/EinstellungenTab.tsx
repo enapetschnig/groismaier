@@ -292,6 +292,10 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       delete kopie.id; delete kopie.created_at; delete kopie.updated_at;
       const name = `${a.name} (Kopie)`;
       kopie.name = name; kopie.kurzbezeichnung = name; kopie.beschreibung = name;
+      // Artikel-/Produktnummer NICHT mitkopieren — die Artikelliste zeigt und
+      // durchsucht sie; zwei Artikel mit derselben Nummer sähen wie ein
+      // Duplikat aus. Die Kopie bekommt ihre Nummer beim Anpassen.
+      kopie.artikelnummer = null; kopie.produktnummer = null;
       kopie.sort = (Number(kopie.sort) || a.sort) + 1;
       const { data: { user } } = await supabase.auth.getUser();
       if (user?.id) kopie.user_id = user.id;
