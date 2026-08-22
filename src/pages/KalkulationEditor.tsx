@@ -143,7 +143,8 @@ export default function KalkulationEditor() {
   const [aufbauVorlagenOpen, setAufbauVorlagenOpen] = useState(false);
   const [aufbauVorlagen, setAufbauVorlagen] = useState<{ id: string; name: string; daten: unknown }[]>([]);
   const [aufbauVorlageName, setAufbauVorlageName] = useState("");
-  const [aufbauVorlageQuelle, setAufbauVorlageQuelle] = useState<string>("");
+  /** Aufbau, für den der „Als Vorlage speichern"-Dialog offen ist (Karte). */
+  const [aufbauVorlageModulId, setAufbauVorlageModulId] = useState<number | null>(null);
 
   const ladeAufbauVorlagen = async () => {
     const { data } = await (supabase.from("aufbau_vorlagen" as never) as any)
@@ -152,21 +153,34 @@ export default function KalkulationEditor() {
   };
 
   const oeffneAufbauVorlagen = () => {
-    setAufbauVorlageName("");
-    setAufbauVorlageQuelle(state.modules.length > 0 ? String(state.modules[0].id) : "");
     setAufbauVorlagenOpen(true);
     void ladeAufbauVorlagen();
   };
 
+  /** Karten-Knopf „Als Vorlage": Dialog mit vorbefülltem Namen öffnen. */
+  const oeffneAufbauVorlageSpeichern = (modulId: number) => {
+    const m = state.modules.find((x) => x.id === modulId);
+    if (!m) return;
+    const index = state.modules.findIndex((x) => x.id === modulId);
+    setAufbauVorlageName((m.name || "").trim() || `Aufbau ${index + 1}`);
+    setAufbauVorlageModulId(modulId);
+  };
+
   const speichereAufbauVorlage = async () => {
-    const quelle = state.modules.find((x) => String(x.id) === aufbauVorlageQuelle);
+    const quelle = state.modules.find((x) => x.id === aufbauVorlageModulId);
     const name = aufbauVorlageName.trim() || quelle?.name?.trim();
     if (!quelle || !name) {
-      toast({ variant: "destructive", title: "Angaben fehlen", description: "Bitte Aufbau wählen und einen Namen vergeben." });
+      toast({ variant: "destructive", title: "Angaben fehlen", description: "Bitte einen Namen für die Vorlage vergeben." });
       return;
     }
-    // Tiefe Kopie ohne die laufende id — die vergibt das Einfügen neu.
-    const daten = JSON.parse(JSON.stringify({ ...quelle, id: 0 }));
+    // Tiefe Kopie ohne Projekt-Reste: laufende id vergibt das Einfügen neu,
+    // Nachkalkulations-Istwerte gehören zum Projekt, nicht zur Vorlage.
+    const daten = JSON.parse(JSON.stringify({
+      ...quelle,
+      id: 0,
+      nachkalk: { actualDays: null },
+      materialRows: quelle.materialRows.map((r) => ({ ...r, actualVK: null })),
+    }));
     const { data: { user } } = await supabase.auth.getUser();
     const { error } = await (supabase.from("aufbau_vorlagen" as never) as any)
       .insert({ name, daten, created_by: user?.id || null });
@@ -174,7 +188,8 @@ export default function KalkulationEditor() {
       toast({ variant: "destructive", title: "Fehler", description: error.message });
       return;
     }
-    toast({ title: "Aufbau-Vorlage gespeichert", description: `„${name}“ steht jetzt in jeder Kalkulation zum Einfügen bereit.` });
+    toast({ title: "Aufbau-Vorlage gespeichert", description: `„${name}“ steht jetzt in jeder Kalkulation über »Aufbau-Vorlagen« zum Einfügen bereit.` });
+    setAufbauVorlageModulId(null);
     setAufbauVorlageName("");
     void ladeAufbauVorlagen();
   };
@@ -189,10 +204,21 @@ export default function KalkulationEditor() {
       // bekommen so fehlende Felder mit Vorgabewerten aufgefüllt.
       const basis = newModule(nextId(s.modules));
       const roh = (vorlage.daten || {}) as Record<string, unknown>;
-      s.modules.push({ ...basis, ...JSON.parse(JSON.stringify(roh)), id: basis.id });
+      s.modules.push({
+        ...basis,
+        ...JSON.parse(JSON.stringify(roh)),
+        id: basis.id,
+        // Projekt-spezifisches gehört nicht zur Vorlage: Die Fläche kommt vom
+        // NEUEN Projekt (eine übernommene Alt-Fläche rechnete sonst unbemerkt
+        // mit), Nachkalkulations-Istwerte sowieso.
+        area: 0,
+        nachkalk: { actualDays: null },
+        collapsed: false,
+      });
+      for (const r of s.modules[s.modules.length - 1].materialRows) r.actualVK = null;
     });
     setAufbauVorlagenOpen(false);
-    toast({ title: "Aufbau eingefügt", description: `„${vorlage.name}“ — unten anpassbar wie jeder andere Aufbau.` });
+    toast({ title: "Aufbau eingefügt", description: `„${vorlage.name}“ — bitte die Fläche in m² eintragen, der Rest ist übernommen.` });
   };
 
   const loescheAufbauVorlage = async (id: string, name: string) => {
@@ -948,6 +974,7 @@ export default function KalkulationEditor() {
                 onRemoveRow={(idx) => removeRow(z.module.id, idx)}
                 onMoveRow={(from, to) => moveRow(z.module.id, from, to)}
                 onClone={() => cloneModule(z.module.id)}
+                onSaveVorlage={() => oeffneAufbauVorlageSpeichern(z.module.id)}
                 onRemove={() => removeModule(z.module.id)}
                 dragProps={{
                   draggable: true,
@@ -967,10 +994,11 @@ export default function KalkulationEditor() {
               <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
                 icon={Plus} label="Aufbau hinzufügen" iconClassName="text-kb-green"
                 onClick={addModule} disabled={state.modules.length >= MAX_MODULE} />
-              {/* Vorgespeicherte Aufbauten einfügen (Kundenwunsch) */}
+              {/* Vorgespeicherte Aufbauten einfügen (Kundenwunsch); gespeichert
+                  wird direkt an der Aufbau-Karte („Als Vorlage"). */}
               <KBButton className="h-11 w-full justify-center sm:h-9 sm:w-auto sm:justify-start"
                 icon={LayoutTemplate} label="Aufbau-Vorlagen"
-                title="Gespeicherte Aufbauten einfügen oder den aktuellen Aufbau als Vorlage speichern"
+                title="Gespeicherte Aufbauten (z. B. »AW 1«) in diese Kalkulation einfügen"
                 onClick={oeffneAufbauVorlagen} />
             </div>
           </div>
@@ -1110,23 +1138,33 @@ export default function KalkulationEditor() {
           <DialogHeader>
             <DialogTitle>Aufbau-Vorlagen</DialogTitle>
             <DialogDescription>
-              Gespeicherte Aufbauten in diese Kalkulation einfügen — oder einen
-              Aufbau dieser Kalkulation als Vorlage ablegen.
+              Gespeicherte Aufbauten in diese Kalkulation einfügen. Die Fläche
+              wird beim Einfügen geleert, Preise gleichen sich automatisch mit
+              den Stammdaten ab.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div>
-              <p className="mb-1.5 text-sm font-semibold">Vorlage einfügen</p>
-              {aufbauVorlagen.length === 0 ? (
-                <p className="rounded border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
-                  Noch keine Aufbau-Vorlagen gespeichert — unten den ersten Aufbau ablegen.
-                </p>
-              ) : (
-                <div className="max-h-56 divide-y overflow-y-auto rounded border">
-                  {aufbauVorlagen.map((v) => (
+          <div className="space-y-3">
+            {aufbauVorlagen.length === 0 ? (
+              <p className="rounded border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+                Noch keine Aufbau-Vorlagen gespeichert. Speichern geht direkt am
+                Aufbau: Knopf <b>„Als Vorlage“</b> unten auf jeder Aufbau-Karte.
+              </p>
+            ) : (
+              <div className="max-h-72 divide-y overflow-y-auto rounded border">
+                {aufbauVorlagen.map((v) => {
+                  const d = (v.daten || {}) as Record<string, unknown>;
+                  const zeilen = Array.isArray(d.materialRows)
+                    ? (d.materialRows as unknown[]).filter((r) => (r as Record<string, unknown>)?.product || (r as Record<string, unknown>)?.category).length
+                    : 0;
+                  const meta = [d.aufbauKategorie, zeilen > 0 ? `${zeilen} Materialzeile${zeilen === 1 ? "" : "n"}` : null]
+                    .filter(Boolean).join(" · ");
+                  return (
                     <div key={v.id} className="flex items-center gap-2 px-2 py-1.5">
-                      <span className="min-w-0 flex-1 truncate text-sm">{v.name}</span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm">{v.name}</span>
+                        {meta && <span className="block text-[11px] text-muted-foreground">{meta}</span>}
+                      </span>
                       <Button size="sm" className="h-9" onClick={() => fuegeAufbauVorlageEin(v)}>Einfügen</Button>
                       <button
                         type="button"
@@ -1136,34 +1174,44 @@ export default function KalkulationEditor() {
                         onClick={() => void loescheAufbauVorlage(v.id, v.name)}
                       ><Trash2 className="h-4 w-4" /></button>
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="border-t pt-3">
-              <p className="mb-1.5 text-sm font-semibold">Aufbau aus dieser Kalkulation als Vorlage speichern</p>
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <select
-                  className="kb-input h-10 min-h-0 flex-1 px-2 text-sm"
-                  value={aufbauVorlageQuelle}
-                  onChange={(e) => setAufbauVorlageQuelle(e.target.value)}
-                >
-                  {state.modules.length === 0 && <option value="">Kein Aufbau vorhanden</option>}
-                  {state.modules.map((mod, i) => (
-                    <option key={mod.id} value={String(mod.id)}>{mod.name || `Aufbau ${i + 1}`}</option>
-                  ))}
-                </select>
-                <input
-                  className="kb-input h-10 min-h-0 flex-1 px-2 text-sm"
-                  placeholder="Name der Vorlage (leer = Aufbauname)"
-                  value={aufbauVorlageName}
-                  onChange={(e) => setAufbauVorlageName(e.target.value)}
-                />
-                <Button className="h-10" onClick={() => void speichereAufbauVorlage()} disabled={state.modules.length === 0}>
-                  Speichern
-                </Button>
+                  );
+                })}
               </div>
+            )}
+            <p className="text-[11px] text-muted-foreground">
+              Neue Vorlage speichern: Knopf „Als Vorlage“ direkt am jeweiligen Aufbau.
+            </p>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Aufbau als Vorlage speichern (Karten-Knopf, Kundenwunsch 22.08.2026:
+          "Ich muss einzelne Aufbauten als z. B. AW 1 speichern können …
+          eine Datenbank mit den verschiedenen Aufbauten muss mir wachsen") */}
+      <Dialog open={aufbauVorlageModulId !== null} onOpenChange={(o) => { if (!o) setAufbauVorlageModulId(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Aufbau als Vorlage speichern</DialogTitle>
+            <DialogDescription>
+              Die Vorlage steht danach in jeder Kalkulation über
+              »Aufbau-Vorlagen« zum Einfügen bereit — mit allen Materialzeilen,
+              Dämmstärke und Arbeitszeit, ohne Fläche und Ist-Werte.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <div className="space-y-1">
+              <Label>Name der Vorlage</Label>
+              <Input
+                value={aufbauVorlageName}
+                onChange={(e) => setAufbauVorlageName(e.target.value)}
+                placeholder="z. B. AW 1"
+                autoFocus
+                onKeyDown={(e) => { if (e.key === "Enter") void speichereAufbauVorlage(); }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setAufbauVorlageModulId(null)}>Abbrechen</Button>
+              <Button onClick={() => void speichereAufbauVorlage()}>Speichern</Button>
             </div>
           </div>
         </DialogContent>

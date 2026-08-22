@@ -9,7 +9,7 @@
 // (nachkalk.actualDays, materialRows[].actualVK) bleiben unangetastet, damit
 // Altdaten nicht kaputtgehen — ausgewertet wird auf der Seite /nachkalkulation.
 // ============================================================================
-import { ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
+import { BookmarkPlus, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
 import {
   KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten,
   DAEMMSTAERKEN, fmt, fmtEuro, num,
@@ -40,6 +40,8 @@ interface Props {
   onRemoveRow: (idx: number) => void;
   onMoveRow: (from: number, to: number) => void;
   onClone: () => void;
+  /** Diesen Aufbau als wiederverwendbare Vorlage speichern (Kundenwunsch 22.08.2026). */
+  onSaveVorlage: () => void;
   onRemove: () => void;
   dragProps: DragProps;
 }
@@ -59,7 +61,7 @@ const Feld = ({ label, children }: { label: string; children: React.ReactNode })
 
 export function AufbauKarte({
   module: m, index, ergebnis: erg, faktor, bd, kategorien,
-  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onRemove, dragProps,
+  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onSaveVorlage, onRemove, dragProps,
 }: Props) {
   const titel = m.name || `Aufbau ${index + 1}`;
   const materialAdj = erg.material.vkTotal * faktor;
@@ -230,6 +232,12 @@ export function AufbauKarte({
                 onChange={(e) => onPatch({ isOptional: e.target.checked })} />
               optional
             </label>
+            {/* Direkt an der Karte (Kundenwunsch 22.08.2026: "Ich muss einzelne
+                Aufbauten als z. B. AW 1 speichern können") — der Weg über den
+                Vorlagen-Dialog unten wurde nicht gefunden. */}
+            <button type="button" onClick={onSaveVorlage} className="kb-btn h-11 min-h-0 px-3 py-1 text-xs sm:h-7 sm:px-2" title="Diesen Aufbau als Vorlage speichern — danach in jeder Kalkulation einfügbar">
+              <BookmarkPlus className="h-3.5 w-3.5 text-kb-green" /> Als Vorlage
+            </button>
             <button type="button" onClick={onClone} className="kb-btn h-11 min-h-0 px-3 py-1 text-xs sm:h-7 sm:px-2" title="Aufbau direkt dahinter duplizieren">
               <Copy className="h-3.5 w-3.5 text-kb-blue-dark" /> Verdoppeln
             </button>
