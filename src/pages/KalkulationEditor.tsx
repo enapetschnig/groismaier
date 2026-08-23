@@ -303,13 +303,26 @@ export default function KalkulationEditor() {
    */
   const ladeBestehendesAngebot = useCallback(async () => {
     if (!id) return;
-    const { data, error } = await supabase
+    // Auch Sammelangebote zählen (kalkulation_ids enthält diese Kalkulation
+    // als Bereich). Schlägt die or-Abfrage fehl (Spalte fehlt noch), greift
+    // der bisherige Weg über kalkulation_id.
+    let res = await supabase
       .from("invoices")
       .select("id, nummer, typ, datum")
-      .eq("kalkulation_id" as never, id as never)
+      .or(`kalkulation_id.eq.${id},kalkulation_ids.cs.["${id}"]` as never)
       .neq("status", "storniert")
       .order("datum", { ascending: false })
       .limit(1);
+    if (res.error) {
+      res = await supabase
+        .from("invoices")
+        .select("id, nummer, typ, datum")
+        .eq("kalkulation_id" as never, id as never)
+        .neq("status", "storniert")
+        .order("datum", { ascending: false })
+        .limit(1);
+    }
+    const { data, error } = res;
     if (error) { setBestehendesAngebot(null); return; }
     const treffer = ((data as any[]) || [])[0];
     setBestehendesAngebot(treffer ? { id: treffer.id, nummer: treffer.nummer || "", typ: treffer.typ || "angebot" } : null);

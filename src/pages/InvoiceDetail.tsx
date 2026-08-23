@@ -725,6 +725,12 @@ export default function InvoiceDetail() {
   // invoices.kalkulation_id. Fehlt die Spalte noch, bleibt der Wert null und
   // sämtliche Kalkulations-Funktionen sind still deaktiviert.
   const [kalkulationId, setKalkulationId] = useState<string | null>(null);
+  /**
+   * Sammelangebot aus MEHREREN Kalkulationen (Kundenwunsch 23.08.2026,
+   * „Projektbereiche"): alle Quell-Kalkulationen in Bereichs-Reihenfolge
+   * (invoices.kalkulation_ids). null/leer = normales Ein-Quellen-Angebot.
+   */
+  const [kalkulationIds, setKalkulationIds] = useState<string[] | null>(null);
   const [kalkulationName, setKalkulationName] = useState<string>("");
   /** Warnschwelle Marge aus app_settings.kalk_warn_marge_prozent (Default 35 %). */
   const [warnMargeProzent, setWarnMargeProzent] = useState<number>(35);
@@ -964,13 +970,22 @@ export default function InvoiceDetail() {
     if (!kalkulationId) { setKalkulationName(""); return; }
     let cancelled = false;
     (async () => {
+      // Sammelangebot: alle Bereichs-Namen in gespeicherter Reihenfolge.
+      if (kalkulationIds && kalkulationIds.length > 1) {
+        const { data } = await (supabase.from("kalkulationen" as never) as any)
+          .select("id, name").in("id", kalkulationIds);
+        if (cancelled) return;
+        const byId = new Map(((data as any[]) || []).map((k) => [String(k.id), String(k.name || "")]));
+        setKalkulationName(kalkulationIds.map((id) => byId.get(id)).filter(Boolean).join(" + "));
+        return;
+      }
       const { data } = await (supabase.from("kalkulationen" as never) as any)
         .select("id, name").eq("id", kalkulationId).maybeSingle();
       if (cancelled) return;
       setKalkulationName(((data as any)?.name as string) || "");
     })();
     return () => { cancelled = true; };
-  }, [kalkulationId]);
+  }, [kalkulationId, kalkulationIds]);
 
   /**
    * Warnschwelle direkt an der Warnung speichern (app_settings.kalk_warn_marge_prozent,
@@ -1241,28 +1256,50 @@ export default function InvoiceDetail() {
     if (!kalkulationId) return;
     setKalkErsetzenLaeuft(true);
     try {
-      const [kalkRes, settingsRes] = await Promise.all([
-        (supabase.from("kalkulationen" as never) as any)
-          .select("id, name, data").eq("id", kalkulationId).maybeSingle(),
-        supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
-      ]);
-      const kalk = (kalkRes as any)?.data;
-      if (!kalk) {
-        toast({ variant: "destructive", title: "Kalkulation nicht gefunden", description: "Die verknüpfte Kalkulation existiert nicht mehr." });
-        return;
-      }
+      // Sammelangebot (kalkulation_ids): ALLE Quell-Kalkulationen neu bauen —
+      // exakt wie beim Erstellen im Kalkulations-Hub (Bereichs-Textzeile +
+      // Gruppen-Suffix „— Bereich"). Nur die erste zu bauen hieße, die
+      // übrigen Bereiche zu löschen (sie sind gruppiert und würden ersetzt).
+      const quellIds = kalkulationIds && kalkulationIds.length > 1 ? kalkulationIds : [kalkulationId];
+      const istSammel = quellIds.length > 1;
+      const { data: settingsData } = await supabase
+        .from("app_settings").select("key, value").like("key", "kalk\\_%");
       const settings: Record<string, string> = {};
-      for (const row of (((settingsRes as any)?.data as any[]) || [])) settings[row.key] = row.value;
+      for (const row of ((settingsData as any[]) || [])) settings[row.key] = row.value;
 
-      const state = normalizeKalkulationState((kalk as any).data);
-      const bd = resolveBetriebsdaten(state.settings.businessData, settings);
-      const projekt = calcProjekt(state, bd);
-      const { items: rohItems } = buildAngebotItems(projekt);
-      if (rohItems.length === 0) {
+      const neu: AngebotItem[] = [];
+      for (const quellId of quellIds) {
+        const { data: kalk } = await (supabase.from("kalkulationen" as never) as any)
+          .select("id, name, data").eq("id", quellId).maybeSingle();
+        if (!kalk) {
+          // Abbrechen statt still ohne den Bereich weiterzumachen — sonst
+          // verschwände er beim Ersetzen kommentarlos aus dem Angebot.
+          toast({ variant: "destructive", title: "Kalkulation nicht gefunden", description: istSammel ? "Eine der verknüpften Kalkulationen (Bereiche) existiert nicht mehr — Positionen bleiben unverändert." : "Die verknüpfte Kalkulation existiert nicht mehr." });
+          return;
+        }
+        const state = normalizeKalkulationState((kalk as any).data);
+        const bd = resolveBetriebsdaten(state.settings.businessData, settings);
+        const projekt = calcProjekt(state, bd);
+        const { items: rohItems } = buildAngebotItems(projekt);
+        if (rohItems.length === 0) continue;
+        const bereich = String((kalk as any).name || "");
+        if (istSammel) {
+          neu.push({
+            beschreibung: `Bereich: ${bereich}`,
+            menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+            gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+          } as AngebotItem);
+          for (const it of mitSelbstkosten(rohItems, projekt)) {
+            neu.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe });
+          }
+        } else {
+          neu.push(...mitSelbstkosten(rohItems, projekt));
+        }
+      }
+      if (!neu.some((it) => it.ist_gruppensumme)) {
         toast({ variant: "destructive", title: "Nichts zu übernehmen", description: "Die Kalkulation enthält keine Aufbauten mit Betrag." });
         return;
       }
-      const neu = mitSelbstkosten(rohItems, projekt);
 
       // Bisherige Sichtbarkeits-Einstellungen merken.
       const sichtbarKeyExakt = new Map<string, boolean>();
@@ -1294,7 +1331,9 @@ export default function InvoiceDetail() {
           kurztext: n.beschreibung,
           langtext: "",
           menge: Number(n.menge) || 0,
-          einheit: n.einheit || "Stk.",
+          // Leere Einheit NICHT auf "Stk." zwingen — die Bereichs-Überschriften
+          // des Sammelangebots sind reine Textzeilen (menge 0, einheit "").
+          einheit: n.einheit === "" ? "" : (n.einheit || "Stk."),
           einzelpreis: Number(n.einzelpreis) || 0,
           rabatt_prozent: 0,
           gesamtpreis: Number(n.gesamtpreis) || 0,
@@ -1721,6 +1760,9 @@ export default function InvoiceDetail() {
           // Herkunft merken: aus welcher Kalkulation stammt dieser Beleg?
           // (wird beim Speichern in invoices.kalkulation_id geschrieben)
           if (data.kalkulation_id) setKalkulationId(String(data.kalkulation_id));
+          if (Array.isArray(data.kalkulation_ids) && data.kalkulation_ids.length > 1) {
+            setKalkulationIds(data.kalkulation_ids.map(String));
+          }
           // Wenn die Kalkulation einem Kunden zugeordnet war, diesen ins
           // Angebot übernehmen.
           if (data.customer_id) {
@@ -1923,6 +1965,11 @@ export default function InvoiceDetail() {
     // Herkunft Auftragskalkulation. Fehlt die Spalte (Migration noch nicht
     // eingespielt), ist der Wert schlicht undefined → Feature bleibt aus.
     setKalkulationId(((data as any).kalkulation_id as string) || null);
+    setKalkulationIds(
+      Array.isArray((data as any).kalkulation_ids) && ((data as any).kalkulation_ids as unknown[]).length > 1
+        ? ((data as any).kalkulation_ids as unknown[]).map(String)
+        : null,
+    );
 
     setForm({
       typ: data.typ,
@@ -3147,6 +3194,9 @@ export default function InvoiceDetail() {
       if (kalkulationId) {
         (invoicePayload as any).kalkulation_id = kalkulationId;
       }
+      if (kalkulationIds && kalkulationIds.length > 1) {
+        (invoicePayload as any).kalkulation_ids = kalkulationIds;
+      }
 
       // Gutschrift-Verrechnung (Migration 20260511000000) — nur
       // mitschicken, wenn überhaupt gesetzt.
@@ -3165,7 +3215,7 @@ export default function InvoiceDetail() {
       // Verrechnungs-Felder.
       const allTolerantCols = [
         "leistungsdatum_bis", "allgemeine_angaben_aktiv",
-        "verrechnet_mit_invoice_id", "verrechnet_am", "kalkulation_id",
+        "verrechnet_mit_invoice_id", "verrechnet_am", "kalkulation_id", "kalkulation_ids",
         "custom_intro_text", "custom_closing_text", "lieferadresse",
         "referenz", "zeige_faelligkeit", "preise_brutto", "zahlungstext", "kunde_kontaktperson",
         ...aaFields,

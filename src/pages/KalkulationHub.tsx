@@ -186,9 +186,11 @@ export default function KalkulationHub() {
       sessionStorage.setItem("kalkulation_to_angebot", JSON.stringify({
         betreff: sammelBetreff.trim() || "Gesamtangebot",
         customer_id: gewaehlt.find((r) => r.customer_id)?.customer_id || null,
-        // Herkunft: das Angebot merkt sich die ERSTE Kalkulation (die Spalte
-        // fasst nur eine); die weiteren Bereiche stehen in den Positionen.
+        // Herkunft: kalkulation_id = erste Quelle (bestehende Verknüpfung),
+        // kalkulation_ids = ALLE Quellen in Bereichs-Reihenfolge — damit kann
+        // „Positionen neu übernehmen" das Sammelangebot komplett neu aufbauen.
         kalkulation_id: gewaehlt[0]?.id || null,
+        kalkulation_ids: gewaehlt.map((r) => r.id),
         items: alleItems,
       }));
       navigate("/invoices/new?typ=angebot&from_kalkulation=1");
