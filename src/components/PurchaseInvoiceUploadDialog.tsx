@@ -557,13 +557,24 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
   };
 
   const assignBulk = () => {
-    if (!bulkProject || posSelected.size === 0) return;
+    if (!bulkProject) return;
+    // Ohne Auswahl gilt der Knopf für ALLE Positionen (Kundenwunsch
+    // 23.08.2026: "alle Artikel einer Rechnung auf einmal zuordnen").
+    const ziele = posSelected.size > 0 ? [...posSelected] : positionen.map((_, i) => i);
+    if (ziele.length === 0) return;
     setPosProjekte(prev => {
       const next = { ...prev };
-      posSelected.forEach(idx => { next[idx] = bulkProject; });
+      ziele.forEach(idx => { next[idx] = bulkProject; });
       return next;
     });
     setPosSelected(new Set());
+  };
+
+  /** Alle Positionen an-/abwählen (Kopf-Kästchen der Zuordnungs-Leiste). */
+  const toggleAllePositionen = () => {
+    setPosSelected(prev =>
+      prev.size === positionen.length ? new Set() : new Set(positionen.map((_, i) => i)),
+    );
   };
 
   const handleSave = async () => {
@@ -756,7 +767,12 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+      {/* Kundenwunsch 23.08.2026: "das Fenster vergrößern" — sobald eine
+          Vorschau da ist, wird der Dialog breit und zweispaltig (Beleg groß
+          und mitscrollend links, Erfassung rechts); vorher bleibt er kompakt. */}
+      <DialogContent className={`w-[calc(100vw-1rem)] max-h-[92vh] overflow-y-auto p-4 sm:p-6 ${
+        previewUrl ? "max-w-2xl lg:w-[calc(100vw-3rem)] lg:max-w-[1500px]" : "max-w-2xl"
+      }`}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 pr-6 text-base sm:text-lg">
             <Upload className="h-5 w-5 shrink-0" />
@@ -764,7 +780,21 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
           </DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div className={previewUrl ? "py-2 lg:flex lg:items-start lg:gap-6" : "py-2"}>
+          {/* Desktop: große Beleg-Vorschau links (mobil zeigt sie die
+              bisherige Stelle im Ablauf, siehe lg:hidden unten). */}
+          {previewUrl && files[0] && (
+            <div className="hidden lg:block lg:w-[48%] lg:shrink-0 lg:sticky lg:top-0">
+              <div className="rounded-lg border overflow-hidden bg-muted/20">
+                {istPdfDatei(files[0]) ? (
+                  <iframe src={previewUrl} title={files[0].name} className="w-full h-[78vh] bg-white" />
+                ) : istBildDatei(files[0]) ? (
+                  <img src={previewUrl} alt={files[0].name} className="w-full max-h-[78vh] object-contain bg-white" />
+                ) : null}
+              </div>
+            </div>
+          )}
+          <div className="min-w-0 flex-1 space-y-4">
           {/* Aufnahme-Aktionen — am Handy die wichtigste Funktion: Foto machen */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <Button
@@ -858,9 +888,9 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
             </div>
           )}
 
-          {/* Live-Preview der ersten Datei */}
+          {/* Live-Preview der ersten Datei (mobil; am Desktop links groß) */}
           {previewUrl && files[0] && (
-            <div className="rounded-lg border overflow-hidden bg-muted/20">
+            <div className="rounded-lg border overflow-hidden bg-muted/20 lg:hidden">
               {istPdfDatei(files[0]) ? (
                 <iframe
                   src={previewUrl}
@@ -939,9 +969,29 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                 </div>
               )}
 
-              {posSelected.size > 0 && (
+              {positionen.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
-                  <span className="text-xs whitespace-nowrap font-medium">{posSelected.size} ausgewählt</span>
+                  {/* Alle an-/abwählen — Kundenwunsch 23.08.2026: alle Artikel
+                      einer Rechnung auf einmal einer Baustelle zuordnen. */}
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={posSelected.size === positionen.length}
+                    aria-label="Alle Positionen auswählen"
+                    title="Alle Positionen an-/abwählen"
+                    onClick={toggleAllePositionen}
+                    className="flex h-11 w-9 shrink-0 items-center justify-center rounded hover:bg-muted"
+                  >
+                    <span className={`flex h-5 w-5 items-center justify-center rounded-sm border ${
+                      posSelected.size === positionen.length && positionen.length > 0
+                        ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                    }`}>
+                      {posSelected.size === positionen.length && positionen.length > 0 && <Check className="h-4 w-4" />}
+                    </span>
+                  </button>
+                  <span className="text-xs whitespace-nowrap font-medium">
+                    {posSelected.size > 0 ? `${posSelected.size} ausgewählt` : `Alle ${positionen.length} Positionen`}
+                  </span>
                   <Select value={bulkProject || "none"} onValueChange={v => setBulkProject(v === "none" ? "" : v)}>
                     <SelectTrigger className="h-11 text-xs flex-1 min-w-[8rem]"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
                     <SelectContent>
@@ -951,7 +1001,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
                     </SelectContent>
                   </Select>
                   <Button type="button" size="sm" className="h-11" onClick={assignBulk} disabled={!bulkProject}>
-                    Auswahl zuordnen
+                    {posSelected.size > 0 ? "Auswahl zuordnen" : "Alle zuordnen"}
                   </Button>
                 </div>
               )}
@@ -1263,6 +1313,7 @@ export function PurchaseInvoiceUploadDialog({ open, onOpenChange, onUploaded, pr
               <Label>Notizen</Label>
               <Textarea value={form.notizen} onChange={e => update("notizen", e.target.value)} rows={2} />
             </div>
+          </div>
           </div>
         </div>
 

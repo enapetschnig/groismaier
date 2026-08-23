@@ -183,8 +183,9 @@ export default function Employees() {
 
   const speichereHerstellerGroessen = async (employeeId: string) => {
     if (geloeschteGroessen.length > 0) {
-      await (supabase.from("employee_groessen" as never) as any)
+      const { error } = await (supabase.from("employee_groessen" as never) as any)
         .delete().in("id", geloeschteGroessen);
+      if (error) throw error;
     }
     for (const g of herstellerGroessen) {
       if (!g.hersteller.trim() || !g.groesse.trim()) continue;
@@ -194,11 +195,10 @@ export default function Employees() {
         kleidungsstueck: g.kleidungsstueck || "hose",
         groesse: g.groesse.trim(),
       };
-      if (g.id) {
-        await (supabase.from("employee_groessen" as never) as any).update(zeile).eq("id", g.id);
-      } else {
-        await (supabase.from("employee_groessen" as never) as any).insert(zeile);
-      }
+      const { error } = g.id
+        ? await (supabase.from("employee_groessen" as never) as any).update(zeile).eq("id", g.id)
+        : await (supabase.from("employee_groessen" as never) as any).insert(zeile);
+      if (error) throw error;
     }
   };
 
@@ -207,14 +207,29 @@ export default function Employees() {
     if (!selectedEmployee) return;
 
     try {
+      // Kundenmeldung 23.08.2026 (»invalid input syntax for type uuid: ""«):
+      // formData spiegelt die ganze Zeile plus Eingaben — ein geleertes Feld
+      // liefert "" statt null, und Postgres lehnt "" für uuid/date-Spalten ab.
+      // Deshalb: DB-verwaltete Felder raus, leere Strings überall zu null.
       // `as any`: formData enthält standard_vehicle_id, das (noch) nicht in
       // src/integrations/supabase/types.ts steht (Migration 20260719100000).
+      const payload: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(formData)) {
+        if (k === "id" || k === "created_at" || k === "updated_at") continue;
+        payload[k] = typeof v === "string" && v.trim() === "" ? null : v;
+      }
       const { error } = await supabase
         .from("employees")
-        .update(formData as any)
+        .update(payload as any)
         .eq("id", selectedEmployee.id);
 
       if (error) throw error;
+
+      // Größen je Hersteller mitspeichern — die Funktion existierte, wurde
+      // aber nie aufgerufen (Kundenmeldung: Größen „gespeichert", standen
+      // aber nur im ungeleerten Formular-State und bei jedem danach
+      // geöffneten Mitarbeiter wieder drin).
+      await speichereHerstellerGroessen(selectedEmployee.id);
 
       toast({ title: "Erfolg", description: "Änderungen gespeichert" });
       fetchEmployees();
@@ -320,6 +335,13 @@ export default function Employees() {
     if (selectedEmployee) {
       setFormData(selectedEmployee);
       setStundenlohnText(formatForInput(selectedEmployee.stundenlohn));
+      // Hersteller-Größen JE Mitarbeiter laden. Ohne das blieb der State des
+      // vorherigen Mitarbeiters stehen — seine Größen „wanderten" scheinbar
+      // zu allen anderen (Kundenmeldung 23.08.2026).
+      void ladeHerstellerGroessen(selectedEmployee.id);
+    } else {
+      setHerstellerGroessen([]);
+      setGeloeschteGroessen([]);
     }
   }, [selectedEmployee]);
 

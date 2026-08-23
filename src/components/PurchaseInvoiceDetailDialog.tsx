@@ -380,16 +380,21 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   };
 
   const assignAllocBulk = async () => {
-    if (!form || !allocBulkProject || allocSelected.size === 0) return;
+    if (!form || !allocBulkProject) return;
+    // Ohne Auswahl gilt der Knopf für ALLE Teilbeträge (Kundenwunsch
+    // 23.08.2026: "alle Artikel einer Rechnung auf einmal zuordnen").
+    const ziele = allocSelected.size > 0 ? [...allocSelected] : allocations.map(a => a.id);
+    if (ziele.length === 0) return;
     const { error } = await (supabase.from("purchase_invoice_allocations" as never) as any)
       .update(zielPatch(allocBulkProject))
-      .in("id", [...allocSelected]);
+      .in("id", ziele);
     if (error) {
       toast({ variant: "destructive", title: "Fehler", description: error.message });
       return;
     }
-    toast({ title: "Zugeordnet", description: `${allocSelected.size} Teilbetrag${allocSelected.size === 1 ? "" : "e"} umgehängt.` });
+    toast({ title: "Zugeordnet", description: `${ziele.length} Teilbetrag${ziele.length === 1 ? "" : "e"} umgehängt.` });
     setAllocBulkProject("");
+    setAllocSelected(new Set());
     await loadAllocations(form.id);
     onUpdated();
   };
@@ -629,9 +634,29 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                 zugeordneten Teilbeträgen — das Projekt oben dient dann nur noch als Hauptzuordnung der Rechnung.
               </p>
 
-              {allocSelected.size > 0 && (
+              {allocations.length > 0 && (
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-primary/30 bg-primary/5 px-2 py-1.5">
-                  <span className="text-xs whitespace-nowrap font-medium">{allocSelected.size} ausgewählt</span>
+                  {/* Alle an-/abwählen (Kundenwunsch 23.08.2026) */}
+                  <button
+                    type="button"
+                    role="checkbox"
+                    aria-checked={allocSelected.size === allocations.length}
+                    aria-label="Alle Teilbeträge auswählen"
+                    title="Alle Teilbeträge an-/abwählen"
+                    onClick={() => setAllocSelected(prev =>
+                      prev.size === allocations.length ? new Set() : new Set(allocations.map(a => a.id)))}
+                    className="flex h-11 w-9 shrink-0 items-center justify-center rounded hover:bg-muted"
+                  >
+                    <span className={`flex h-5 w-5 items-center justify-center rounded-sm border ${
+                      allocSelected.size === allocations.length
+                        ? "border-primary bg-primary text-primary-foreground" : "border-input"
+                    }`}>
+                      {allocSelected.size === allocations.length && <Check className="h-4 w-4" />}
+                    </span>
+                  </button>
+                  <span className="text-xs whitespace-nowrap font-medium">
+                    {allocSelected.size > 0 ? `${allocSelected.size} ausgewählt` : `Alle ${allocations.length} Teilbeträge`}
+                  </span>
                   <Select value={allocBulkProject || "none"} onValueChange={v => setAllocBulkProject(v === "none" ? "" : v)}>
                     <SelectTrigger className="h-11 text-xs flex-1 min-w-[8rem]"><SelectValue placeholder="Projekt wählen" /></SelectTrigger>
                     <SelectContent>
@@ -641,7 +666,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                     </SelectContent>
                   </Select>
                   <Button type="button" size="sm" className="h-11" onClick={assignAllocBulk} disabled={!allocBulkProject}>
-                    Auswahl zuordnen
+                    {allocSelected.size > 0 ? "Auswahl zuordnen" : "Alle zuordnen"}
                   </Button>
                 </div>
               )}
