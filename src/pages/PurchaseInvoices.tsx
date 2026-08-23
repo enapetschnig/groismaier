@@ -1,7 +1,7 @@
 import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil, Inbox, EyeOff, Loader2, Mail
+import { Upload, FileText, Image as ImageIcon, Search, Trash2, Calendar, Building2, CheckCircle2, Clock as ClockIcon, XCircle, Camera, Receipt, Lock, Pencil, Inbox, ExternalLink, EyeOff, Loader2, Mail
 } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -571,6 +571,20 @@ export default function PurchaseInvoices() {
                     >
                       <Pencil className="h-4 w-4" /> Bearbeiten
                     </Button>
+                    {/* Kundenwunsch 23.08.2026: Rechnung "nur zur Ansicht" mit
+                        einem Klick als PDF öffnen — das Datei-Icon links war
+                        als Knopf nicht erkennbar. */}
+                    {inv.pdf_path && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-11 gap-1.5 text-xs"
+                        onClick={() => openFile(inv)}
+                        title="Beleg in neuem Tab öffnen — nur zur Ansicht"
+                      >
+                        <ExternalLink className="h-4 w-4" /> PDF ansehen
+                      </Button>
+                    )}
                     <Button
                       variant="outline"
                       size="sm"

@@ -26,6 +26,11 @@ import {
 import { CustomerSelect } from "@/components/CustomerSelect";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  AngebotItem, ProjektErgebnis, buildAngebotItems, calcProjekt,
+  normalizeKalkulationState, resolveBetriebsdaten, round2,
+} from "@/lib/kalkulationEngine";
 
 // Hinweis: Die Tabelle `kalkulationen` (inkl. Spalte `ist_vorlage`, siehe
 // Migration 20260716090200_kalkulation_vorlagen.sql) fehlt in den generierten
@@ -47,6 +52,32 @@ const kalkTable = () => (supabase.from("kalkulationen" as never) as any);
 
 const fmtEuro = (n: number) =>
   new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(n || 0);
+
+/**
+ * Sammelzeilen um die echten Selbstkosten ihres Aufbaus ergänzen (für den
+ * internen Verdienst-Block im Beleg-Editor). Bewusst dupliziert wie in
+ * KalkulationEditor.tsx/InvoiceDetail.tsx — Zuordnung über die Reihenfolge.
+ */
+function mitSelbstkosten(items: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] {
+  const zeilenMitBetrag = projekt.zeilen.filter((z) => round2(z.gesamtAdj) > 0);
+  let k = 0;
+  return items.map((it) => {
+    if (!it.ist_gruppensumme) return it;
+    const zeile = zeilenMitBetrag[k];
+    k += 1;
+    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
+  });
+}
+
+/** Gemeinsamer Namens-Anfang der gewählten Kalkulationen ("Knapp - …" → "Knapp"). */
+function gemeinsamerPraefix(namen: string[]): string {
+  if (namen.length === 0) return "";
+  let p = namen[0];
+  for (const n of namen.slice(1)) {
+    while (p && !n.startsWith(p)) p = p.slice(0, -1);
+  }
+  return p.replace(/[\s\-–—·/,]+$/, "").trim();
+}
 
 const fmtDate = (iso: string) => {
   try { return new Date(iso).toLocaleDateString("de-AT", { day: "2-digit", month: "2-digit", year: "numeric" }); }
@@ -86,6 +117,85 @@ export default function KalkulationHub() {
   const [renameRow, setRenameRow] = useState<KalkRow | null>(null);
   const [renameName, setRenameName] = useState("");
   const [renaming, setRenaming] = useState(false);
+
+  // Gemeinsames Angebot aus mehreren Kalkulationen (Kundenwunsch 23.08.2026:
+  // "mehrere Projektabschnitte … Kannst du das sinnvoll zusammenführen?
+  // Im Anbot können dann diese Bereiche auch gesondert dargestellt werden").
+  // `auswahl` hält die IDs in KLICK-Reihenfolge — sie bestimmt die
+  // Bereichs-Reihenfolge im Angebot.
+  const [auswahl, setAuswahl] = useState<string[]>([]);
+  const [sammelOpen, setSammelOpen] = useState(false);
+  const [sammelBetreff, setSammelBetreff] = useState("");
+  const [sammelErstellt, setSammelErstellt] = useState(false);
+
+  const toggleAuswahl = (id: string) =>
+    setAuswahl((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  const oeffneSammelangebot = () => {
+    const namen = auswahl
+      .map((id) => rows.find((r) => r.id === id)?.name || "")
+      .filter(Boolean);
+    const praefix = gemeinsamerPraefix(namen);
+    setSammelBetreff(praefix ? `${praefix} – Gesamtangebot` : "Gesamtangebot");
+    setSammelOpen(true);
+  };
+
+  const erstelleSammelangebot = async () => {
+    setSammelErstellt(true);
+    try {
+      const gewaehlt = auswahl
+        .map((id) => rows.find((r) => r.id === id))
+        .filter((r): r is KalkRow => !!r);
+      // Betriebsdaten wie im Editor: kalk_*-Stammdaten aus app_settings.
+      const { data: setData } = await supabase
+        .from("app_settings").select("key, value").like("key", "kalk\\_%");
+      const settings: Record<string, string> = {};
+      for (const s of setData || []) settings[s.key] = s.value;
+
+      const alleItems: AngebotItem[] = [];
+      const leere: string[] = [];
+      for (const r of gewaehlt) {
+        const { data } = await kalkTable().select("id, name, data").eq("id", r.id).maybeSingle();
+        const st = normalizeKalkulationState((data as any)?.data);
+        const bd = resolveBetriebsdaten(st.settings.businessData, settings);
+        const projekt = calcProjekt(st, bd);
+        const { items } = buildAngebotItems(projekt);
+        if (items.length === 0) { leere.push(r.name); continue; }
+        // Bereichs-Überschrift: reine Textzeile (menge 0, keine Einheit, kein
+        // Preis) — druckt nur den Text, siehe istTextzeile() in invoiceHtml.
+        alleItems.push({
+          beschreibung: `Bereich: ${r.name}`,
+          menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+          gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+        } as AngebotItem);
+        // Gruppen müssen über das GANZE Angebot eindeutig sein (zwei Aufbauten
+        // "Dach" in verschiedenen Bereichen fielen sonst zusammen). Suffix statt
+        // Präfix: so trägt die Sammelzeile den Gruppennamen weiterhin und die
+        // PDF-Kapitellogik druckt keine doppelte Überschrift.
+        for (const it of mitSelbstkosten(items, projekt)) {
+          alleItems.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${r.name}` : it.gruppe });
+        }
+      }
+      if (!alleItems.some((it) => it.ist_gruppensumme)) {
+        toast({ variant: "destructive", title: "Nichts zu übernehmen", description: "Keine der gewählten Kalkulationen enthält Aufbauten mit Betrag." });
+        return;
+      }
+      if (leere.length > 0) {
+        toast({ title: "Hinweis", description: `Ohne Beträge übersprungen: ${leere.join(", ")}` });
+      }
+      sessionStorage.setItem("kalkulation_to_angebot", JSON.stringify({
+        betreff: sammelBetreff.trim() || "Gesamtangebot",
+        customer_id: gewaehlt.find((r) => r.customer_id)?.customer_id || null,
+        // Herkunft: das Angebot merkt sich die ERSTE Kalkulation (die Spalte
+        // fasst nur eine); die weiteren Bereiche stehen in den Positionen.
+        kalkulation_id: gewaehlt[0]?.id || null,
+        items: alleItems,
+      }));
+      navigate("/invoices/new?typ=angebot&from_kalkulation=1");
+    } finally {
+      setSammelErstellt(false);
+    }
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -265,6 +375,20 @@ export default function KalkulationHub() {
     >
       <CardHeader className="space-y-2 pb-3">
         <div className="flex items-start justify-between gap-2">
+          {/* Auswahl fürs gemeinsame Angebot (Kundenwunsch 23.08.2026) */}
+          {!r.ist_vorlage && (
+            <span
+              className="flex h-10 items-center pr-1"
+              onClick={(e) => { e.stopPropagation(); toggleAuswahl(r.id); }}
+              title="Für ein gemeinsames Angebot auswählen"
+            >
+              <Checkbox
+                checked={auswahl.includes(r.id)}
+                className="h-5 w-5"
+                aria-label={`${r.name} für gemeinsames Angebot auswählen`}
+              />
+            </span>
+          )}
           <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
             {r.ist_vorlage
               ? <LayoutTemplate className="h-5 w-5 text-primary" />
@@ -367,6 +491,28 @@ export default function KalkulationHub() {
           </button>
         </div>
 
+        {/* Auswahl-Leiste: gemeinsames Angebot aus mehreren Kalkulationen */}
+        {tab === "kalkulationen" && auswahl.length > 0 && (
+          <div className="mb-4 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2 shadow-sm">
+            <span className="text-sm">
+              <b>{auswahl.length}</b> Kalkulation{auswahl.length === 1 ? "" : "en"} ausgewählt
+            </span>
+            <span className="flex-1" />
+            <Button
+              size="sm"
+              className="h-10"
+              disabled={auswahl.length < 2}
+              title={auswahl.length < 2 ? "Mindestens zwei Kalkulationen auswählen" : undefined}
+              onClick={oeffneSammelangebot}
+            >
+              <FileText className="mr-1.5 h-4 w-4" /> Gemeinsames Angebot erstellen
+            </Button>
+            <Button variant="outline" size="sm" className="h-10" onClick={() => setAuswahl([])}>
+              Auswahl aufheben
+            </Button>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-muted-foreground py-12 text-center">Lädt …</p>
         ) : list.length === 0 ? (
@@ -396,6 +542,60 @@ export default function KalkulationHub() {
           </div>
         )}
       </div>
+
+      {/* Gemeinsames Angebot aus mehreren Kalkulationen */}
+      <Dialog open={sammelOpen} onOpenChange={setSammelOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Gemeinsames Angebot erstellen</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              Jede Kalkulation wird als eigener <b>Bereich</b> mit Überschrift
+              ins Angebot übernommen — in dieser Reihenfolge (= Reihenfolge des
+              Anklickens):
+            </p>
+            <div className="divide-y rounded border">
+              {auswahl.map((id, i) => {
+                const r = rows.find((x) => x.id === id);
+                if (!r) return null;
+                return (
+                  <div key={id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                    <span className="w-5 shrink-0 text-muted-foreground">{i + 1}.</span>
+                    <span className="min-w-0 flex-1 truncate">{r.name}</span>
+                    <span className="shrink-0 font-medium tabular-nums">{fmtEuro(Number(r.summe) || 0)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {(() => {
+              const kunden = new Set(
+                auswahl.map((id) => rows.find((x) => x.id === id)?.customer_id).filter(Boolean),
+              );
+              return kunden.size > 1 ? (
+                <p className="rounded border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Achtung: Die gewählten Kalkulationen gehören zu verschiedenen
+                  Kunden — ins Angebot wird der Kunde der ersten übernommen.
+                </p>
+              ) : null;
+            })()}
+            <div className="space-y-1.5">
+              <Label>Betreff des Angebots</Label>
+              <Input
+                value={sammelBetreff}
+                onChange={(e) => setSammelBetreff(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") void erstelleSammelangebot(); }}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSammelOpen(false)}>Abbrechen</Button>
+              <Button onClick={() => void erstelleSammelangebot()} disabled={sammelErstellt}>
+                {sammelErstellt ? "Wird erstellt …" : "Angebot erstellen"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Neue Kalkulation Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

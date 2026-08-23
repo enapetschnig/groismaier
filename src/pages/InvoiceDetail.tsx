@@ -1697,8 +1697,11 @@ export default function InvoiceDetail() {
             setItems(data.items.map((it: any, idx: number) => ({
               position: idx + 1,
               beschreibung: String(it.beschreibung || ""),
-              menge: Number(it.menge) || 1,
-              einheit: String(it.einheit || "Stk."),
+              // menge 0 + einheit "" NICHT auf 1/"Stk." zwingen: reine
+              // Textzeilen (Bereichs-Überschriften des Sammelangebots aus
+              // mehreren Kalkulationen) drucken sonst "1 Stk. 0,00 €".
+              menge: it.menge === 0 ? 0 : Number(it.menge) || 1,
+              einheit: it.einheit === "" ? "" : String(it.einheit || "Stk."),
               einzelpreis: Number(it.einzelpreis) || 0,
               gesamtpreis: Number(it.gesamtpreis) || 0,
               // Gruppen/Sichtbarkeit aus der Kalkulation unverändert übernehmen.

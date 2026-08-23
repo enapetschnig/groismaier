@@ -493,9 +493,17 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
 
   if (!invoiceId) return null;
 
+  // Kundenwunsch 23.08.2026: "das Fenster größer machen, damit man die
+  // Rechnung als Ganzes besser lesen kann" — mit Beleg wird der Dialog breit
+  // und zweispaltig (Rechnung groß links, Felder rechts); ohne Beleg bleibt
+  // er kompakt wie bisher.
+  const hatVorschau = !!(form?.pdf_path && fileUrl);
+
   return (
     <Dialog open={!!invoiceId} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="w-[calc(100vw-1rem)] max-w-2xl max-h-[92vh] overflow-y-auto p-4 sm:p-6">
+      <DialogContent className={`w-[calc(100vw-1rem)] max-h-[92vh] overflow-y-auto p-4 sm:p-6 ${
+        hatVorschau ? "max-w-2xl lg:w-[calc(100vw-3rem)] lg:max-w-[1500px]" : "max-w-2xl"
+      }`}>
         <DialogHeader>
           <DialogTitle className="pr-6 text-base sm:text-lg">Eingangsrechnung bearbeiten</DialogTitle>
         </DialogHeader>
@@ -505,21 +513,23 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="space-y-4 py-2">
+          <div className={hatVorschau
+            ? "py-2 space-y-4 lg:space-y-0 lg:grid lg:grid-cols-[minmax(0,1fr)_460px] lg:gap-6 lg:items-start"
+            : "space-y-4 py-2"}>
             {form.pdf_path && fileUrl && (
-              <div className="space-y-2">
+              <div className="space-y-2 lg:sticky lg:top-0">
                 <div className="rounded-lg border overflow-hidden bg-muted/20">
                   {form.mime_type === "application/pdf" || (form.file_name || "").toLowerCase().endsWith(".pdf") ? (
                     <iframe
                       src={fileUrl}
                       title={form.file_name || "Rechnung"}
-                      className="w-full h-[260px] sm:h-[420px] bg-white"
+                      className="w-full h-[260px] bg-white sm:h-[420px] lg:h-[76vh]"
                     />
                   ) : (
                     <img
                       src={fileUrl}
                       alt={form.file_name || "Rechnung"}
-                      className="w-full max-h-[260px] sm:max-h-[420px] object-contain bg-white"
+                      className="w-full max-h-[260px] object-contain bg-white sm:max-h-[420px] lg:max-h-[76vh]"
                     />
                   )}
                 </div>
@@ -544,6 +554,8 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
               </div>
             )}
 
+            {/* Rechte Spalte (bzw. volle Breite ohne Beleg): alle Felder */}
+            <div className="space-y-4">
             {/* Verrechnen-Block */}
             <div className="rounded-lg border p-3 bg-muted/20 space-y-2">
               <div className="flex items-center gap-2">
@@ -970,6 +982,7 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
                 <Label>Notizen</Label>
                 <Textarea value={form.notizen || ""} onChange={e => update("notizen", e.target.value)} rows={3} />
               </div>
+            </div>
             </div>
           </div>
         )}
