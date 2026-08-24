@@ -205,11 +205,18 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     .filter((i) => !istLeereZeile(rows[i]) || i === ersterLeerIdx);
 
   const toggleMode = (idx: number, row: MaterialRow) => {
-    // DB → Manuell → (Decke/Dach: Berechnet) → DB; Reset aller Felder je Wechsel.
-    const next = newMaterialRow();
-    if (!row.manual && !row.calc) next.manual = true;
-    else if (row.manual && istDecke) next.calc = true;
-    onReplaceRow(idx, next);
+    // DB → Manuell → (Decke/Dach: Berechnet) → DB.
+    // Seit 24.08.2026 OHNE Reset (Kundenwunsch: "umgekehrt geht es nicht" —
+    // Pauschale ↔ m² muss in beide Richtungen gehen, ohne dass Namen und
+    // Preise verlorengehen). Beim Wechsel in die Pauschale wird der SICHTBARE
+    // VK festgeschrieben, nicht ein alter Kopierwert.
+    if (!row.manual && !row.calc) {
+      onReplaceRow(idx, { ...row, manual: true, calc: false, vkPrice: vkAnzeige(row) });
+    } else if (row.manual && istDecke) {
+      onReplaceRow(idx, { ...row, manual: false, calc: true });
+    } else {
+      onReplaceRow(idx, { ...row, manual: false, calc: false });
+    }
   };
 
   // Katalog-Kategorie gewählt: Artikel + Preise gehören zur alten Kategorie und
@@ -279,9 +286,9 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
   };
 
   const modusTitel = (row: MaterialRow) =>
-    row.manual ? "Modus: Manuell (absolute €-Beträge) — klicken zum Wechseln"
-      : row.calc ? "Modus: Holz berechnen — klicken zum Wechseln"
-        : "Modus: Datenbank — klicken zum Wechseln";
+    row.manual ? "Pauschale (EK/VK gelten gesamt) — klicken für €/m² × Fläche; Namen und Preise bleiben"
+      : row.calc ? "Holz berechnen — klicken für Datenbank-Modus"
+        : "€/m² × Fläche (Datenbank) — klicken für Pauschale; Namen und Preise bleiben"
 
   const ModusIcon = ({ row }: { row: MaterialRow }) =>
     row.manual ? <Pencil className="h-3.5 w-3.5" />
@@ -349,6 +356,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
           </button>
         </div>
       )}
+
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
           KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke
