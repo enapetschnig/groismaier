@@ -27,7 +27,7 @@ import { QuickFotoDialog } from "@/components/QuickFotoDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { AufgabenWidget } from "@/components/aufgaben/AufgabenWidget";
-import { KBButton, KBSearchRow, KBSectionHeader } from "@/components/kingbill";
+import { KBButton, KBSectionHeader } from "@/components/kingbill";
 import { ListTodo } from "lucide-react";
 
 /** Bereichs-Spalte im KingBill-Startmasken-Stil:
@@ -440,53 +440,51 @@ export default function Index() {
         {/* Am Handy sind alle Bereichs-Knöpfe höher (Kundenwunsch: „wenn man
             dickere Finger hat, dass es nicht zu Verwechslung kommt"); am
             Desktop bleibt die kompakte KingBill-Höhe. */}
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4 items-start [&_.kb-btn]:min-h-[52px] sm:[&_.kb-btn]:min-h-[2.25rem]">
+        {/* Spalten-Layout statt Zeilen-Grid (Kundenwunsch 24.08.2026: „die
+            Punkte sollen raufrücken, dass das alles ein Bild macht"): kurze
+            Bereiche wie Kunden/Artikel füllen die Spalte unter dem vorigen
+            Bereich auf, statt Löcher in einer Zeile zu lassen. */}
+        <div className="columns-1 md:columns-2 xl:columns-4 gap-3 sm:gap-4 [&>*]:mb-3 sm:[&>*]:mb-4 [&>*]:break-inside-avoid [&_.kb-btn]:min-h-[52px] sm:[&_.kb-btn]:min-h-[2.25rem]">
 
-          {/* ── Dokumente ─────────────────────────────────────── */}
+          {/* ── Dokumente ─────────────────────────────────────────
+              Kundenwunsch 24.08.2026: schlanke Listen-Menüs statt der
+              Neu-/Suchen-Kombis („das mit Rechnung suchen und so weg") —
+              angelegt und gesucht wird in der jeweiligen Liste. */}
           {canView("rechnungen") && (
             <KBBereich icon={FileText} title="Dokumente">
               <KBButton
                 className="w-full"
-                icon={Plus}
-                iconClassName="text-kb-green"
-                label="Neues Angebot"
-                onClick={() => navigate("/invoices/new?typ=angebot")}
-              />
-              <KBSearchRow
-                buttonLabel="Angebot suchen"
-                onSearch={(q) => navigate(`/invoices?tab=angebot${q ? `&q=${encodeURIComponent(q)}` : ""}`)}
-              />
-              <div className="my-1 h-px bg-white/70" />
-              <KBButton
-                className="w-full"
-                icon={Plus}
-                iconClassName="text-kb-green"
-                label="Neue Rechnung"
-                onClick={() => navigate("/invoices/new?typ=rechnung")}
-              />
-              <KBSearchRow
-                buttonLabel="Rechnung suchen"
-                onSearch={(q) => navigate(`/invoices?tab=rechnung${q ? `&q=${encodeURIComponent(q)}` : ""}`)}
-              />
-              <div className="my-1 h-px bg-white/70" />
-              <KBButton
-                className="w-full"
                 icon={FileText}
+                label="Angebote"
+                onClick={() => navigate("/invoices?tab=angebot")}
+              />
+              <KBButton
+                className="w-full"
+                icon={Receipt}
+                label="Rechnungen"
+                onClick={() => navigate("/invoices?tab=rechnung")}
+              />
+              <KBButton
+                className="w-full"
+                icon={Truck}
+                label="Lieferscheine"
+                onClick={() => navigate("/invoices?tab=lieferschein")}
+              />
+              <KBButton
+                className="w-full"
+                icon={LayoutGrid}
                 label="Dokumentenliste"
                 title="Alle Belege: Angebote, Aufträge, Lieferscheine, Rechnungen"
                 onClick={() => navigate("/invoices")}
               />
               {isAdmin && (
-                <>
-                  <div className="my-1 h-px bg-white/70" />
-                  <KBButton
-                    className="w-full"
-                    icon={FileDown}
-                    label="Ausschreibungen"
-                    title="ÖNORM-Leistungsverzeichnisse (.onlv) einlesen und bepreisen"
-                    onClick={() => navigate("/ausschreibungen")}
-                  />
-                </>
+                <KBButton
+                  className="w-full"
+                  icon={FileDown}
+                  label="Ausschreibungen"
+                  title="ÖNORM-Leistungsverzeichnisse (.onlv) einlesen und bepreisen"
+                  onClick={() => navigate("/ausschreibungen")}
+                />
               )}
             </KBBereich>
           )}
@@ -494,42 +492,14 @@ export default function Index() {
           {/* ── Kunden ────────────────────────────────────────── */}
           {canView("kunden") && (
             <KBBereich icon={BookUser} title="Kunden">
-              {/*
-                „+ Neuer Kunde" steht bewusst als ERSTE Zeile im Bereich — genau
-                wie „+ Neues Angebot" bei den Dokumenten. Kundenwunsch: das
-                Anlegen soll überall ganz oben und sofort sichtbar sein.
-              */}
-              <KBButton
-                className="w-full"
-                icon={Plus}
-                iconClassName="text-kb-green"
-                label="Neuer Kunde"
-                onClick={() => navigate("/customers?neu=1")}
-              />
-              <KBSearchRow
-                buttonLabel="Kunde suchen"
-                onSearch={(q) => navigate(`/customers${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
-              />
-              <KBButton className="w-full" icon={BookUser} label="Kundenliste" onClick={() => navigate("/customers")} />
+              <KBButton className="w-full" icon={BookUser} label="Kunden" onClick={() => navigate("/customers")} />
             </KBBereich>
           )}
 
           {/* ── Artikel ───────────────────────────────────────── */}
           {canView("materialien") && (
             <KBBereich icon={Package} title="Artikel">
-              {/* „+ Neuer Artikel" ganz oben — gleiche Reihenfolge wie bei Dokumenten/Kunden. */}
-              <KBButton
-                className="w-full"
-                icon={Plus}
-                iconClassName="text-kb-green"
-                label="Neuer Artikel"
-                onClick={() => navigate("/materials?neu=1")}
-              />
-              <KBSearchRow
-                buttonLabel="Artikel suchen"
-                onSearch={(q) => navigate(`/materials${q ? `?q=${encodeURIComponent(q)}` : ""}`)}
-              />
-              <KBButton className="w-full" icon={Package} label="Artikelliste" onClick={() => navigate("/materials")} />
+              <KBButton className="w-full" icon={Package} label="Artikel" onClick={() => navigate("/materials")} />
             </KBBereich>
           )}
 
