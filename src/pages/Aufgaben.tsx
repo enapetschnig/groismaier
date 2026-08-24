@@ -14,6 +14,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Camera, ListTodo, Pencil, Plus, Trash2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { usePermissions } from "@/hooks/usePermissions";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
@@ -21,7 +22,7 @@ import { Button } from "@/components/ui/button";
 import { PhotoLightbox } from "@/components/PhotoLightbox";
 import { AufgabeDialog } from "@/components/aufgaben/AufgabeDialog";
 import {
-  AUFGABEN_FOTO_BUCKET, Aufgabe, AufgabeFoto, AufgabeStatus, STATUS_META, STATUS_REIHENFOLGE,
+  AUFGABEN_FOTO_BUCKET, Aufgabe, AufgabeFoto, AufgabeStatus, PRIO_META, STATUS_META, STATUS_REIHENFOLGE, prioRang, prioVon,
   aufgabenFotosTable, aufgabenTable, fotoUrl, fristInfo, istMirZugewiesen, ladeMeineTeamIds,
 } from "@/components/aufgaben/aufgabenShared";
 
@@ -41,6 +42,12 @@ export default function Aufgaben() {
   const [filter, setFilter] = useState<Filter>("alle");
   const [dialogOffen, setDialogOffen] = useState(false);
   const [bearbeite, setBearbeite] = useState<Aufgabe | null>(null);
+  // Deep-Link von der Hauptmaske: /aufgaben?neu=1 öffnet den Anlege-Dialog.
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("neu") === "1") { setBearbeite(null); setDialogOffen(true); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [lightbox, setLightbox] = useState<{ fotos: AufgabeFoto[]; index: number } | null>(null);
 
   const laden = useCallback(async () => {
@@ -116,11 +123,14 @@ export default function Aufgaben() {
       : a.team_id ? `Team ${teamNamen[a.team_id] || ""}`.trim()
         : "niemandem zugewiesen";
 
-  // Sortierung: Freigaben zuerst, Erledigtes zuletzt; innerhalb nach Frist
+  // Sortierung: Freigaben zuerst, Erledigtes zuletzt; innerhalb nach
+  // Priorität (hoch zuerst, Kundenwunsch 24.08.2026), dann Frist
   // (ohne Frist ans Ende), dann neueste zuerst.
   const sortiert = [...aufgaben].sort((a, b) => {
     const s = STATUS_REIHENFOLGE.indexOf(a.status) - STATUS_REIHENFOLGE.indexOf(b.status);
     if (s !== 0) return s;
+    const p = prioRang(a) - prioRang(b);
+    if (p !== 0) return p;
     if (a.faellig_am !== b.faellig_am) {
       if (!a.faellig_am) return 1;
       if (!b.faellig_am) return -1;
@@ -200,6 +210,11 @@ export default function Aufgaben() {
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-bold">{a.titel}</span>
                         <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${meta.chip}`}>{meta.label}</span>
+                        {prioVon(a) !== "normal" && (
+                          <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${PRIO_META[prioVon(a)].chip}`}>
+                            {PRIO_META[prioVon(a)].label}
+                          </span>
+                        )}
                         {mir && a.status !== "erledigt" && (
                           <span className="rounded-full border border-kb-blue/40 bg-kb-blue/10 px-2 py-0.5 text-[11px] font-semibold text-kb-blue-dark">für mich</span>
                         )}

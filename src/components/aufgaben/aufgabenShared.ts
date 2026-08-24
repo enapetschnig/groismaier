@@ -9,6 +9,7 @@
 import { supabase } from "@/integrations/supabase/client";
 
 export type AufgabeStatus = "wartet_freigabe" | "offen" | "in_arbeit" | "erledigt";
+export type AufgabePrio = "hoch" | "normal" | "niedrig";
 
 export interface Aufgabe {
   id: string;
@@ -21,6 +22,8 @@ export interface Aufgabe {
   faellig_am: string | null; // yyyy-mm-dd
   status: AufgabeStatus;
   erledigt_am: string | null;
+  /** Priorität (Kundenwunsch 24.08.2026, farblich) — Alt-Zeilen: normal. */
+  prioritaet?: AufgabePrio | null;
 }
 
 export interface AufgabeFoto {
@@ -66,6 +69,16 @@ export const STATUS_META: Record<AufgabeStatus, { label: string; chip: string; r
     punkt: "bg-green-500",
   },
 };
+
+/** Prioritäts-Farben (Kundenwunsch 24.08.2026). */
+export const PRIO_META: Record<AufgabePrio, { label: string; chip: string }> = {
+  hoch: { label: "Hoch", chip: "bg-red-100 text-red-800 border border-red-300" },
+  normal: { label: "Normal", chip: "bg-slate-100 text-slate-700 border border-slate-300" },
+  niedrig: { label: "Niedrig", chip: "bg-sky-100 text-sky-800 border border-sky-300" },
+};
+export const PRIO_REIHENFOLGE: AufgabePrio[] = ["hoch", "normal", "niedrig"];
+export const prioVon = (a: Pick<Aufgabe, "prioritaet">): AufgabePrio => a.prioritaet || "normal";
+export const prioRang = (a: Pick<Aufgabe, "prioritaet">): number => PRIO_REIHENFOLGE.indexOf(prioVon(a));
 
 /** Anzeige-Reihenfolge in der Liste: Freigaben zuerst, Erledigtes zuletzt. */
 export const STATUS_REIHENFOLGE: AufgabeStatus[] = ["wartet_freigabe", "offen", "in_arbeit", "erledigt"];

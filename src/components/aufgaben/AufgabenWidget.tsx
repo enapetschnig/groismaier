@@ -16,7 +16,7 @@ import { ArrowRight, ListTodo } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Aufgabe, AufgabeStatus, STATUS_META, STATUS_REIHENFOLGE,
-  aufgabenTable, fristInfo, istMirZugewiesen, ladeMeineTeamIds,
+  aufgabenTable, fristInfo, istMirZugewiesen, ladeMeineTeamIds, PRIO_META, prioRang, prioVon,
 } from "./aufgabenShared";
 
 export function AufgabenWidget({ userId, isAdmin }: { userId: string; isAdmin: boolean }) {
@@ -50,11 +50,15 @@ export function AufgabenWidget({ userId, isAdmin }: { userId: string; isAdmin: b
 
   const zeile = (a: Aufgabe) => {
     const frist = fristInfo(a.faellig_am);
+    const hoch = prioVon(a) === "hoch";
     const meta = STATUS_META[a.status];
     return (
       <div key={a.id} className="flex items-center gap-2 rounded border bg-white px-2.5 py-2 text-sm">
         <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${meta.punkt}`} title={meta.label} />
         <span className="min-w-0 flex-1 truncate font-medium">{a.titel}</span>
+        {hoch && (
+          <span className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${PRIO_META.hoch.chip}`}>Hoch</span>
+        )}
         {frist && (
           <span className={`shrink-0 text-xs ${frist.ueberfaellig ? "font-semibold text-red-600" : "text-muted-foreground"}`}>
             {frist.text}
@@ -71,7 +75,9 @@ export function AufgabenWidget({ userId, isAdmin }: { userId: string; isAdmin: b
     const freigaben = anzahl("wartet_freigabe");
     const naechste = aufgaben
       .filter((a) => a.status === "offen" || a.status === "in_arbeit")
-      .sort((a, b) => (!a.faellig_am ? 1 : !b.faellig_am ? -1 : a.faellig_am < b.faellig_am ? -1 : 1))
+      // Hohe Priorität zuerst (Kundenwunsch 24.08.2026), dann nach Frist.
+      .sort((a, b) => (prioRang(a) - prioRang(b))
+        || (!a.faellig_am ? 1 : !b.faellig_am ? -1 : a.faellig_am < b.faellig_am ? -1 : 1))
       .slice(0, 3);
     return (
       <Card className="cursor-pointer border-blue-200 bg-blue-50/30 transition-colors hover:bg-blue-50/60"

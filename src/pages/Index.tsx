@@ -503,6 +503,19 @@ export default function Index() {
             </KBBereich>
           )}
 
+          {/* ── Aufgaben (Kundenwunsch 24.08.2026: eigener Menüpunkt,
+              "das sieht man ja nicht") — zusätzlich zum Startseiten-Widget */}
+          <KBBereich icon={ListTodo} title="Aufgaben">
+            <KBButton
+              className="w-full"
+              icon={Plus}
+              iconClassName="text-kb-green"
+              label="Neue Aufgabe"
+              onClick={() => navigate("/aufgaben?neu=1")}
+            />
+            <KBButton className="w-full" icon={ListTodo} label="Aufgabenliste" onClick={() => navigate("/aufgaben")} />
+          </KBBereich>
+
           {/* ── Finanzen ──────────────────────────────────────── */}
           {canView("rechnungen") && (
             <KBBereich icon={Banknote} title="Finanzen">
@@ -570,7 +583,6 @@ export default function Index() {
           {/* ── Betrieb — für alle sichtbar ───────────────────── */}
           <KBBereich icon={HardHat} title="Betrieb">
             <KBButton className="w-full" icon={Clock} label="Zeiterfassung" onClick={() => navigate("/time-tracking")} />
-            <KBButton className="w-full" icon={ListTodo} label="Aufgaben" onClick={() => navigate("/aufgaben")} />
             {canView("plantafel") && (
               <KBButton className="w-full" icon={LayoutGrid} label="Plantafel" onClick={() => navigate("/schedule")} />
             )}

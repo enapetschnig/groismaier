@@ -16,6 +16,7 @@ import {
 } from "@/lib/kalkulationEngine";
 import { KatalogKategorie } from "./useKalkKatalog";
 import { MaterialTabelle } from "./MaterialTabelle";
+import { Rechenweg } from "./Rechenweg";
 import { NumInput } from "./NumInput";
 
 interface DragProps {
@@ -220,6 +221,9 @@ export function AufbauKarte({
                 )}
                 {faktor !== 1 && <div className="mt-1 text-[10px] text-muted-foreground">inkl. Aufschlag/Skonto (Faktor {fmt(faktor)})</div>}
               </div>
+              {/* Kundenwunsch 24.08.2026: "bei jedem Aufbau unter Zusammenfassung
+                  etwas aufklappen, dass ich sehe wie gerechnet wurde" */}
+              <Rechenweg m={m} erg={erg} bd={bd} faktor={faktor} />
             </div>
           </div>
 

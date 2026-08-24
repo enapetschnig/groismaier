@@ -17,7 +17,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import {
-  AUFGABEN_FOTO_BUCKET, Aufgabe, AufgabeFoto, aufgabenFotosTable, aufgabenTable, fotoUrl,
+  AUFGABEN_FOTO_BUCKET, Aufgabe, AufgabeFoto, AufgabePrio, PRIO_META, PRIO_REIHENFOLGE,
+  aufgabenFotosTable, aufgabenTable, fotoUrl, prioVon,
 } from "./aufgabenShared";
 
 interface Props {
@@ -38,6 +39,7 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
   /** "" = niemand, "u:<id>" = Person, "t:<id>" = Team. */
   const [zuweisung, setZuweisung] = useState("");
   const [faelligAm, setFaelligAm] = useState("");
+  const [prio, setPrio] = useState<AufgabePrio>("normal");
   const [personen, setPersonen] = useState<PersonOption[]>([]);
   const [teams, setTeams] = useState<TeamOption[]>([]);
   const [fotos, setFotos] = useState<AufgabeFoto[]>([]);
@@ -55,6 +57,7 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
     setBeschreibung(aufgabe?.beschreibung || "");
     setZuweisung(aufgabe?.zugewiesen_an ? `u:${aufgabe.zugewiesen_an}` : aufgabe?.team_id ? `t:${aufgabe.team_id}` : "");
     setFaelligAm(aufgabe?.faellig_am || "");
+    setPrio(aufgabe ? prioVon(aufgabe) : "normal");
     setNeueFotos((alt) => { alt.forEach((f) => URL.revokeObjectURL(f.url)); return []; });
     setFotos([]);
     (async () => {
@@ -122,6 +125,7 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
       zugewiesen_an: zugewiesenAn,
       team_id: teamId,
       faellig_am: faelligAm || null,
+      prioritaet: prio,
     };
 
     let aufgabeId = aufgabe?.id || null;
@@ -223,6 +227,24 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
             <div className="space-y-1">
               <Label>Zu erledigen bis</Label>
               <Input type="date" value={faelligAm} onChange={(e) => setFaelligAm(e.target.value)} />
+            </div>
+            {/* Priorität (Kundenwunsch 24.08.2026) — farbige Auswahl-Knöpfe */}
+            <div className="space-y-1 sm:col-span-2">
+              <Label>Priorität</Label>
+              <div className="flex gap-1.5">
+                {PRIO_REIHENFOLGE.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    onClick={() => setPrio(p)}
+                    className={`min-h-[40px] flex-1 rounded-md px-2 text-sm font-semibold ${PRIO_META[p].chip} ${
+                      prio === p ? "ring-2 ring-kb-blue-dark ring-offset-1" : "opacity-60 hover:opacity-100"
+                    }`}
+                  >
+                    {PRIO_META[p].label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
