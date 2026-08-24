@@ -17,6 +17,7 @@ import { round4 } from "@/lib/kalkulationEngine";
 import { formatForInput, parseDecimal } from "@/lib/num";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable, mengenEinheit } from "./useKalkKatalog";
 import { ArtikelKalkulationDialog } from "./ArtikelKalkulationDialog";
+import { EinheitSelect } from "@/components/EinheitSelect";
 
 const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
@@ -721,8 +722,11 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                               className="kb-input h-11 min-h-0 px-2 py-1 text-right text-xs tabular-nums disabled:bg-muted disabled:opacity-60 sm:h-7" />
                           </td>
                           <td className="px-2 py-1">
-                            <BlurInput value={a.einheit || ""} onCommit={(v) => updateArtikel(a.id, { einheit: v }, a.quelle)}
-                              className="kb-input h-11 min-h-0 px-2 py-1 text-xs sm:h-7" />
+                            {/* Dropdown statt Freitext (Kundenmeldung 24.08.2026);
+                                Liste erweiterbar im Admin-Bereich → Einheiten. */}
+                            <EinheitSelect value={a.einheit || ""}
+                              onChange={(v) => updateArtikel(a.id, { einheit: v }, a.quelle)}
+                              className="kb-input h-11 min-h-0 w-full px-1 py-1 text-xs sm:h-7" />
                           </td>
                           {block.typ === "material" && (
                             <td className="px-1 py-1">

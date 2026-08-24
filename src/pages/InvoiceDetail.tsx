@@ -18,6 +18,7 @@ import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
 import { istEntwurfBeleg, hatPlatzhalterNummer, darfAusgegebenWerden as belegDarfRaus } from "@/lib/belegEntwurf";
 import { BelegMailDialog } from "@/components/BelegMailDialog";
+import { EinheitSelect } from "@/components/EinheitSelect";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { KalkulationFields } from "@/components/KalkulationFields";
 import { calcEinzelpreis, type KalkulationInput } from "@/lib/kalkulation";
@@ -6685,10 +6686,10 @@ export default function InvoiceDetail() {
                   </div>
                   <div className="w-32">
                     <Label className="text-xs">Einheit</Label>
-                    <Input list="mask-einheit-liste" value={maskEinheit} onChange={(e) => setMaskEinheit(e.target.value)} className="h-9" />
-                    <datalist id="mask-einheit-liste">
-                      {einheiten.map((e) => <option key={e} value={e} />)}
-                    </datalist>
+                    {/* Echtes Dropdown (Kundenmeldung 24.08.2026) — die
+                        datalist wirkte wie ein leeres Freitext-Feld. */}
+                    <EinheitSelect value={maskEinheit} onChange={setMaskEinheit}
+                      className="kb-input h-9 min-h-0 w-full px-2 py-1 text-sm" />
                   </div>
                   {!hidePrices && (
                     <div className="w-20">

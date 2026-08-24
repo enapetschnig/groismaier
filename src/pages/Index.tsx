@@ -57,6 +57,11 @@ export default function Index() {
     { id: string; bezeichnung: string; kennzeichen: string | null; faellig: string; tage: number }[]
   >([]);
   const [offenePostenCount, setOffenePostenCount] = useState(0);
+  /** Nicht abgerechnete Lieferscheine / Regieberichte (Kundenwunsch
+   *  24.08.2026: "damit ich da schon sehen kann, dass noch etwas nicht
+   *  abgerechnet ist"). */
+  const [lieferscheineOffen, setLieferscheineOffen] = useState(0);
+  const [regieOffen, setRegieOffen] = useState(0);
   const { handleRestartInstallGuide } = useOnboarding();
   // Läuft die Seite schon als installierte App? Dann braucht es keinen
   // Installieren-Knopf in der Kopfzeile. (iOS setzt navigator.standalone.)
@@ -197,6 +202,24 @@ export default function Index() {
       .then(({ count }) => {
         if (!cancelled) setOffenePostenCount(count || 0);
       });
+    // Nicht abgerechnete Lieferscheine (Badge am Dokumente-Eintrag).
+    supabase
+      .from("invoices")
+      .select("id", { count: "exact", head: true })
+      .eq("typ", "lieferschein")
+      .eq("status", "offen")
+      .then(({ count }) => {
+        if (!cancelled) setLieferscheineOffen(count || 0);
+      });
+    // Nicht verrechnete Regieberichte (Badge am Betrieb-Eintrag).
+    if (canView("regieberichte")) {
+      (supabase.from("disturbances") as any)
+        .select("id", { count: "exact", head: true })
+        .or("is_verrechnet.is.null,is_verrechnet.eq.false")
+        .then(({ count }: { count: number | null }) => {
+          if (!cancelled) setRegieOffen(count || 0);
+        });
+    }
     return () => {
       cancelled = true;
     };
@@ -468,6 +491,8 @@ export default function Index() {
                 className="w-full"
                 icon={Truck}
                 label="Lieferscheine"
+                badge={lieferscheineOffen}
+                title={lieferscheineOffen > 0 ? `${lieferscheineOffen} Lieferschein(e) noch nicht abgerechnet` : undefined}
                 onClick={() => navigate("/invoices?tab=lieferschein")}
               />
               <KBButton
@@ -587,7 +612,10 @@ export default function Index() {
               <KBButton className="w-full" icon={LayoutGrid} label="Plantafel" onClick={() => navigate("/schedule")} />
             )}
             {canView("regieberichte") && (
-              <KBButton className="w-full" icon={FileText} label="Regieberichte" onClick={() => navigate("/disturbances")} />
+              <KBButton className="w-full" icon={FileText} label="Regieberichte"
+                badge={regieOffen}
+                title={regieOffen > 0 ? `${regieOffen} Regiebericht(e) noch nicht verrechnet` : undefined}
+                onClick={() => navigate("/disturbances")} />
             )}
             {canView("eingangsrechnungen") && (
               <KBButton
