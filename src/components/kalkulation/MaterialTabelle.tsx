@@ -32,7 +32,7 @@ import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
-  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit,
+  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
 } from "@/lib/kalkulationEngine";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -226,6 +226,9 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       product: artikelName, ekPrice: num(art?.ek), vkPrice: num(art?.vk),
       // Vergleichswerte für den Stammdaten-Abgleich (kalkKatalogSync).
       katalogEk: num(art?.ek), katalogVk: num(art?.vk),
+      // Formel-Verbindung: von Hand gepflegte Stammdaten-VKs bleiben auch in
+      // der Zeile manuell; alles andere rechnet bei EK-Änderungen mit.
+      vkManuell: !!art?.vkManuell,
       // Einheit mitnehmen: Nur damit kann die Kalkulation merken, dass ein
       // nach m³ bepreister Artikel als €/m² Aufbauflaeche eingesetzt wird.
       einheit: art?.einheit || "",
@@ -313,7 +316,11 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     <>
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
-          KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke × m³-Preis → {fmtEuro(r.erg.vkProM2)} / m² (inkl. Aufschlag)
+          KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke
+          {r.erg.vkAbgeleitet || !zeilenVkIstManuell(row)
+            ? ` × ${fmt(num(row.ekPrice))} €/m³ × ${fmt(bd.vkFaktor)}`
+            : ` × VK ${fmt(num(row.vkPrice))} €/m³`}
+          {" → "}{fmtEuro(r.erg.vkProM2)} / m²
         </div>
       )}
       {r.istDaemm && row.product && (
@@ -438,7 +445,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                       die frühere Beschriftung „€/m²" führte exakt zum
                       Faktor-100-Fehler des Kunden (0,16 statt 16 €/m²). */}
                   EK {row.calc || r.istRiegel || r.istDaemm ? "€/m³" : row.manual ? "€ gesamt" : "€/m²"}
-                  <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, { ekPrice: n ?? 0 })} className="h-11" />
+                  <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerEk(row, n ?? 0, bd))} className="h-11" />
                 </label>
                 <label className="block text-[11px] text-muted-foreground">
                   VK {row.manual ? "€ gesamt" : r.istDaemm ? "€/m³" : "€/m²"}
@@ -447,7 +454,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   ) : r.istRiegel ? (
                     <div className="flex h-11 items-center justify-end pr-2 tabular-nums">{fmt(r.erg.vkProM2)}</div>
                   ) : (
-                    <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, { vkPrice: n ?? 0 })} className="h-11" />
+                    <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-11" />
                   )}
                 </label>
               </div>
@@ -560,7 +567,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                     </>
                   )}
                   <td className="py-1 pr-1">
-                    <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, { ekPrice: n ?? 0 })} className="h-7 sm:h-7"
+                    <NumInput value={row.ekPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerEk(row, n ?? 0, bd))} className="h-7 sm:h-7"
                       title={row.calc || r.istRiegel || r.istDaemm ? "€ / m³" : row.manual ? "absoluter €-Betrag" : "€ / m²"} />
                   </td>
                   <td className="py-1 pr-1">
@@ -569,7 +576,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                     ) : r.istRiegel ? (
                       <div className="pt-1.5 text-right tabular-nums" title="EK = VK (Riegelkonstruktion ohne Aufschlag)">{fmt(r.erg.vkProM2)}</div>
                     ) : (
-                      <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, { vkPrice: n ?? 0 })} className="h-7 sm:h-7"
+                      <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-7 sm:h-7"
                         title={row.manual ? "absoluter €-Betrag" : r.istDaemm ? "€ / m³" : "€ / m²"} />
                     )}
                   </td>

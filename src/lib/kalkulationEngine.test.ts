@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   calcMaterialRow, calcLohnkosten, calcLohnSelbstkosten, calcArbeitsstunden,
   istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
+  zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
   type MaterialRow, type Betriebsdaten,
 } from "./kalkulationEngine";
 
@@ -183,5 +184,44 @@ describe("Rundung", () => {
     expect(round2(1.005)).toBe(1.01);
     expect(round2(2.675)).toBe(2.68);
     expect(round2(-1.005)).toBe(-1);
+  });
+});
+
+describe("Formel-Verbindung in der Materialzeile (Kundenmeldung 24.08.2026)", () => {
+  it("Christians KVH-Fall: EK 440 eintippen → 12,47 €/m² statt 11,13", () => {
+    // Zeile trug noch den alten Katalog-VK 530 €/m³ — die Anzeige rechnete
+    // 3,5 × 0,06 × 0,10 × 530 = 11,13. Nach der EK-Änderung muss der VK
+    // mitrechnen: 440 × 1,35 = 594 → 3,5 × 0,06 × 0,10 × 594 = 12,47.
+    const alt = zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 392.59, vkPrice: 530, katalogEk: 392.59, katalogVk: 530 });
+    const neu = { ...alt, ...zeilenPatchFuerEk(alt, 440, bd) };
+    const r = calcMaterialRow(neu, { ...modul, insulationThickness: 10 }, bd);
+    expect(round2(r.vkProM2)).toBeCloseTo(12.47, 2);
+  });
+
+  it("von Hand gesetzter Zeilen-VK bleibt bei EK-Änderung stehen", () => {
+    const alt = zeile({ ekPrice: 100, vkPrice: 200, vkManuell: true });
+    const patch = zeilenPatchFuerEk(alt, 120, bd);
+    expect(patch.vkPrice).toBeUndefined();
+  });
+
+  it("Alt-Zeile: VK weicht vom Katalog-Vergleichswert ab → gilt als manuell", () => {
+    const alt = zeile({ ekPrice: 100, vkPrice: 180, katalogVk: 135 });
+    expect(zeilenVkIstManuell(alt)).toBe(true);
+    const patch = zeilenPatchFuerEk(alt, 120, bd);
+    expect(patch.vkPrice).toBeUndefined();
+  });
+
+  it("VK-Feld leeren aktiviert die Formel sofort wieder", () => {
+    const alt = zeile({ ekPrice: 105, vkPrice: 200, vkManuell: true });
+    const patch = zeilenPatchFuerVk(alt, null, bd);
+    expect(patch.vkPrice).toBeCloseTo(105 * 1.35, 4);
+    expect(patch.vkManuell).toBe(false);
+  });
+
+  it("CLT-Fall: EK ändern rechnet die m²-Summe neu (VK folgt)", () => {
+    const alt = zeile({ category: "CLT Deckenelemente", ekPrice: 105, vkPrice: 141.75, katalogVk: 141.75 });
+    const neu = { ...alt, ...zeilenPatchFuerEk(alt, 110, bd) };
+    const r = calcMaterialRow(neu, modul, bd);
+    expect(r.vkProM2).toBeCloseTo(110 * 1.35, 2);
   });
 });

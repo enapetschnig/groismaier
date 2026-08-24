@@ -58,6 +58,13 @@ export interface MaterialRow {
    */
   katalogEk?: number | null;
   katalogVk?: number | null;
+  /**
+   * true: Der Zeilen-VK wurde von Hand eingetippt — EK-Änderungen lassen ihn
+   * in Ruhe. false/undefined: VK hängt an der Formel (EK × VK-Faktor) und
+   * rechnet bei jeder EK-Änderung der Zeile mit (Kundenmeldung 24.08.2026:
+   * "er muss die Formel immer behalten und rechnen").
+   */
+  vkManuell?: boolean;
 }
 
 /** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten, auch als Preiseinheit "€ / m³"). */
@@ -420,6 +427,54 @@ export interface MaterialRowErgebnis {
  * Jetzt gilt dieselbe Regel wie im Katalog ("VK leer → EK × 1,35"), und die
  * Zeile wird als abgeleitet gekennzeichnet.
  */
+/**
+ * Gilt der Zeilen-VK als von Hand gesetzt? Explizites Flag gewinnt; ohne
+ * Flag (Alt-Zeilen) zählt ein VK, der nachweislich vom Katalog-Vergleichswert
+ * abweicht, als bewusste Eingabe — alles andere hängt an der Formel.
+ */
+export function zeilenVkIstManuell(row: Pick<MaterialRow, "vkPrice" | "vkManuell" | "katalogVk">): boolean {
+  if (typeof row.vkManuell === "boolean") return row.vkManuell;
+  const vk = num(row.vkPrice);
+  if (vk <= 0) return false;
+  if (row.katalogVk === null || row.katalogVk === undefined) return false;
+  return Math.abs(vk - num(row.katalogVk)) > 1e-9;
+}
+
+/**
+ * Patch für eine EK-Änderung in der Materialzeile (Kundenmeldung 24.08.2026:
+ * KVH-Zeile zeigte 11,13 statt 12,47 €/m², weil der beim Auswählen kopierte
+ * Katalog-VK stehen blieb): Solange der VK nicht von Hand gesetzt ist,
+ * rechnet er als EK × VK-Faktor sofort mit — sichtbar im VK-Feld.
+ */
+export function zeilenPatchFuerEk(
+  row: Pick<MaterialRow, "vkPrice" | "vkManuell" | "katalogVk">, ekNeu: number, bd: Betriebsdaten,
+): Partial<MaterialRow> {
+  const ek = num(ekNeu);
+  const patch: Partial<MaterialRow> = { ekPrice: ek };
+  if (!zeilenVkIstManuell(row)) {
+    patch.vkPrice = ek > 0 ? round4(ek * (bd.vkFaktor > 0 ? bd.vkFaktor : 1)) : 0;
+    patch.vkManuell = false;
+  }
+  return patch;
+}
+
+/**
+ * Patch für eine VK-Änderung in der Materialzeile: Eintippen löst die Formel
+ * (vkManuell), Leeren aktiviert sie wieder und rechnet sofort frisch aus dem
+ * aktuellen EK.
+ */
+export function zeilenPatchFuerVk(
+  row: Pick<MaterialRow, "ekPrice">, vkNeu: number | null, bd: Betriebsdaten,
+): Partial<MaterialRow> {
+  const vk = vkNeu === null ? 0 : num(vkNeu);
+  if (vk > 0) return { vkPrice: vk, vkManuell: true };
+  const ek = num(row.ekPrice);
+  return {
+    vkPrice: ek > 0 ? round4(ek * (bd.vkFaktor > 0 ? bd.vkFaktor : 1)) : 0,
+    vkManuell: false,
+  };
+}
+
 export function vkAusEk(ekRoh: number, vkRoh: number, bd: Betriebsdaten): { vk: number; abgeleitet: boolean } {
   const ek = num(ekRoh);
   const vk = num(vkRoh);
@@ -1285,6 +1340,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
             einheit: typeof r?.einheit === "string" ? r.einheit : "",
             katalogEk: numOrNull(r?.katalogEk),
             katalogVk: numOrNull(r?.katalogVk),
+            vkManuell: typeof r?.vkManuell === "boolean" ? r.vkManuell : undefined,
           }))
         : base.materialRows;
       return {
