@@ -167,13 +167,14 @@ export default function KalkulationHub() {
           beschreibung: `Bereich: ${r.name}`,
           menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
           gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+          bereich: r.name,
         } as AngebotItem);
         // Gruppen müssen über das GANZE Angebot eindeutig sein (zwei Aufbauten
         // "Dach" in verschiedenen Bereichen fielen sonst zusammen). Suffix statt
         // Präfix: so trägt die Sammelzeile den Gruppennamen weiterhin und die
         // PDF-Kapitellogik druckt keine doppelte Überschrift.
         for (const it of mitSelbstkosten(items, projekt)) {
-          alleItems.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${r.name}` : it.gruppe });
+          alleItems.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${r.name}` : it.gruppe, bereich: r.name });
         }
       }
       if (!alleItems.some((it) => it.ist_gruppensumme)) {
@@ -380,15 +381,20 @@ export default function KalkulationHub() {
           {/* Auswahl fürs gemeinsame Angebot (Kundenwunsch 23.08.2026) */}
           {!r.ist_vorlage && (
             <span
-              className="flex h-10 items-center pr-1"
+              className="flex h-10 items-center gap-1 pr-1"
               onClick={(e) => { e.stopPropagation(); toggleAuswahl(r.id); }}
-              title="Für ein gemeinsames Angebot auswählen"
+              title="Für ein gemeinsames Angebot auswählen — die Nummer zeigt die Bereichs-Reihenfolge"
             >
               <Checkbox
                 checked={auswahl.includes(r.id)}
                 className="h-5 w-5"
                 aria-label={`${r.name} für gemeinsames Angebot auswählen`}
               />
+              {auswahl.includes(r.id) && (
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[11px] font-bold text-primary-foreground">
+                  {auswahl.indexOf(r.id) + 1}
+                </span>
+              )}
             </span>
           )}
           <div className="h-10 w-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">

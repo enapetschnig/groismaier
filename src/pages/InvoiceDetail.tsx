@@ -163,6 +163,12 @@ interface InvoiceItem {
   gruppe?: string | null;
   auf_pdf?: boolean;
   ist_gruppensumme?: boolean;
+  /**
+   * Projektbereich (Sammelangebot aus mehreren Kalkulationen, 24.08.2026):
+   * Name der Quell-Kalkulation. Das PDF gruppiert danach — fette Bereichs-
+   * Überschrift, Zwischensumme je Bereich, neue Seite je Bereich.
+   */
+  bereich?: string | null;
 }
 
 /** Kapitelname einer Position (getrimmt); "" = ungruppierte Position. */
@@ -245,7 +251,7 @@ const mitSelbstkosten = (angebotItems: AngebotItem[], projekt: ProjektErgebnis):
   });
 };
 
-const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme"] as const;
+const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme", "bereich"] as const;
 /** Insert scheiterte NUR an den (noch) fehlenden Gruppen-Spalten? */
 const isGruppenSpaltenFehlen = (err: any): boolean =>
   typeof err?.message === "string" &&
@@ -1288,9 +1294,10 @@ export default function InvoiceDetail() {
             beschreibung: `Bereich: ${bereich}`,
             menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
             gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+            bereich,
           } as AngebotItem);
           for (const it of mitSelbstkosten(rohItems, projekt)) {
-            neu.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe });
+            neu.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe, bereich });
           }
         } else {
           neu.push(...mitSelbstkosten(rohItems, projekt));
@@ -1338,6 +1345,7 @@ export default function InvoiceDetail() {
           rabatt_prozent: 0,
           gesamtpreis: Number(n.gesamtpreis) || 0,
           gruppe: n.gruppe ? String(n.gruppe) : null,
+          bereich: (n as any).bereich ? String((n as any).bereich) : null,
           // Sammelzeilen sind immer sichtbar; für Detailzeilen gewinnt die
           // bisherige Auswahl des Chefs vor dem Vorschlag der Kalkulation.
           auf_pdf: n.ist_gruppensumme ? true : (alt ?? n.auf_pdf !== false),
@@ -1551,6 +1559,7 @@ export default function InvoiceDetail() {
         gruppe: (it as any).gruppe || null,
         auf_pdf: (it as any).auf_pdf !== false,
         ist_gruppensumme: !!(it as any).ist_gruppensumme,
+        bereich: (it as any).bereich || null,
       }));
 
       // „Preise neu laden" (Dokument-kopieren-Option): aktuelle Katalogpreise
@@ -1752,6 +1761,7 @@ export default function InvoiceDetail() {
               // Interner Wert der Detailzeilen (Material-EK, Lohn, Fahrt …) —
               // steht in ek_preis, damit die Belegsumme unberührt bleibt.
               ek_preis: Number(it.ek_preis) || 0,
+              bereich: it.bereich ? String(it.bereich) : null,
             })));
           }
           if (data.betreff) {
@@ -2088,6 +2098,7 @@ export default function InvoiceDetail() {
         gruppe: (it as any).gruppe || null,
         auf_pdf: (it as any).auf_pdf !== false,
         ist_gruppensumme: !!(it as any).ist_gruppensumme,
+        bereich: (it as any).bereich || null,
       })));
     }
 
@@ -2442,6 +2453,50 @@ export default function InvoiceDetail() {
   const setGruppenDetailsSichtbar = (gruppe: string, sichtbar: boolean) => {
     setItemsDirty(prev => prev.map(it =>
       gruppeVon(it) === gruppe && istDetailzeile(it) ? { ...it, auf_pdf: sichtbar } : it));
+  };
+
+  /**
+   * Globaler Schalter über ALLE Aufbauten (Kundenwunsch 24.08.2026: "ganz
+   * oben einen Button wo man alle im Angebot zeigen [kann] — dann ist das für
+   * jeden Aufbau automatisch ausgewählt").
+   */
+  const setAlleDetailsSichtbar = (sichtbar: boolean) => {
+    setItemsDirty(prev => prev.map(it =>
+      istDetailzeile(it) ? { ...it, auf_pdf: sichtbar } : it));
+  };
+
+  /**
+   * Freie Textzeile unter der LETZTEN Zeile eines Aufbaus einfügen
+   * (Kundenwunsch 24.08.2026: "händisch einen Text hinzufügen unter der
+   * Hauptposition"). Betragslos (menge 0, keine Einheit) — druckt nur den
+   * Text, siehe istTextzeile() in invoiceHtml.
+   */
+  const addTextzeileZuGruppe = (gruppe: string) => {
+    setItemsDirty(prev => {
+      const letzterIdx = prev.map(it => gruppeVon(it)).lastIndexOf(gruppe);
+      if (letzterIdx < 0) return prev;
+      const arr = [...prev];
+      arr.splice(letzterIdx + 1, 0, {
+        position: 0,
+        beschreibung: "",
+        kurztext: "",
+        langtext: "",
+        menge: 0,
+        einheit: "",
+        einzelpreis: 0,
+        rabatt_prozent: 0,
+        gesamtpreis: 0,
+        gruppe,
+        auf_pdf: true,
+        ist_gruppensumme: false,
+        // Bereich der Gruppe erben — sonst zerrisse die Zeile den
+        // Bereichs-Block im Sammelangebots-PDF.
+        bereich: prev[letzterIdx].bereich || null,
+      } as InvoiceItem);
+      return arr.map((it, i) => ({ ...it, position: i + 1 }));
+    });
+    // Gruppe aufklappen, damit die neue Zeile sofort bearbeitbar ist.
+    setGruppenOffen(prev => ({ ...prev, [gruppe]: true }));
   };
 
   // ── Kalkulation ───────────────────────────────────────────────────────────
@@ -3387,6 +3442,7 @@ export default function InvoiceDetail() {
         gruppe: gruppeVon(item) || null,
         auf_pdf: istSichtbar(item),
         ist_gruppensumme: !!item.ist_gruppensumme,
+        bereich: item.bereich || null,
       }));
 
       // Tolerant gegen eine (noch) fehlende Gruppen-Migration: schlägt der
@@ -4031,6 +4087,7 @@ export default function InvoiceDetail() {
         gruppe: gruppeVon(item) || null,
         auf_pdf: istSichtbar(item),
         ist_gruppensumme: !!(item as any).ist_gruppensumme,
+        bereich: item.bereich || null,
       }));
 
       const { error: dupItemsError } = await supabase.from("invoice_items").insert(itemsToInsert);
@@ -4535,6 +4592,7 @@ export default function InvoiceDetail() {
     gruppe: gruppeVon(item) || null,
     auf_pdf: istSichtbar(item),
     ist_gruppensumme: !!item.ist_gruppensumme,
+    bereich: item.bereich || null,
   }));
 
   // Stornierte Rechnung: Nur Stornobeleg anzeigen
@@ -6807,6 +6865,24 @@ export default function InvoiceDetail() {
                       Preise anpassen
                     </Button>
                   )}
+                  {/* Alle Unterpositionen aller Aufbauten auf einmal ins
+                      Kundendokument (Kundenwunsch 24.08.2026). */}
+                  {items.some(it => istDetailzeile(it)) && (() => {
+                    const alleSichtbar = items.filter(istDetailzeile).every(istSichtbar);
+                    return (
+                      <Button
+                        onClick={() => setAlleDetailsSichtbar(!alleSichtbar)}
+                        disabled={isLocked}
+                        variant="outline" size="sm" className="gap-1"
+                        title={alleSichtbar
+                          ? "Alle Unterpositionen (Material, Arbeitszeit …) wieder ausblenden — nur die Aufbau-Summen bleiben"
+                          : "Alle Unterpositionen aller Aufbauten im Kundendokument zeigen"}
+                      >
+                        {alleSichtbar ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        {alleSichtbar ? "Unterpositionen ausblenden" : "Alle im Angebot zeigen"}
+                      </Button>
+                    );
+                  })()}
                   <Button onClick={addItem} variant="outline" size="sm" className="gap-1">
                     <Plus className="w-4 h-4" />
                     Position
@@ -7271,6 +7347,13 @@ export default function InvoiceDetail() {
                                         onCheckedChange={(v) => setGruppenDetailsSichtbar(b.gruppe, v)} />
                                     </div>
                                   )}
+                                  {!isLocked && (
+                                    <Button variant="ghost" size="sm" className="h-9 gap-1 text-[11px] text-muted-foreground"
+                                      onClick={() => addTextzeileZuGruppe(b.gruppe)}
+                                      title="Freie Textzeile unter diesem Aufbau einfügen (druckt nur den Text)">
+                                      <Plus className="w-3.5 h-3.5" /> Textzeile
+                                    </Button>
+                                  )}
                                 </div>
                               )}
                               <div className="mt-2 flex flex-col gap-2">
@@ -7437,6 +7520,13 @@ export default function InvoiceDetail() {
                                   )}
                                 </span>
                                 <div className="ml-auto flex items-center gap-3 shrink-0">
+                                  {!isLocked && (
+                                    <Button variant="ghost" size="sm" className="h-8 gap-1 text-[11px] text-muted-foreground"
+                                      onClick={() => addTextzeileZuGruppe(b.gruppe)}
+                                      title="Freie Textzeile unter diesem Aufbau einfügen (druckt nur den Text)">
+                                      <Plus className="w-3.5 h-3.5" /> Textzeile
+                                    </Button>
+                                  )}
                                   {g.details.length > 0 && !isLocked && (
                                     <div className="flex items-center gap-1.5">
                                       <Label htmlFor={`grp-sw-w-${bi}`} className="text-[11px] text-muted-foreground cursor-pointer">

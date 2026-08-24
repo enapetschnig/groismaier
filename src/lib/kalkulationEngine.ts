@@ -1063,6 +1063,8 @@ export interface AngebotItem {
    * steht hier.
    */
   ek_preis?: number;
+  /** Projektbereich (Sammelangebot): Name der Quell-Kalkulation. */
+  bereich?: string;
 }
 
 /**

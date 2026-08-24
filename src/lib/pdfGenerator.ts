@@ -593,6 +593,13 @@ export async function generateInvoicePdf(
   const kapitelRows = new Set<number>();
   const detailRows = new Set<number>();
   const summenRows = new Set<number>();
+  /** Reine Textzeilen — drucken fett (Bereichs-/Sammelrechnungs-Überschriften). */
+  const textRows = new Set<number>();
+  /** Bereichs-Zwischensummen (Sammelangebot, Kundenwunsch 24.08.2026). */
+  const zwischenRows = new Set<number>();
+  /** Projektbereich je Body-Zeile (null = keiner) — steuert Zwischensummen
+   *  und den Seitenumbruch je Bereich. */
+  const bereichVonRow: (string | null)[] = [];
   const tableBody: any[][] = [];
   // Kumulierte Zeilensummen (Index = Body-Zeile) für „Übertrag".
   const uebertragNachZeile: Record<number, number> = {};
@@ -608,6 +615,7 @@ export async function generateInvoicePdf(
       // am linken Rand, nicht erst in der Beschreibungsspalte.
       tableBody.push([{ content: e.titel, colSpan: SPALTEN_ANZAHL }]);
       uebertragNachZeile[rowIdx] = letzterUebertrag();
+      bereichVonRow.push(null); // erbt im Nachlauf den Bereich der nächsten Zeile
       return;
     }
     const item = items[e.index];
@@ -619,6 +627,8 @@ export async function generateInvoicePdf(
     }
     if (e.detail) detailRows.add(rowIdx);
     if (e.summenzeile) summenRows.add(rowIdx);
+    if (istTextzeile(item)) textRows.add(rowIdx);
+    bereichVonRow.push(((item as any).bereich as string) || null);
     // Nur Kurztext in die Zelle. Langtext wird in didDrawCell manuell
     // darunter gezeichnet; die zusätzliche Höhe reserviert didParseCell
     // via minCellHeight.
@@ -654,6 +664,55 @@ export async function generateInvoicePdf(
       (uebertragNachZeile[rowIdx - 1] ?? letzterUebertrag()) + (e.detail ? 0 : p.gesamt),
     );
   });
+
+  // ── Projektbereiche (Sammelangebot, Kundenwunsch 24.08.2026) ─────────────
+  // Kapitel-Zeilen erben den Bereich der auf sie folgenden Position.
+  for (let i = bereichVonRow.length - 1; i >= 0; i--) {
+    if (bereichVonRow[i] === null && kapitelRows.has(i) && i + 1 < bereichVonRow.length) {
+      bereichVonRow[i] = bereichVonRow[i + 1];
+    }
+  }
+  const distinctBereiche = new Set(bereichVonRow.filter(Boolean));
+  /** Globale Zeilenindizes, an denen ein neuer Bereich (= neue Seite) beginnt. */
+  const bereichSeitenStarts: number[] = [];
+  if (distinctBereiche.size >= 2 && !hidePrices) {
+    // Zusammenhängende Bereichs-Blöcke bestimmen (Reihenfolge der Positionen).
+    const runs: { bereich: string; start: number; ende: number }[] = [];
+    for (let i = 0; i < bereichVonRow.length; i++) {
+      const b = bereichVonRow[i];
+      const last = runs[runs.length - 1];
+      if (b && last && last.bereich === b && last.ende === i - 1) last.ende = i;
+      else if (b) runs.push({ bereich: b, start: i, ende: i });
+    }
+    // Zwischensummen von HINTEN einfügen — so bleiben die vorderen Indizes
+    // aller Karten (langtextInfo, Sets, Übertrag) gültig und nur die hinteren
+    // müssen um 1 rücken.
+    const shiftAb = (ab: number) => {
+      for (const set of [kapitelRows, detailRows, summenRows, textRows, zwischenRows]) {
+        const neu = [...set].map((i) => (i >= ab ? i + 1 : i));
+        set.clear(); neu.forEach((i) => set.add(i));
+      }
+      for (const rec of [langtextInfo as Record<number, unknown>, uebertragNachZeile as Record<number, unknown>]) {
+        const keys = Object.keys(rec).map(Number).filter((k) => k >= ab).sort((a, b) => b - a);
+        for (const k of keys) { rec[k + 1] = rec[k]; delete rec[k]; }
+      }
+    };
+    for (const run of [...runs].reverse()) {
+      const summe = r2((uebertragNachZeile[run.ende] ?? 0) - (run.start > 0 ? (uebertragNachZeile[run.start - 1] ?? 0) : 0));
+      const pos = run.ende + 1;
+      shiftAb(pos);
+      const zw: any[] = [{ content: `Zwischensumme ${run.bereich}`, colSpan: SPALTEN_ANZAHL - 1 }, fmtCurrency(summe)];
+      tableBody.splice(pos, 0, zw);
+      bereichVonRow.splice(pos, 0, run.bereich);
+      zwischenRows.add(pos);
+      uebertragNachZeile[pos] = uebertragNachZeile[run.ende] ?? 0;
+    }
+    // Seitenumbrüche: jede Kalkulation beginnt auf einer neuen Seite.
+    for (let i = 1; i < bereichVonRow.length; i++) {
+      const b = bereichVonRow[i];
+      if (b && b !== bereichVonRow[i - 1]) bereichSeitenStarts.push(i);
+    }
+  }
 
   // Build totals rows for the table footer.
   // mwst_exempt-Zeilen sind bereits Brutto-Abzüge (z.B. Anzahlungen) und
@@ -780,10 +839,20 @@ export async function generateInvoicePdf(
   // aktuelle Seite passt; wenn nein, addPage() (siehe unten).
   // Übertrag (KingBill-Vorlage): Summe am Seitenende + Wiederaufnahme oben.
   const seitenEnde: Record<number, { y: number; summe: number }> = {};
+  // Sammelangebot: jede Kalkulation (Bereich) beginnt auf einer neuen Seite —
+  // die Tabelle wird dafür in Segmente geteilt; alle Index-Karten bleiben
+  // GLOBAL adressiert (off + row.index).
+  const segmentGrenzen = [0, ...bereichSeitenStarts, tableBody.length];
+  for (let segIdx = 0; segIdx < segmentGrenzen.length - 1; segIdx++) {
+  const segStart = segmentGrenzen[segIdx];
+  const segEnde = segmentGrenzen[segIdx + 1];
+  if (segEnde <= segStart) continue;
+  if (segIdx > 0) { pdf.addPage(); y = 26; }
+  const off = segStart;
   autoTable(pdf, {
     startY: y,
     head: tableHead,
-    body: tableBody,
+    body: tableBody.slice(segStart, segEnde),
     theme: "plain",
     rowPageBreak: "avoid",
     margin: { left: ml, right: mr, top: 26, bottom: footerH + 12 },
@@ -830,7 +899,16 @@ export async function generateInvoicePdf(
     didParseCell: (data: any) => {
       // ── Kapitel / Detail / Sammelzeile optisch absetzen ──────────────────
       if (data.section === "body") {
-        const ri = data.row.index;
+        const ri = off + data.row.index;
+        if (textRows.has(ri)) {
+          // Bereichs-/Titel-Textzeile: FETT (Kundenwunsch 24.08.2026).
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fontSize = 9.5;
+        }
+        if (zwischenRows.has(ri)) {
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fillColor = [238, 234, 219];
+        }
         if (kapitelRows.has(ri)) {
           // Kapitelüberschrift (Aufbau): fett auf hellem Grund, über alle Spalten.
           data.cell.styles.fontStyle = "bold";
@@ -851,10 +929,10 @@ export async function generateInvoicePdf(
       // der Row, deshalb reicht es, den Wert in der Beschreibungsspalte
       // zu setzen.
       if (data.section === "body" && data.column.index === COL_BESCHREIBUNG) {
-        const info = langtextInfo[data.row.index];
+        const info = langtextInfo[off + data.row.index];
         if (info) {
           try {
-            const w = descWidth - (detailRows.has(data.row.index) ? INDENT_MM : 0);
+            const w = descWidth - (detailRows.has(off + data.row.index) ? INDENT_MM : 0);
             pdf.setFontSize(KURZ_FONT_SIZE);
             const kurzLines = pdf.splitTextToSize(info.kurztext, w);
             pdf.setFontSize(LANG_FONT_SIZE);
@@ -881,7 +959,7 @@ export async function generateInvoicePdf(
           const seite = (pdf as any).internal.getCurrentPageInfo().pageNumber as number;
           seitenEnde[seite] = {
             y: data.cell.y + data.cell.height,
-            summe: uebertragNachZeile[data.row.index] ?? 0,
+            summe: uebertragNachZeile[off + data.row.index] ?? 0,
           };
         } catch { /* Tracking ist nur Kosmetik */ }
       }
@@ -889,11 +967,11 @@ export async function generateInvoicePdf(
       // Langtext direkt darunter (ohne Overpaint, ohne Bottom-Border
       // nachzuzeichnen — die zieht autoTable selbst).
       if (data.section === "body" && data.column.index === COL_BESCHREIBUNG) {
-        const info = langtextInfo[data.row.index];
+        const info = langtextInfo[off + data.row.index];
         if (info) {
           try {
             // Detailzeilen sind eingerückt — Langtext muss mitwandern.
-            const einzug = detailRows.has(data.row.index) ? INDENT_MM : 0;
+            const einzug = detailRows.has(off + data.row.index) ? INDENT_MM : 0;
             const cellW = data.cell.width - 4 - einzug;
             const cellX = data.cell.x + 2 + einzug;
             pdf.setFontSize(KURZ_FONT_SIZE);
@@ -914,6 +992,8 @@ export async function generateInvoicePdf(
       }
     },
   });
+  y = (pdf as any).lastAutoTable.finalY;
+  }
 
   // ── Übertrag-Zeilen (KingBill-Vorlage): am Ende jeder Tabellenseite die
   //    laufende Summe, auf der Folgeseite oben die Wiederaufnahme. ──
