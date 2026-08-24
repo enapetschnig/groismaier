@@ -32,7 +32,7 @@ import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
-  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
+  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
 } from "@/lib/kalkulationEngine";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -247,6 +247,16 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
   const freierArtikel = (idx: number, artikelName: string) =>
     onPatchRow(idx, { product: artikelName });
 
+  /**
+   * Wert fürs VK-Eingabefeld: Formel-Zeilen zeigen den GERECHNETEN VK
+   * (EK × Faktor) — der beim Auswählen kopierte Wert kann veraltet sein und
+   * die Rechnung nutzt ihn dann ohnehin nicht (zeilenVkRoh).
+   */
+  const vkAnzeige = (row: MaterialRow): number => {
+    if (zeilenVkIstManuell(row, bd) || num(row.ekPrice) <= 0) return row.vkPrice;
+    return round4(num(row.ekPrice) * (bd.vkFaktor > 0 ? bd.vkFaktor : 1));
+  };
+
   /** Rechenwerte + Modus-Flags einer Zeile (für beide Darstellungen). */
   const info = (row: MaterialRow) => {
     const erg = calcMaterialRow(row, m, bd);
@@ -325,9 +335,9 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
           KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke
-          {r.erg.vkAbgeleitet || !zeilenVkIstManuell(row)
-            ? ` × ${fmt(num(row.ekPrice))} €/m³ × ${fmt(bd.vkFaktor)}`
-            : ` × VK ${fmt(num(row.vkPrice))} €/m³`}
+          {row.vkManuell === true
+            ? ` × VK ${fmt(num(row.vkPrice))} €/m³`
+            : ` × ${fmt(num(row.ekPrice))} €/m³ × ${fmt(bd.vkFaktor)}`}
           {" → "}{fmtEuro(r.erg.vkProM2)} / m²
         </div>
       )}
@@ -462,7 +472,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   ) : r.istRiegel ? (
                     <div className="flex h-11 items-center justify-end pr-2 tabular-nums">{fmt(r.erg.vkProM2)}</div>
                   ) : (
-                    <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-11" />
+                    <NumInput value={vkAnzeige(row)} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-11" />
                   )}
                 </label>
               </div>
@@ -584,7 +594,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                     ) : r.istRiegel ? (
                       <div className="pt-1.5 text-right tabular-nums" title="VK je m² Wand — Formel siehe Hinweis unter der Zeile (inkl. Aufschlag)">{fmt(r.erg.vkProM2)}</div>
                     ) : (
-                      <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-7 sm:h-7"
+                      <NumInput value={vkAnzeige(row)} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-7 sm:h-7"
                         title={row.manual ? "absoluter €-Betrag" : r.istDaemm ? "€ / m³" : "€ / m²"} />
                     )}
                   </td>

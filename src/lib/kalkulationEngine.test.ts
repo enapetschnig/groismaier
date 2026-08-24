@@ -83,11 +83,14 @@ describe("Materialzeile", () => {
     expect(r.vkAbgeleitet).toBe(true);
   });
 
-  it("KVH-Wand: eingetragener VK (€/m³) gewinnt vor dem Aufschlag", () => {
+  it("KVH-Wand: NUR ein explizit manueller VK (€/m³) gewinnt vor dem Aufschlag", () => {
+    // Ohne Flag zählt bei Riegel-Zeilen IMMER die Formel — das VK-Feld ist
+    // dort gar nicht tippbar, ein Kopierwert darf nie gewinnen.
     const wand = { ...modul, insulationThickness: 24 };
-    const r = calcMaterialRow(zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 620, vkPrice: 900 }), wand, bd);
+    const r = calcMaterialRow(zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 620, vkPrice: 900, vkManuell: true }), wand, bd);
     expect(r.vkProM2).toBeCloseTo(0.06 * 0.24 * 3.5 * 900, 4);
-    expect(r.vkAbgeleitet).toBe(false);
+    const ohneFlag = calcMaterialRow(zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 620, vkPrice: 900 }), wand, bd);
+    expect(ohneFlag.vkProM2).toBeCloseTo(0.06 * 0.24 * 3.5 * 620 * 1.35, 4);
   });
 
   // Kundenfall (Mail 08/2026): Kategorie "Riegelkonstruktuion" (Tippfehler)
@@ -204,11 +207,37 @@ describe("Formel-Verbindung in der Materialzeile (Kundenmeldung 24.08.2026)", ()
     expect(patch.vkPrice).toBeUndefined();
   });
 
-  it("Alt-Zeile: VK weicht vom Katalog-Vergleichswert ab → gilt als manuell", () => {
-    const alt = zeile({ ekPrice: 100, vkPrice: 180, katalogVk: 135 });
-    expect(zeilenVkIstManuell(alt)).toBe(true);
+  it("Alt-Zeile: VK weicht von der Formel ab → gilt als manuell (CLT 141)", () => {
+    // CLT-Fall: EK 105, VK von Hand 141 (Formel wäre 141,75) — bleibt stehen.
+    const alt = zeile({ ekPrice: 105, vkPrice: 141 });
+    expect(zeilenVkIstManuell(alt, bd)).toBe(true);
     const patch = zeilenPatchFuerEk(alt, 120, bd);
     expect(patch.vkPrice).toBeUndefined();
+    const r = calcMaterialRow(alt, modul, bd);
+    expect(r.vkProM2).toBe(141);
+  });
+
+  it("VERALTETER Kopier-VK rechnet NICHT mehr mit: Riegel-Zeile immer EK × Faktor", () => {
+    // Kundenmeldung 24.08. (zweiter Anlauf, "steht immer noch 11,13"):
+    // Zeile trug EK 440 und den alten Katalog-VK 530 — OHNE dass irgendwer
+    // neu tippt, muss die Rechnung 3,5 × 0,06 × 0,10 × 440 × 1,35 = 12,47
+    // liefern. Der VK ist bei Riegel-Zeilen gar nicht tippbar.
+    const stale = zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 440, vkPrice: 530, katalogVk: 530 });
+    const r = calcMaterialRow(stale, { ...modul, insulationThickness: 10 }, bd);
+    expect(round2(r.vkProM2)).toBeCloseTo(12.47, 2);
+    // Auch ganz ohne Vergleichswert (Alt-Zeile):
+    const alt = zeile({ category: "Riegelkonstruktion", product: "KVH 60 mm", ekPrice: 440, vkPrice: 530 });
+    expect(round2(calcMaterialRow(alt, { ...modul, insulationThickness: 10 }, bd).vkProM2)).toBeCloseTo(12.47, 2);
+  });
+
+  it("normale Zeile: Kopier-VK gleich Formelwert → EK-Änderung rechnet mit", () => {
+    // Katalog-Kopie (VK == EK × 1,35): Zeile hängt an der Formel. Der Chef
+    // ändert den EK → Patch UND Rechnung liefern den neuen VK.
+    const kopie = zeile({ ekPrice: 105, vkPrice: 141.75, katalogVk: 141.75 });
+    expect(zeilenVkIstManuell(kopie, bd)).toBe(false);
+    const neu = { ...kopie, ...zeilenPatchFuerEk(kopie, 110, bd) };
+    expect(neu.vkPrice).toBeCloseTo(148.5, 4);
+    expect(calcMaterialRow(neu, modul, bd).vkProM2).toBeCloseTo(148.5, 2);
   });
 
   it("VK-Feld leeren aktiviert die Formel sofort wieder", () => {

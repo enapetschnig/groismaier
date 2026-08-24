@@ -428,16 +428,35 @@ export interface MaterialRowErgebnis {
  * Zeile wird als abgeleitet gekennzeichnet.
  */
 /**
- * Gilt der Zeilen-VK als von Hand gesetzt? Explizites Flag gewinnt; ohne
- * Flag (Alt-Zeilen) zählt ein VK, der nachweislich vom Katalog-Vergleichswert
- * abweicht, als bewusste Eingabe — alles andere hängt an der Formel.
+ * Gilt der Zeilen-VK als von Hand gesetzt? Explizites Flag gewinnt. Ohne
+ * Flag (Alt-Zeilen) entscheidet die Formel selbst: Ein VK, der EK × Faktor
+ * entspricht, hängt an der Formel; ein abweichender wurde bewusst eingegeben
+ * (z. B. CLT: EK 105, VK 141 statt 141,75). Ohne EK bleibt ein vorhandener
+ * VK immer stehen — sonst verlöre eine Nur-VK-Zeile ihren Preis.
  */
-export function zeilenVkIstManuell(row: Pick<MaterialRow, "vkPrice" | "vkManuell" | "katalogVk">): boolean {
+export function zeilenVkIstManuell(
+  row: Pick<MaterialRow, "ekPrice" | "vkPrice" | "vkManuell">, bd: Betriebsdaten,
+): boolean {
   if (typeof row.vkManuell === "boolean") return row.vkManuell;
   const vk = num(row.vkPrice);
   if (vk <= 0) return false;
-  if (row.katalogVk === null || row.katalogVk === undefined) return false;
-  return Math.abs(vk - num(row.katalogVk)) > 1e-9;
+  const ek = num(row.ekPrice);
+  if (ek <= 0) return true;
+  const faktor = bd.vkFaktor > 0 ? bd.vkFaktor : 1;
+  return Math.abs(vk - round4(ek * faktor)) > 0.01;
+}
+
+/**
+ * VK-Rohwert, mit dem die Zeile RECHNET (Kundenmeldung 24.08.2026, zweiter
+ * Anlauf: "steht immer noch 11,13"): Hängt der VK an der Formel, wird er hier
+ * auf 0 gesetzt — vkAusEk() leitet dann IMMER frisch aus dem aktuellen EK ab.
+ * Der beim Artikel-Auswählen kopierte VK kann damit nie mehr veralten, egal
+ * wie die Zeile entstanden ist. Riegel-Zeilen haben gar kein tippbares
+ * VK-Feld — dort zählt nur das explizite Manuell-Flag.
+ */
+export function zeilenVkRoh(row: MaterialRow, bd: Betriebsdaten): number {
+  if (istRiegelZeile(row)) return row.vkManuell === true ? num(row.vkPrice) : 0;
+  return zeilenVkIstManuell(row, bd) ? num(row.vkPrice) : 0;
 }
 
 /**
@@ -447,11 +466,11 @@ export function zeilenVkIstManuell(row: Pick<MaterialRow, "vkPrice" | "vkManuell
  * rechnet er als EK × VK-Faktor sofort mit — sichtbar im VK-Feld.
  */
 export function zeilenPatchFuerEk(
-  row: Pick<MaterialRow, "vkPrice" | "vkManuell" | "katalogVk">, ekNeu: number, bd: Betriebsdaten,
+  row: Pick<MaterialRow, "ekPrice" | "vkPrice" | "vkManuell">, ekNeu: number, bd: Betriebsdaten,
 ): Partial<MaterialRow> {
   const ek = num(ekNeu);
   const patch: Partial<MaterialRow> = { ekPrice: ek };
-  if (!zeilenVkIstManuell(row)) {
+  if (!zeilenVkIstManuell(row, bd)) {
     patch.vkPrice = ek > 0 ? round4(ek * (bd.vkFaktor > 0 ? bd.vkFaktor : 1)) : 0;
     patch.vkManuell = false;
   }
@@ -518,12 +537,14 @@ export function calcMaterialRow(
   if (istRiegelZeile(row)) {
     // ekPrice/vkPrice der Zeile sind m³-Preise; der Aufschlag wirkt wie bei
     // jedem Material über die VK-Ableitung („× m³ Preis × Aufschlag").
-    const { vk: vkM3, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
+    const { vk: vkM3, abgeleitet } = vkAusEk(row.ekPrice, zeilenVkRoh(row, bd), bd);
     return {
       ...leer,
       ekProM2: calcRiegelPreisProM2(m.insulationThickness, row.ekPrice, bd),
       vkProM2: calcRiegelPreisProM2(m.insulationThickness, vkM3, bd),
-      vkAbgeleitet: abgeleitet,
+      // "abgeleitet" heißt weiterhin: die ZEILE hatte keinen eigenen VK —
+      // die Formel-Ableitung selbst ist der Normalfall, keine Warnung wert.
+      vkAbgeleitet: abgeleitet && num(row.vkPrice) <= 0,
     };
   }
   if (istDaemmstoffZeile(row)) {
@@ -536,15 +557,15 @@ export function calcMaterialRow(
     // Preise; der Flächen-Check entfällt, damit die €/m²-Vorschau schon vor
     // dem Eintragen der Fläche stimmt (×0 passiert ohnehin in der Summe).
     if (dicke <= 0 || (ekRoh <= 0 && vkRoh <= 0)) return leer;
-    const { vk: vkBasis, abgeleitet } = vkAusEk(ekRoh, vkRoh, bd);
-    return { ...leer, ekProM2: dicke * ekRoh, vkProM2: dicke * vkBasis, vkAbgeleitet: abgeleitet };
+    const { vk: vkBasis, abgeleitet } = vkAusEk(ekRoh, zeilenVkRoh(row, bd), bd);
+    return { ...leer, ekProM2: dicke * ekRoh, vkProM2: dicke * vkBasis, vkAbgeleitet: abgeleitet && vkRoh <= 0 };
   }
-  const { vk, abgeleitet } = vkAusEk(row.ekPrice, row.vkPrice, bd);
+  const { vk, abgeleitet } = vkAusEk(row.ekPrice, zeilenVkRoh(row, bd), bd);
   return {
     ...leer,
     ekProM2: num(row.ekPrice),
     vkProM2: vk,
-    vkAbgeleitet: abgeleitet,
+    vkAbgeleitet: abgeleitet && num(row.vkPrice) <= 0,
     // Volumen-Artikel (BSH, KVH, Platten …) landen hier als €/m² Aufbau-
     // flaeche. Die Betraege bleiben unveraendert — die Maske weist darauf hin,
     // damit der Anwender auf "Holz berechnen" umstellt.
