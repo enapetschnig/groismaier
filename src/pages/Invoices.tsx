@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot } from "lucide-react";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot, CheckCircle2 } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { istEntwurfBeleg, hatPlatzhalterNummer, nummerFuerAnzeige } from "@/lib/belegEntwurf";
@@ -1329,6 +1329,23 @@ export default function Invoices() {
                               ))}
                             </SelectContent>
                           </Select>
+                        )}
+                        {/* Lieferschein: Verrechnet-Umschalter mit einem Klick —
+                            gleiche Mechanik wie bei den Regieberichten
+                            (Kundenwunsch 24.08.2026). */}
+                        {inv.typ === "lieferschein" && inv.status !== "storniert" && inv.status !== "entwurf" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={`h-10 gap-1.5 text-xs ${inv.status === "verrechnet" ? "border-purple-300 bg-purple-50 text-purple-800 hover:bg-purple-100" : ""}`}
+                            title={inv.status === "verrechnet"
+                              ? "Dieser Lieferschein ist verrechnet — klicken, um ihn wieder auf offen zu stellen"
+                              : "Lieferschein als verrechnet markieren (ohne Rechnungs-Import)"}
+                            onClick={(e) => handleStatusChange(inv.id, inv.status === "verrechnet" ? "offen" : "verrechnet", e as any)}
+                          >
+                            <CheckCircle2 className={`h-4 w-4 ${inv.status === "verrechnet" ? "text-purple-700" : "text-muted-foreground"}`} />
+                            {inv.status === "verrechnet" ? "Verrechnet" : "Als verrechnet"}
+                          </Button>
                         )}
                         <div className="ml-auto flex items-center">
                           <Button
