@@ -25,12 +25,15 @@ export function KBSectionHeader({ icon: Icon, title, className }: KBSectionHeade
   return (
     <div
       className={cn(
-        "flex items-center gap-2.5 rounded-md border border-white/60 bg-white/55 px-3 py-2 shadow-sm",
+        // Navy-Leiste (Kundenwunsch 24.08.2026: "die Überschriften im
+        // Hauptmenü farblich mehr herausheben") — KingBill-Blau wie die
+        // Toolbar, weiße Schrift.
+        "flex items-center gap-2.5 rounded-md bg-kb-blue-dark px-3 py-2 shadow-sm",
         className
       )}
     >
-      <Icon className="h-9 w-9 shrink-0 text-kb-icon-gray" strokeWidth={1.75} />
-      <h2 className="kb-section-title truncate">{title}</h2>
+      <Icon className="h-9 w-9 shrink-0 text-white/90" strokeWidth={1.75} />
+      <h2 className="kb-section-title truncate text-white">{title}</h2>
     </div>
   );
 }

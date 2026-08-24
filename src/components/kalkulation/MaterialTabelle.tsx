@@ -330,8 +330,25 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     />
   );
 
-  const hinweis = (row: MaterialRow, r: ReturnType<typeof info>) => (
+  const hinweis = (idx: number, row: MaterialRow, r: ReturnType<typeof info>) => (
     <>
+      {/* Pauschal-Zeile (Kundenmeldung 24.08.2026, CLT-Fall): Der Chef gab
+          m²-Preise ein und erwartete × Fläche — der Bleistift-Modus rechnet
+          aber absolute Beträge. Sichtbar machen + Ein-Klick-Umstieg auf
+          €/m² (Namen und Preise bleiben, Zeile wird freie DB-Position). */}
+      {row.manual && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-amber-700">
+          <span>✏️ Pauschale: EK/VK gelten GESAMT — ohne × Fläche ({fmt(num(m.area))} m²).</span>
+          <button
+            type="button"
+            className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold hover:bg-amber-200"
+            onClick={() => onPatchRow(idx, { manual: false })}
+            title="Zeile auf €/m² umstellen — Namen und Preise bleiben, gerechnet wird dann Preis × Fläche"
+          >
+            Pro m² rechnen (× Fläche)
+          </button>
+        </div>
+      )}
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
           KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke
@@ -455,7 +472,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   {artikelFeld(idx, row, "h-11")}
                 </div>
               )}
-              {hinweis(row, r)}
+              {hinweis(idx, row, r)}
 
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <label className="block text-[11px] text-muted-foreground">
@@ -570,7 +587,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                           placeholder="Artikel (frei)"
                           onChange={(e) => onPatchRow(idx, { product: e.target.value })}
                         />
-                        {hinweis(row, r)}
+                        {hinweis(idx, row, r)}
                       </td>
                     </>
                   ) : (
@@ -580,7 +597,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                       </td>
                       <td className="py-1 pr-1">
                         {artikelFeld(idx, row, "h-7 text-xs")}
-                        {hinweis(row, r)}
+                        {hinweis(idx, row, r)}
                       </td>
                     </>
                   )}
