@@ -766,7 +766,7 @@ ${
 <!-- Footer -->
 <div class="footer">
   <div class="footer-line">
-    ${L.footer.line1 || [L.company.name, L.company.slogan, L.company.address_line1, L.company.address_line2, L.company.phone, L.company.email].filter(Boolean).join(" · ")}
+    ${L.footer.line1 || [L.company.name, L.company.address_line1, L.company.address_line2, L.company.phone, L.company.email].filter(Boolean).join(" · ")}
   </div>
   ${L.footer.line2 ? `<div class="footer-line">${L.footer.line2}</div>` : ""}
   ${L.footer.line3 ? `<div class="footer-line">${L.footer.line3}</div>` : ""}
@@ -776,6 +776,12 @@ ${
     b.kontoinhaber ? `<strong>Inhaber</strong> ${b.kontoinhaber}` : "",
     b.iban ? `<strong>IBAN</strong> ${b.iban}` : "",
     b.bic ? `<strong>BIC</strong> ${b.bic}` : "",
+  ].filter(Boolean).join(" · ")}</div>` : ""}
+  ${L.footer.show_bank2_in_footer && L.footer.bank2?.iban ? `<div class="footer-line">${[
+    L.footer.bank2.institut ? `<strong>Institut</strong> ${L.footer.bank2.institut}` : "",
+    L.footer.bank2.kontoinhaber ? `<strong>Inhaber</strong> ${L.footer.bank2.kontoinhaber}` : "",
+    `<strong>IBAN</strong> ${L.footer.bank2.iban}`,
+    L.footer.bank2.bic ? `<strong>BIC</strong> ${L.footer.bank2.bic}` : "",
   ].filter(Boolean).join(" · ")}</div>` : ""}
 </div>
 

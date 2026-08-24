@@ -68,6 +68,27 @@ const TYP_BLOCKS: { typ: KatalogKategorie["typ"]; titel: string; ekLabel: string
   { typ: "aufpreis", titel: "Auf-/Minderpreise (Lohnlackierung)", ekLabel: "", vkLabel: "Betrag (€/Einheit)", hinweis: "Minderpreise als negativen Betrag erfassen (z.B. -0,1)." },
 ];
 
+/**
+ * Kategorie-Farbe (Kundenwunsch 24.08.2026: "Die Kategorie in den Stammdaten
+ * färbig hinterlegen"): deterministische Pastellfarbe aus dem Namen — dieselbe
+ * Kategorie sieht immer gleich aus, ohne dass jemand Farben pflegen muss.
+ */
+const KATEGORIE_FARBEN = [
+  "bg-sky-100 border-sky-300",
+  "bg-amber-100 border-amber-300",
+  "bg-emerald-100 border-emerald-300",
+  "bg-violet-100 border-violet-300",
+  "bg-rose-100 border-rose-300",
+  "bg-lime-100 border-lime-300",
+  "bg-cyan-100 border-cyan-300",
+  "bg-orange-100 border-orange-300",
+];
+export function kategorieFarbe(name: string): string {
+  let h = 0;
+  for (const c of (name || "").toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return KATEGORIE_FARBEN[h % KATEGORIE_FARBEN.length];
+}
+
 /** Unkontrolliertes Eingabefeld, committet erst bei Blur (kein DB-Spam). */
 function BlurInput({ value, onCommit, className, numeric, disabled, title }: {
   value: string; onCommit: (v: string) => void; className?: string; numeric?: boolean;
@@ -589,8 +610,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
             <div className="space-y-4 p-4">
               <p className="text-xs text-muted-foreground">{block.hinweis}</p>
               {kats.map((kat) => (
-                <div key={kat.id} className="min-w-0 rounded border">
-                  <div className="flex items-center gap-2 border-b bg-muted/30 px-2 py-1.5">
+                <div key={kat.id} className={`min-w-0 rounded border ${kategorieFarbe(kat.name).split(" ")[1]}`}>
+                  <div className={`flex items-center gap-2 border-b px-2 py-1.5 ${kategorieFarbe(kat.name)}`}>
                     <BlurInput
                       value={kat.name}
                       onCommit={(v) => renameKategorie(kat, v)}

@@ -853,12 +853,14 @@ export default function Invoices() {
                         quellTyp === "angebot"
                           ? [
                               ["auftragsbestaetigung", "eine neue Auftragsbestätigung"],
+                              ["lieferschein", "einen neuen Lieferschein"],
                               ["rechnung", "eine neue Rechnung"],
                               ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
                               ["schlussrechnung", "eine neue Schlussrechnung"],
                             ]
                           : quellTyp === "auftragsbestaetigung"
                             ? [
+                                ["lieferschein", "einen neuen Lieferschein"],
                                 ["rechnung", "eine neue Rechnung"],
                                 ["anzahlungsrechnung", "eine neue Anzahlungsrechnung"],
                                 ["schlussrechnung", "eine neue Schlussrechnung"],

@@ -31,6 +31,14 @@ export interface InvoiceLayoutFooter {
   line3: string;
   show_bank_in_footer: boolean;
   show_page_numbers: boolean;
+  /**
+   * Zweite Bankverbindung (Kundenwunsch 24.08.2026): wird — wenn
+   * show_bank2_in_footer an ist — als eigene Zeile unter der ersten
+   * Bankverbindung in der Fußzeile gedruckt. Der Zahlungs-QR-Code nutzt
+   * weiterhin die erste (app_settings bank_*).
+   */
+  bank2?: { kontoinhaber: string; iban: string; bic: string; institut: string };
+  show_bank2_in_footer?: boolean;
 }
 
 export interface InvoiceLayoutContact {
@@ -150,7 +158,8 @@ export function buildSenderLine(c: InvoiceLayoutCompany): string {
 
 /** Build footer lines from company data if not manually set */
 export function buildFooterLines(c: InvoiceLayoutCompany): { line1: string; line2: string } {
-  const line1 = [c.name, c.slogan, c.address_line1, c.address_line2].filter(Boolean).join(" · ");
+  // Ohne Slogan — Kundenwunsch 24.08.2026 ("Zimmerei & Holzbau weg").
+  const line1 = [c.name, c.address_line1, c.address_line2].filter(Boolean).join(" · ");
   const parts2 = [];
   if (c.phone) parts2.push("Tel: " + c.phone);
   if (c.email) parts2.push(c.email);

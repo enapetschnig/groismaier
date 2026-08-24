@@ -42,6 +42,8 @@ interface Props {
   onClone: () => void;
   /** Diesen Aufbau als wiederverwendbare Vorlage speichern (Kundenwunsch 22.08.2026). */
   onSaveVorlage: () => void;
+  /** Taschenrechner an der Materialzeile (Kundenwunsch 24.08.2026). */
+  onArtikelKalkulieren?: (artikel: import("./useKalkKatalog").KatalogArtikel) => void;
   onRemove: () => void;
   dragProps: DragProps;
 }
@@ -61,7 +63,7 @@ const Feld = ({ label, children }: { label: string; children: React.ReactNode })
 
 export function AufbauKarte({
   module: m, index, ergebnis: erg, faktor, bd, kategorien,
-  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onSaveVorlage, onRemove, dragProps,
+  onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onSaveVorlage, onRemove, dragProps, onArtikelKalkulieren,
 }: Props) {
   const titel = m.name || `Aufbau ${index + 1}`;
   const materialAdj = erg.material.vkTotal * faktor;
@@ -140,6 +142,7 @@ export function AufbauKarte({
               </Feld>
               <MaterialTabelle
                 module={m} bd={bd} kategorien={kategorien}
+                onArtikelKalkulieren={onArtikelKalkulieren}
                 onPatchRow={onPatchRow} onReplaceRow={onReplaceRow}
                 onAddRow={onAddRow} onRemoveRow={onRemoveRow} onMoveRow={onMoveRow}
               />

@@ -418,6 +418,46 @@ export function InvoiceLayoutEditor() {
               />
               <Label htmlFor="show_pages">Seitenzahlen anzeigen</Label>
             </div>
+
+            {/* Zweite Bankverbindung (Kundenwunsch 24.08.2026): eigene Zeile
+                unter der ersten Bank in der Fußzeile. Der Zahlungs-QR nutzt
+                weiterhin die erste Bankverbindung (Einstellungen → Bank). */}
+            <div className="flex items-center gap-3">
+              <Switch
+                id="show_bank2"
+                checked={!!form.footer.show_bank2_in_footer}
+                onCheckedChange={(checked) => updateFooter("show_bank2_in_footer", checked)}
+              />
+              <Label htmlFor="show_bank2">Zweite Bankverbindung in Fußzeile anzeigen</Label>
+            </div>
+            {form.footer.show_bank2_in_footer && (
+              <div className="grid gap-3 rounded-md border bg-muted/20 p-3 sm:grid-cols-2">
+                {([
+                  { feld: "institut", label: "Institut", platzhalter: "z. B. Raiffeisenbank" },
+                  { feld: "kontoinhaber", label: "Kontoinhaber", platzhalter: "Holzbau Groismaier GmbH" },
+                  { feld: "iban", label: "IBAN", platzhalter: "AT.." },
+                  { feld: "bic", label: "BIC", platzhalter: "" },
+                ] as const).map(({ feld, label, platzhalter }) => (
+                  <div key={feld} className="space-y-1">
+                    <Label htmlFor={`bank2_${feld}`}>{label}</Label>
+                    <Input
+                      id={`bank2_${feld}`}
+                      value={form.footer.bank2?.[feld] || ""}
+                      placeholder={platzhalter}
+                      onChange={(e) => updateFooter("bank2", {
+                        kontoinhaber: "", iban: "", bic: "", institut: "",
+                        ...(form.footer.bank2 || {}),
+                        [feld]: e.target.value,
+                      })}
+                    />
+                  </div>
+                ))}
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  Ohne IBAN wird die zweite Zeile nicht gedruckt. Der Zahlungs-QR-Code
+                  verwendet immer die erste Bankverbindung.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

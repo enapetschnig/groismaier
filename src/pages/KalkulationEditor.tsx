@@ -58,9 +58,10 @@ import { syncePreiseMitKatalog } from "@/lib/kalkKatalogSync";
 import { usePermissions } from "@/hooks/usePermissions";
 import { getDocConfig } from "@/lib/documentTypes";
 import {
-  FreiePosition, artTable, findeArtikel, findeKategorie, katTable, mengenEinheit,
+  FreiePosition, KatalogArtikel, artTable, findeArtikel, findeKategorie, katTable, mengenEinheit,
   normName, sammleFreiePositionen, useKalkKatalog,
 } from "@/components/kalkulation/useKalkKatalog";
+import { ArtikelKalkulationDialog } from "@/components/kalkulation/ArtikelKalkulationDialog";
 import { NumInput } from "@/components/kalkulation/NumInput";
 import { ProjektUebersicht } from "@/components/kalkulation/ProjektUebersicht";
 import { AufbauKarte } from "@/components/kalkulation/AufbauKarte";
@@ -145,6 +146,9 @@ export default function KalkulationEditor() {
   const [aufbauVorlageName, setAufbauVorlageName] = useState("");
   /** Aufbau, für den der „Als Vorlage speichern"-Dialog offen ist (Karte). */
   const [aufbauVorlageModulId, setAufbauVorlageModulId] = useState<number | null>(null);
+  /** Zeilen-Taschenrechner (Kundenwunsch 24.08.2026): Artikel, dessen
+   *  Kalkulations-Dialog aus einer Materialzeile heraus offen ist. */
+  const [zeilenKalkArtikel, setZeilenKalkArtikel] = useState<KatalogArtikel | null>(null);
 
   const ladeAufbauVorlagen = async () => {
     const { data } = await (supabase.from("aufbau_vorlagen" as never) as any)
@@ -987,6 +991,7 @@ export default function KalkulationEditor() {
                 onRemoveRow={(idx) => removeRow(z.module.id, idx)}
                 onMoveRow={(from, to) => moveRow(z.module.id, from, to)}
                 onClone={() => cloneModule(z.module.id)}
+                onArtikelKalkulieren={(a) => setZeilenKalkArtikel(a)}
                 onSaveVorlage={() => oeffneAufbauVorlageSpeichern(z.module.id)}
                 onRemove={() => removeModule(z.module.id)}
                 dragProps={{
@@ -1197,6 +1202,17 @@ export default function KalkulationEditor() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Zeilen-Taschenrechner (Kundenwunsch 24.08.2026): Artikel aus einer
+          Materialzeile heraus kalkulieren — schreibt in die Stammdaten; der
+          Katalog-Abgleich zieht die Zeile danach automatisch nach. */}
+      <ArtikelKalkulationDialog
+        artikel={zeilenKalkArtikel}
+        onClose={(gespeichert) => {
+          setZeilenKalkArtikel(null);
+          if (gespeichert) void katalog.reload();
+        }}
+      />
 
       {/* Aufbau als Vorlage speichern (Karten-Knopf, Kundenwunsch 22.08.2026:
           "Ich muss einzelne Aufbauten als z. B. AW 1 speichern können …

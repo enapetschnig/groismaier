@@ -29,7 +29,7 @@
 //         sich am Handy durch 10 leere Zeilen scrollen.
 // ============================================================================
 import { useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
   newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
@@ -37,7 +37,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
-import { KatalogKategorie, findeArtikel, findeKategorie, normName } from "./useKalkKatalog";
+import { KatalogArtikel, KatalogKategorie, findeArtikel, findeKategorie, normName } from "./useKalkKatalog";
 import { NumInput } from "./NumInput";
 
 interface Props {
@@ -50,6 +50,12 @@ interface Props {
   onRemoveRow: (idx: number) => void;
   /** Zeile von Position `from` nach `to` verschieben (Kundenwunsch 2026-08-19). */
   onMoveRow: (from: number, to: number) => void;
+  /**
+   * Taschenrechner direkt an der Zeile (Kundenwunsch 24.08.2026: "auch wenn
+   * man in der Kalkulation ist und nicht nur in den Stammdaten"): öffnet den
+   * Artikel-Kalkulations-Dialog für den Katalog-Artikel dieser Zeile.
+   */
+  onArtikelKalkulieren?: (artikel: KatalogArtikel) => void;
 }
 
 /** Zeile ohne jeden Inhalt (Handy: nur eine davon anzeigen). */
@@ -180,7 +186,7 @@ function KatalogCombobox({
   );
 }
 
-export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow }: Props) {
+export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onArtikelKalkulieren }: Props) {
   const summen = calcMaterialSummen(m, bd);
   const istDecke = m.aufbauKategorie === "Decke" || m.aufbauKategorie === "Dach";
   const rows = m.materialRows || [];
@@ -244,8 +250,10 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
   /** Rechenwerte + Modus-Flags einer Zeile (für beide Darstellungen). */
   const info = (row: MaterialRow) => {
     const erg = calcMaterialRow(row, m, bd);
+    const artikel = findeArtikel(kategorien, row.category, row.product);
     return {
       erg,
+      artikel,
       istRiegel: istRiegelZeile(row),
       istDaemm: istDaemmstoffZeile(row),
       // Frei eingetippt = steht (noch) nicht im Katalog.
@@ -476,7 +484,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
               <th className="py-1 pr-1 font-semibold">Artikel</th>
               <th className="w-[74px] py-1 pr-1 text-right font-semibold">EK</th>
               <th className="w-[74px] py-1 pr-1 text-right font-semibold">VK</th>
-              <th className="w-7 py-1" />
+              <th className="w-14 py-1" />
             </tr>
           </thead>
           <tbody>
@@ -574,20 +582,33 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                     {row.calc ? (
                       <div className="pt-1.5 text-right tabular-nums">{fmt(r.erg.vkAbsolut)}</div>
                     ) : r.istRiegel ? (
-                      <div className="pt-1.5 text-right tabular-nums" title="EK = VK (Riegelkonstruktion ohne Aufschlag)">{fmt(r.erg.vkProM2)}</div>
+                      <div className="pt-1.5 text-right tabular-nums" title="VK je m² Wand — Formel siehe Hinweis unter der Zeile (inkl. Aufschlag)">{fmt(r.erg.vkProM2)}</div>
                     ) : (
                       <NumInput value={row.vkPrice} onCommit={(n) => onPatchRow(idx, zeilenPatchFuerVk(row, n, bd))} className="h-7 sm:h-7"
                         title={row.manual ? "absoluter €-Betrag" : r.istDaemm ? "€ / m³" : "€ / m²"} />
                     )}
                   </td>
                   <td className="py-1">
-                    <button
-                      type="button"
-                      onClick={() => onRemoveRow(idx)}
-                      className="flex h-7 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      title="Zeile entfernen"
-                      aria-label="Zeile entfernen"
-                    ><X className="h-3.5 w-3.5" /></button>
+                    <span className="flex items-center">
+                      {onArtikelKalkulieren && r.artikel?.quelle === "template" && (
+                        <button
+                          type="button"
+                          onClick={() => onArtikelKalkulieren(r.artikel!)}
+                          className={`flex h-7 w-6 items-center justify-center rounded ${
+                            r.artikel.kalkuliert ? "text-kb-green hover:bg-kb-green/10" : "text-muted-foreground hover:bg-muted"
+                          }`}
+                          title="Artikel kalkulieren (VK aus EK + Bausteinen + Arbeitszeit) — wirkt auf die Stammdaten"
+                          aria-label="Artikel kalkulieren"
+                        ><Calculator className="h-3.5 w-3.5" /></button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => onRemoveRow(idx)}
+                        className="flex h-7 w-6 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        title="Zeile entfernen"
+                        aria-label="Zeile entfernen"
+                      ><X className="h-3.5 w-3.5" /></button>
+                    </span>
                   </td>
                 </tr>
               );

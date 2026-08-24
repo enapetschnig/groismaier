@@ -163,8 +163,8 @@ export async function generateInvoicePdf(
     L.company.phone ? "Tel: " + L.company.phone : "",
     L.company.email,
     L.company.website,
-    // DGNR (Dachverbands-Nummer) wie am KingBill-Briefkopf des Kunden.
-    (L.company as any).dgnr ? "DGNR " + (L.company as any).dgnr : "",
+    // DGNR (Dachverbands-Nummer) BEWUSST nicht mehr gedruckt — Kundenwunsch
+    // 24.08.2026: "muss nicht auf der Rechnungs- und Angebots-PDF stehen".
   ].filter(Boolean);
   const hasAnyInfo = companyInfoLinesFull.length > 0 || !!firmenUid;
 
@@ -748,7 +748,9 @@ export async function generateInvoicePdf(
   if (invoice.notizen) closingH += 12;
   if (isReverseCharge && !hidePrices) closingH += 14;
   if (showFaelligAm) closingH += 13;
-  if (showFaelligAm && skontoProzent > 0 && skontoTage > 0) closingH += 24;
+  // Skonto auf ALLEN preistragenden Belegen (Kundenwunsch 24.08.2026:
+  // "Skonto muss auch auf Angeboten sichtbar sein - ueberall!").
+  if (!hidePrices && skontoProzent > 0 && skontoTage > 0) closingH += 24;
   if (showBank) closingH += 40;
   if (!showFaelligAm && !showBank) closingH += 8;
   // Custom-Closing-Text kann mehrzeilig sein → zusätzliche Höhe einplanen,
@@ -761,8 +763,9 @@ export async function generateInvoicePdf(
   }
 
   // Dynamic footer height: base + jede Textzeile + ggf. Seitennummer-Zeile
+  const bank2 = L.footer.show_bank2_in_footer && L.footer.bank2?.iban ? L.footer.bank2 : null;
   const footerLines = [L.footer.line1 || "auto", L.footer.show_bank_in_footer ? "bank" : "", L.footer.line2, L.footer.line3].filter(Boolean);
-  const footerH = 8 + footerLines.length * 4 + (L.footer.show_bank_in_footer ? 4 : 0) + (L.footer.show_page_numbers ? 4 : 0);
+  const footerH = 8 + footerLines.length * 4 + (L.footer.show_bank_in_footer ? 4 : 0) + (bank2 ? 4 : 0) + (L.footer.show_page_numbers ? 4 : 0);
 
   // Spaltenbreite für Beschreibungsspalte berechnen (für Höhen-Schätzung).
   const fixedWidths = hidePrices ? 10 + 26 : 10 + 24 + (hatRabattSpalte ? 14 : 0) + 22 + 24;
@@ -1158,8 +1161,8 @@ export async function generateInvoicePdf(
     y += 6;
   }
 
-  // ======= SKONTO INFO (only for Rechnung with Skonto) =======
-  if (showFaelligAm && skontoProzent > 0 && skontoTage > 0) {
+  // ======= SKONTO INFO (alle preistragenden Belege mit Skonto) =======
+  if (!hidePrices && skontoProzent > 0 && skontoTage > 0) {
     // Basis ist der GEDRUCKTE Bruttobetrag — sonst weicht der Skonto-Betrag
     // im Kasten vom Bruttobetrag im Summenblock ab.
     const brutto = bruttoGedruckt;
@@ -1182,7 +1185,9 @@ export async function generateInvoicePdf(
 
     pdf.setFont("helvetica", "normal");
     pdf.setFontSize(8);
-    pdf.text(`Bei Zahlung bis ${skontoDateStr}:`, ml + 3, y + 7);
+    // Angebote/ABs haben kein Belegdatum-basiertes Zahlungsziel — dort zählt
+    // die Frist ab Rechnungslegung, deshalb "innerhalb von X Tagen".
+    pdf.text(showFaelligAm ? `Bei Zahlung bis ${skontoDateStr}:` : `Bei Zahlung innerhalb von ${skontoTage} Tagen:`, ml + 3, y + 7);
     pdf.setFont("helvetica", "bold");
     pdf.text(`€ ${fmt(skontoBetrag)}`, ml + 70, y + 7);
     pdf.setFont("helvetica", "normal");
@@ -1255,7 +1260,8 @@ export async function generateInvoicePdf(
     pdf.setFontSize(7);
     pdf.setTextColor(0, 0, 0);
     let footerY = fy + 4;
-    const footerLine1 = L.footer.line1 || [L.company.name, L.company.slogan, L.company.address_line1, L.company.address_line2, L.company.phone, L.company.email].filter(Boolean).join(" \u00B7 ");
+    // Ohne Slogan ("Zimmerei & Holzbau") — Kundenwunsch 24.08.2026.
+    const footerLine1 = L.footer.line1 || [L.company.name, L.company.address_line1, L.company.address_line2, L.company.phone, L.company.email].filter(Boolean).join(" \u00B7 ");
     pdf.text(footerLine1, pageWidth / 2, footerY, { align: "center" });
     footerY += 4;
     if (L.footer.line2) {
@@ -1282,6 +1288,17 @@ export async function generateInvoicePdf(
         footerY += 3.5;
         pdf.setFont("helvetica", "normal");
         pdf.text(ibanLine, pageWidth / 2, footerY, { align: "center" });
+        footerY += 4;
+      }
+      // Zweite Bankverbindung (Layout-Einstellungen) als eigene Zeile.
+      if (bank2) {
+        const zeile2 = [
+          bank2.institut ? `Institut ${bank2.institut}` : "",
+          bank2.kontoinhaber ? `Inhaber ${bank2.kontoinhaber}` : "",
+          bank2.iban ? `IBAN ${bank2.iban}` : "",
+          bank2.bic ? `BIC ${bank2.bic}` : "",
+        ].filter(Boolean).join(" \u00B7 ");
+        pdf.text(zeile2, pageWidth / 2, footerY, { align: "center" });
         footerY += 4;
       }
     }
