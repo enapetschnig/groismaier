@@ -36,7 +36,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { AlertTriangle, FileCheck2, FileText, LayoutTemplate, Loader2, PackagePlus, Plus, Save, Trash2 } from "lucide-react";
+import { AlertTriangle, FileCheck2, FileText, History, LayoutTemplate, Loader2, PackagePlus, Plus, Redo2, Save, Trash2, Undo2 } from "lucide-react";
 import { KBToolbar, KBButton, KBToolbarButton } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -272,7 +272,7 @@ export default function KalkulationEditor() {
     (async () => {
       if (!id) return;
       const { data } = await kalkTable()
-        .select("id, name, customer_id, data, updated_at").eq("id", id).maybeSingle();
+        .select("id, name, customer_id, data, summe, updated_at").eq("id", id).maybeSingle();
       if (cancelled) return;
       if (!data) {
         toast({ variant: "destructive", title: "Nicht gefunden", description: "Kalkulation existiert nicht (mehr)." });
@@ -291,6 +291,15 @@ export default function KalkulationEditor() {
       setState(st);
       setLoaded(true);
       setDirty(false);
+      // Rückgängig-Stapel gehören zur Sitzung dieser Kalkulation.
+      undoStackRef.current = [];
+      redoStackRef.current = [];
+      letzterPushRef.current = 0;
+      // Verlauf: den vorgefundenen Stand sichern (falls noch nicht drin) —
+      // so ist der Stand VOR der heutigen Bearbeitung immer wiederherstellbar.
+      if ((data as any).data) {
+        void sichereOeffnungsstand((data as any).data, (data as any).name || "", (data as any).summe ?? null);
+      }
     })();
     return () => { cancelled = true; };
   }, [id, navigate, toast]);
@@ -394,6 +403,124 @@ export default function KalkulationEditor() {
   const loadedRef = useRef(loaded); loadedRef.current = loaded;
   const lastSavedRef = useRef<string>("");
 
+  // ── Rückgängig / Wiederholen (Kundenwunsch 24.08.2026) ────────────────────
+  // Snapshots des KalkulationState; schnelle Folge-Änderungen (Tippen)
+  // verschmelzen zu EINEM Schritt (Koaleszenz-Fenster 800 ms). Der
+  // Katalog-Preisabgleich läuft bewusst NICHT über den Stack.
+  const undoStackRef = useRef<KalkulationState[]>([]);
+  const redoStackRef = useRef<KalkulationState[]>([]);
+  const letzterPushRef = useRef(0);
+
+  // ── Verlauf (kalkulation_versionen) ───────────────────────────────────────
+  // Stand beim Öffnen + höchstens alle 10 Minuten eine Version; max. 40.
+  const letzteVersionRef = useRef<{ zeit: number; fp: string }>({ zeit: 0, fp: "" });
+  const [verlaufOpen, setVerlaufOpen] = useState(false);
+  const [verlauf, setVerlauf] = useState<{ id: string; created_at: string; name: string | null; summe: number | null }[]>([]);
+  const [verlaufLaedt, setVerlaufLaedt] = useState(false);
+
+  /** Kompakter Inhalts-Fingerabdruck (djb2 + Länge) — nur für „gleich/ungleich". */
+  const hashFp = (t: string): string => {
+    let h = 5381;
+    for (let i = 0; i < t.length; i++) h = ((h * 33) ^ t.charCodeAt(i)) >>> 0;
+    return `${h}:${t.length}`;
+  };
+
+  const versionAnlegen = useCallback(async (data: unknown, nm: string, summe: number | null) => {
+    if (!id) return;
+    const fp = hashFp(JSON.stringify(data));
+    if (fp === letzteVersionRef.current.fp) return;
+    const { error } = await (supabase.from("kalkulation_versionen" as never) as any)
+      .insert({ kalkulation_id: id, name: nm || null, summe, data, fingerprint: fp });
+    if (error) return; // Verlauf ist Komfort — er darf den Editor nie stören
+    letzteVersionRef.current = { zeit: Date.now(), fp };
+    // Aufräumen: nur die neuesten 40 Versionen je Kalkulation behalten.
+    const { data: alte } = await (supabase.from("kalkulation_versionen" as never) as any)
+      .select("id").eq("kalkulation_id", id)
+      .order("created_at", { ascending: false }).range(40, 300);
+    const ids = ((alte as any[]) || []).map((r) => r.id);
+    if (ids.length > 0) {
+      await (supabase.from("kalkulation_versionen" as never) as any).delete().in("id", ids);
+    }
+  }, [id]);
+
+  /** Beim Öffnen: den vorgefundenen Stand sichern, falls noch nicht im Verlauf. */
+  const sichereOeffnungsstand = useCallback(async (data: unknown, nm: string, summe: number | null) => {
+    if (!id || !data) return;
+    const { data: letzte } = await (supabase.from("kalkulation_versionen" as never) as any)
+      .select("fingerprint, created_at").eq("kalkulation_id", id)
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    if (letzte?.fingerprint) {
+      letzteVersionRef.current = { zeit: new Date(letzte.created_at).getTime(), fp: letzte.fingerprint };
+    }
+    await versionAnlegen(data, nm, summe);
+  }, [id, versionAnlegen]);
+
+  const ladeVerlauf = useCallback(async () => {
+    if (!id) return;
+    setVerlaufLaedt(true);
+    const { data } = await (supabase.from("kalkulation_versionen" as never) as any)
+      .select("id, created_at, name, summe").eq("kalkulation_id", id)
+      .order("created_at", { ascending: false }).limit(40);
+    setVerlauf(((data as any[]) || []));
+    setVerlaufLaedt(false);
+  }, [id]);
+
+  const versionWiederherstellen = useCallback(async (versionId: string, zeitpunkt: string) => {
+    const { data, error } = await (supabase.from("kalkulation_versionen" as never) as any)
+      .select("data, name").eq("id", versionId).maybeSingle();
+    if (error || !data) {
+      toast({ variant: "destructive", title: "Fehler", description: "Version konnte nicht geladen werden." });
+      return;
+    }
+    setState((prev) => {
+      undoStackRef.current.push(prev);
+      redoStackRef.current = [];
+      letzterPushRef.current = 0;
+      return normalizeKalkulationState((data as any).data);
+    });
+    if ((data as any).name) setName(String((data as any).name));
+    setVerlaufOpen(false);
+    toast({
+      title: "Stand wiederhergestellt",
+      description: `Version vom ${new Date(zeitpunkt).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })} — der vorherige Stand ist über Rückgängig erreichbar.`,
+    });
+  }, [toast]);
+
+  const undo = useCallback(() => {
+    setState((prev) => {
+      const alt = undoStackRef.current.pop();
+      if (!alt) return prev;
+      redoStackRef.current.push(prev);
+      letzterPushRef.current = 0;
+      return alt;
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    setState((prev) => {
+      const wieder = redoStackRef.current.pop();
+      if (!wieder) return prev;
+      undoStackRef.current.push(prev);
+      letzterPushRef.current = 0;
+      return wieder;
+    });
+  }, []);
+
+  // Strg/Cmd+Z bzw. +Shift+Z — nicht in Eingabefeldern (dort gilt das
+  // Text-Undo des Browsers).
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      }
+    };
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, [undo, redo]);
+
   const persist = useCallback(async (opts?: { silent?: boolean }) => {
     if (!id || !loadedRef.current) return;
     // Nach einem erkannten Konflikt wird NICHTS mehr geschrieben, bis der
@@ -449,9 +576,14 @@ export default function KalkulationEditor() {
     }
     standRef.current = (rows as any[])?.[0]?.updated_at ?? standRef.current;
     lastSavedRef.current = fingerprint;
+    // Verlauf: höchstens alle 10 Minuten eine Version (Autosave läuft alle
+    // 1,2 s — ungedrosselt gäbe das Versions-Spam).
+    if (Date.now() - letzteVersionRef.current.zeit > 10 * 60 * 1000) {
+      void versionAnlegen(data, nameRef.current, summeRef.current);
+    }
     setDirty(false);
     if (!opts?.silent) toast({ title: "Gespeichert", description: "Kalkulation gespeichert." });
-  }, [id, toast]);
+  }, [id, toast, versionAnlegen]);
   const persistRef = useRef(persist); persistRef.current = persist;
 
   // Autosave: debounced nach jeder Änderung + beim Verlassen.
@@ -475,6 +607,14 @@ export default function KalkulationEditor() {
   // ------------------------------------------------------- State-Mutationen
   const update = useCallback((fn: (s: KalkulationState) => void) => {
     setState((prev) => {
+      // Rückgängig-Schritt sichern; schnelle Folge-Edits verschmelzen.
+      const jetzt = Date.now();
+      if (jetzt - letzterPushRef.current > 800) {
+        undoStackRef.current.push(prev);
+        if (undoStackRef.current.length > 50) undoStackRef.current.shift();
+      }
+      letzterPushRef.current = jetzt;
+      redoStackRef.current = [];
       const next = structuredClone(prev);
       fn(next);
       return next;
@@ -789,10 +929,26 @@ export default function KalkulationEditor() {
         onHome={() => { persist({ silent: true }); navigate("/"); }}
         title={name || "Kalkulation"}
         rightActions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2">
             <span className="hidden text-xs text-white/85 md:block">
               {saving ? "Speichert …" : dirty ? "Ungespeicherte Änderungen" : "Gespeichert"}
             </span>
+            {/* Rückgängig / Wiederholen / Verlauf (Kundenwunsch 24.08.2026) */}
+            <button type="button" onClick={undo} disabled={undoStackRef.current.length === 0}
+              title="Rückgängig (Strg+Z)" aria-label="Rückgängig"
+              className="flex h-9 w-9 items-center justify-center rounded text-white/90 hover:bg-white/15 disabled:opacity-30">
+              <Undo2 className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={redo} disabled={redoStackRef.current.length === 0}
+              title="Wiederholen (Strg+Shift+Z)" aria-label="Wiederholen"
+              className="flex h-9 w-9 items-center justify-center rounded text-white/90 hover:bg-white/15 disabled:opacity-30">
+              <Redo2 className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => { setVerlaufOpen(true); void ladeVerlauf(); }}
+              title="Verlauf: frühere Stände ansehen und wiederherstellen" aria-label="Verlauf"
+              className="flex h-9 w-9 items-center justify-center rounded text-white/90 hover:bg-white/15">
+              <History className="h-4 w-4" />
+            </button>
             <KBToolbarButton icon={Save} label="Speichern" variant="green" onClick={handleSpeichern} disabled={saving} />
           </div>
         }
@@ -1200,6 +1356,47 @@ export default function KalkulationEditor() {
               Neue Vorlage speichern: Knopf „Als Vorlage“ direkt am jeweiligen Aufbau.
             </p>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Verlauf: frühere Stände ansehen + wiederherstellen */}
+      <Dialog open={verlaufOpen} onOpenChange={setVerlaufOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Verlauf dieser Kalkulation</DialogTitle>
+            <DialogDescription>
+              Gesicherte Stände (beim Öffnen und höchstens alle 10 Minuten,
+              die letzten 40). Wiederherstellen ersetzt den aktuellen Stand —
+              er bleibt über Rückgängig erreichbar.
+            </DialogDescription>
+          </DialogHeader>
+          {verlaufLaedt ? (
+            <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+          ) : verlauf.length === 0 ? (
+            <p className="rounded border border-dashed px-3 py-3 text-sm text-muted-foreground">
+              Noch keine gesicherten Stände — sie entstehen ab jetzt automatisch beim Arbeiten.
+            </p>
+          ) : (
+            <div className="max-h-80 divide-y overflow-y-auto rounded border">
+              {verlauf.map((v, i) => (
+                <div key={v.id} className="flex items-center gap-2 px-3 py-2 text-sm">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">
+                      {new Date(v.created_at).toLocaleString("de-AT", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" })}
+                      {i === 0 ? " · neueste" : ""}
+                    </span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {v.name || "—"}{v.summe != null ? ` · ${new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(Number(v.summe))}` : ""}
+                    </span>
+                  </span>
+                  <Button size="sm" variant="outline" className="h-9 shrink-0"
+                    onClick={() => void versionWiederherstellen(v.id, v.created_at)}>
+                    Wiederherstellen
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
