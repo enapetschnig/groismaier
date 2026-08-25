@@ -198,7 +198,11 @@ export function buildDruckplan(items: readonly any[]): DruckEintrag[] {
   const liste = items || [];
   const hatGruppen = liste.some((it) => grpOf(it));
   const etwasVersteckt = liste.some((it) => !istSichtbar(it));
-  if (!hatGruppen && !etwasVersteckt) {
+  // Textbausteine sind keine Positionen — sie bekommen keine Nummer
+  // (Kundenwunsch 25.08.2026). Sobald welche vorhanden sind, wird sauber
+  // durchnummeriert, damit keine Lücke entsteht ("01, 03, 04").
+  const hatTextzeilen = liste.some((it) => istTextzeile(it));
+  if (!hatGruppen && !etwasVersteckt && !hatTextzeilen) {
     return liste.map((it, index) => ({
       art: "position" as const,
       index,
@@ -231,10 +235,13 @@ export function buildDruckplan(items: readonly any[]): DruckEintrag[] {
     // eingetragen), wird sie als normale Position mit Betrag gedruckt —
     // sonst würde der Beleg nicht aufgehen.
     const detail = istDetailOhneBetrag(it);
+    // Reine Textzeilen (Einleitungstext, Nachtext, freier Textbaustein)
+    // zählen nicht als Position und tragen deshalb keine Nummer.
+    const nurText = istTextzeile(it);
     plan.push({
       art: "position",
       index,
-      nummer: detail ? "" : String(++laufNr).padStart(2, "0"),
+      nummer: detail || nurText ? "" : String(++laufNr).padStart(2, "0"),
       detail,
       summenzeile: !!it?.ist_gruppensumme,
     });

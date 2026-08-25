@@ -1561,7 +1561,9 @@ export default function InvoiceDetail() {
         kurztext: it.kurztext || it.beschreibung || "",
         langtext: it.langtext || "",
         menge: Number(it.menge) || 1,
-        einheit: it.einheit || "Stk.",
+        // Leere Einheit ERHALTEN: Textbausteine (Menge 0, kein Preis, keine
+        // Einheit) drucken sonst "0,00 Stk." (Kundenmeldung 25.08.2026).
+        einheit: it.einheit === "" ? "" : (it.einheit || "Stk."),
         einzelpreis: Number(it.einzelpreis) || 0,
         rabatt_prozent: Number(it.rabatt_prozent) || 0,
         gesamtpreis: Number(it.gesamtpreis) || 0,
@@ -2101,7 +2103,8 @@ export default function InvoiceDetail() {
         kurztext: (it as any).kurztext || it.beschreibung,
         langtext: (it as any).langtext || "",
         menge: Number(it.menge),
-        einheit: it.einheit || "Stk.",
+        // Leere Einheit ERHALTEN (Textbausteine) — siehe oben.
+        einheit: it.einheit === "" ? "" : (it.einheit || "Stk."),
         einzelpreis: Number(it.einzelpreis),
         rabatt_prozent: Number((it as any).rabatt_prozent) || 0,
         produktnummer: (it as any).produktnummer || "",
@@ -2230,6 +2233,26 @@ export default function InvoiceDetail() {
       langtext: "",
       menge: 1,
       einheit: "Stk.",
+      einzelpreis: 0,
+      rabatt_prozent: 0,
+      gesamtpreis: 0,
+    }]);
+  };
+
+  /**
+   * Freier Textbaustein als Position (Kundenwunsch 25.08.2026: „generell
+   * sollte man Textbausteine frei hinzufügen können bei den Positionen
+   * überall"). Reine Textzeile: keine Menge, keine Einheit, kein Preis —
+   * PDF und HTML drucken dann NUR den Text (istTextzeile).
+   */
+  const addTextbaustein = () => {
+    setItemsDirty(prev => [...prev, {
+      position: prev.length + 1,
+      beschreibung: "",
+      kurztext: "",
+      langtext: "",
+      menge: 0,
+      einheit: "",
       einzelpreis: 0,
       rabatt_prozent: 0,
       gesamtpreis: 0,
@@ -6928,6 +6951,12 @@ export default function InvoiceDetail() {
                     <Plus className="w-4 h-4" />
                     Position
                   </Button>
+                  {/* Freier Textbaustein (Kundenwunsch 25.08.2026) */}
+                  <Button onClick={addTextbaustein} variant="outline" size="sm" className="gap-1"
+                    title="Reine Textzeile einfügen — ohne Menge, Einheit und Preis">
+                    <Plus className="w-4 h-4" />
+                    Textbaustein
+                  </Button>
                 </div>
                 )}
               </div>
@@ -7405,10 +7434,17 @@ export default function InvoiceDetail() {
                         })}
 
                         {!isLocked && (
-                          <Button onClick={addItem} variant="outline" className="w-full h-11 gap-1.5">
-                            <Plus className="w-4 h-4" />
-                            Position hinzufügen
-                          </Button>
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <Button onClick={addItem} variant="outline" className="h-11 flex-1 gap-1.5">
+                              <Plus className="w-4 h-4" />
+                              Position hinzufügen
+                            </Button>
+                            <Button onClick={addTextbaustein} variant="outline" className="h-11 flex-1 gap-1.5"
+                              title="Reine Textzeile — ohne Menge, Einheit und Preis">
+                              <Plus className="w-4 h-4" />
+                              Textbaustein
+                            </Button>
+                          </div>
                         )}
 
                         {/* Summen als Karte statt Tabellenfuß */}
@@ -7595,6 +7631,11 @@ export default function InvoiceDetail() {
                           <Button onClick={addItem} variant="ghost" size="sm" className="gap-1 text-muted-foreground">
                             <Plus className="w-3.5 h-3.5" />
                             Position hinzufügen
+                          </Button>
+                          <Button onClick={addTextbaustein} variant="ghost" size="sm" className="gap-1 text-muted-foreground"
+                            title="Reine Textzeile — ohne Menge, Einheit und Preis">
+                            <Plus className="w-3.5 h-3.5" />
+                            Textbaustein
                           </Button>
                         </TableCell>
                       </TableRow>
