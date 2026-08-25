@@ -842,61 +842,55 @@ export async function generateInvoicePdf(
   // Sammelangebot: jede Kalkulation (Bereich) beginnt auf einer neuen Seite —
   // die Tabelle wird dafür in Segmente geteilt; alle Index-Karten bleiben
   // GLOBAL adressiert (off + row.index).
-  const segmentGrenzen = [0, ...bereichSeitenStarts, tableBody.length];
-  for (let segIdx = 0; segIdx < segmentGrenzen.length - 1; segIdx++) {
-  const segStart = segmentGrenzen[segIdx];
-  const segEnde = segmentGrenzen[segIdx + 1];
-  if (segEnde <= segStart) continue;
-  if (segIdx > 0) { pdf.addPage(); y = 26; }
-  const off = segStart;
-  autoTable(pdf, {
-    startY: y,
-    head: tableHead,
-    body: tableBody.slice(segStart, segEnde),
-    theme: "plain",
-    rowPageBreak: "avoid",
-    margin: { left: ml, right: mr, top: 26, bottom: footerH + 12 },
-    headStyles: {
-      // Beige Kopfzeile mit feinem Rahmen — exakt die KingBill-Vorlage.
-      fillColor: [238, 234, 219],
-      textColor: [0, 0, 0],
-      fontStyle: "bold",
-      fontSize: 9,
-      cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
-      lineWidth: 0.2,
-      lineColor: [140, 140, 140],
-    },
-    bodyStyles: {
-      fontSize: KURZ_FONT_SIZE,
-      cellPadding: { top: CELL_PAD_TOP, bottom: CELL_PAD_BOTTOM, left: 2, right: 2 },
-      textColor: [0, 0, 0],
-      lineWidth: { bottom: 0.15 },
-      lineColor: [190, 190, 190],
-      valign: "top",
-    },
-    columnStyles: hidePrices
+  // Style-Bausteine — identisch für den Mess-Durchlauf und den Druck.
+  const kopfStyles: any = {
+    // Beige Kopfzeile mit feinem Rahmen — exakt die KingBill-Vorlage.
+    fillColor: [238, 234, 219],
+    textColor: [0, 0, 0],
+    fontStyle: "bold",
+    fontSize: 9,
+    cellPadding: { top: 2.5, bottom: 2.5, left: 2, right: 2 },
+    lineWidth: 0.2,
+    lineColor: [140, 140, 140],
+  };
+  const koerperStyles: any = {
+    fontSize: KURZ_FONT_SIZE,
+    cellPadding: { top: CELL_PAD_TOP, bottom: CELL_PAD_BOTTOM, left: 2, right: 2 },
+    textColor: [0, 0, 0],
+    lineWidth: { bottom: 0.15 },
+    lineColor: [190, 190, 190],
+    valign: "top",
+  };
+  const spaltenStyles: any = hidePrices
+    ? {
+        0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
+        1: { halign: "left" },
+        2: { halign: "right", cellWidth: 26 },
+      }
+    : hatRabattSpalte
       ? {
           0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
           1: { halign: "left" },
-          2: { halign: "right", cellWidth: 26 },
+          2: { halign: "right", cellWidth: 24 },
+          3: { halign: "right", cellWidth: 14 },
+          4: { halign: "right", cellWidth: 22 },
+          5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
         }
-      : hatRabattSpalte
-        ? {
-            0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
-            1: { halign: "left" },
-            2: { halign: "right", cellWidth: 24 },
-            3: { halign: "right", cellWidth: 14 },
-            4: { halign: "right", cellWidth: 22 },
-            5: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-          }
-        : {
-            0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
-            1: { halign: "left" },
-            2: { halign: "right", cellWidth: 24 },
-            3: { halign: "right", cellWidth: 22 },
-            4: { halign: "right", cellWidth: 24, fontStyle: "bold" },
-          },
-    didParseCell: (data: any) => {
+      : {
+          0: { halign: "center", cellWidth: 10, textColor: [0, 0, 0] },
+          1: { halign: "left" },
+          2: { halign: "right", cellWidth: 24 },
+          3: { halign: "right", cellWidth: 22 },
+          4: { halign: "right", cellWidth: 24, fontStyle: "bold" },
+        };
+
+  /**
+   * Zeilen-Styles setzen (Kapitel/Detail/Summe/Text) und die Zeilenhöhe für
+   * Langtexte reservieren. Als Factory, weil derselbe Hook im Mess-Durchlauf
+   * auf einem Wegwerf-Dokument laufen muss — nur so stimmen die gemessenen
+   * Höhen mit dem späteren Druck überein.
+   */
+  const machParseCell = (doc: any, off: number) => (data: any) => {
       // ── Kapitel / Detail / Sammelzeile optisch absetzen ──────────────────
       if (data.section === "body") {
         const ri = off + data.row.index;
@@ -933,11 +927,11 @@ export async function generateInvoicePdf(
         if (info) {
           try {
             const w = descWidth - (detailRows.has(off + data.row.index) ? INDENT_MM : 0);
-            pdf.setFontSize(KURZ_FONT_SIZE);
-            const kurzLines = pdf.splitTextToSize(info.kurztext, w);
-            pdf.setFontSize(LANG_FONT_SIZE);
-            const langLines = pdf.splitTextToSize(info.langtext, w);
-            pdf.setFontSize(KURZ_FONT_SIZE);
+            doc.setFontSize(KURZ_FONT_SIZE);
+            const kurzLines = doc.splitTextToSize(info.kurztext, w);
+            doc.setFontSize(LANG_FONT_SIZE);
+            const langLines = doc.splitTextToSize(info.langtext, w);
+            doc.setFontSize(KURZ_FONT_SIZE);
             const h = CELL_PAD_TOP
               + linesHeightMm(kurzLines.length, KURZ_FONT_SIZE)
               + LANG_GAP
@@ -950,7 +944,113 @@ export async function generateInvoicePdf(
           } catch { /* fallback: auto */ }
         }
       }
-    },
+    };
+
+  // ══ Positions-Blöcke zusammenhalten (Kundenwunsch 25.08.2026) ═════════════
+  // „Positionen sollen immer als Ganzes auf einer Seite dargestellt werden —
+  //  Seitenumbruch, wenn zu wenig Platz. Wenn's halbe halbe ist, ist's auch OK."
+  //
+  // Ein BLOCK ist eine Position samt allem, was zu ihr gehört: Kapitel-
+  // überschrift, Positionszeile, Einleitungstext, Artikel-Aufzählung,
+  // Nachtext. Vorgehen:
+  //   1. Mess-Durchlauf auf einem Wegwerf-Dokument liefert die ECHTEN
+  //      Zeilenhöhen (Textumbrüche, Langtexte, mehrzeilige Mengen).
+  //   2. Seitenfluss damit simulieren; passt ein Block nicht mehr komplett,
+  //      wird an seinem Anfang ein Seitenumbruch gesetzt.
+  //   3. Große Blöcke (> BLOCK_MAX_ANTEIL einer Seite) dürfen weiterhin
+  //      fließen — sie würden sonst ganze Seiten leer lassen. Dort bleibt
+  //      wenigstens der Kopf (Position + erste Zeilen) zusammen.
+  const BLOCK_MAX_ANTEIL = 0.6;
+  /** Mindestens so viele Zeilen eines fließenden Blocks bleiben zusammen. */
+  const BLOCK_MIN_KOPF = 3;
+  const blockUmbrueche: number[] = [];
+  try {
+    // Blockgrenzen: Anhang-Zeilen (Detail/Text) hängen am laufenden Block;
+    // eine Kapitelüberschrift bindet die ihr folgende Positionszeile an sich.
+    const bloecke: { start: number; ende: number }[] = [];
+    for (let i = 0; i < tableBody.length; i++) {
+      const anhang = detailRows.has(i) || textRows.has(i);
+      const vorherKapitel = i > 0 && kapitelRows.has(i - 1);
+      if (!anhang && !vorherKapitel) bloecke.push({ start: i, ende: i });
+      else if (bloecke.length > 0) bloecke[bloecke.length - 1].ende = i;
+      else bloecke.push({ start: i, ende: i });
+    }
+
+    // 1) Mess-Durchlauf — dieselben Styles, dieselbe Zeilenhöhen-Logik.
+    const mess = new jsPDF({ orientation: "p", unit: "mm", format: "a4" });
+    const zeilenHoehe: number[] = new Array(tableBody.length).fill(0);
+    let kopfHoehe = 0;
+    autoTable(mess, {
+      startY: y,
+      head: tableHead,
+      body: tableBody,
+      theme: "plain",
+      rowPageBreak: "avoid",
+      margin: { left: ml, right: mr, top: 26, bottom: footerH + 12 },
+      headStyles: kopfStyles,
+      bodyStyles: koerperStyles,
+      columnStyles: spaltenStyles,
+      didParseCell: machParseCell(mess, 0),
+      didDrawCell: (data: any) => {
+        if (data.section === "head") kopfHoehe = Math.max(kopfHoehe, data.cell.height);
+        else if (data.section === "body") {
+          zeilenHoehe[data.row.index] = Math.max(zeilenHoehe[data.row.index] || 0, data.cell.height);
+        }
+      },
+    });
+
+    // 2) Seitenfluss simulieren und Umbrüche setzen.
+    const unterkante = pageHeight - (footerH + 12);
+    const seitenStart = 26 + kopfHoehe;      // Folgeseiten: Rand + Tabellenkopf
+    const leereSeite = unterkante - seitenStart;
+    const bereichStartSet = new Set(bereichSeitenStarts);
+    let cursor = y + kopfHoehe;
+    for (const b of bloecke) {
+      if (bereichStartSet.has(b.start)) cursor = seitenStart; // eigener Umbruch
+      let blockHoehe = 0;
+      for (let i = b.start; i <= b.ende; i++) blockHoehe += zeilenHoehe[i] || 0;
+      const platz = unterkante - cursor;
+      if (blockHoehe > platz) {
+        const kompaktGenug = blockHoehe <= leereSeite * BLOCK_MAX_ANTEIL;
+        // Fließender Block: wenigstens Positionszeile + erste Zeilen dürfen
+        // nicht allein am Seitenende zurückbleiben.
+        let kopfHoeheBlock = 0;
+        for (let i = b.start; i <= Math.min(b.ende, b.start + BLOCK_MIN_KOPF - 1); i++) {
+          kopfHoeheBlock += zeilenHoehe[i] || 0;
+        }
+        if ((kompaktGenug || kopfHoeheBlock > platz) && b.start > 0 && !bereichStartSet.has(b.start)) {
+          blockUmbrueche.push(b.start);
+          cursor = seitenStart;
+        }
+      }
+      // Zeilenweise weiterlaufen (Seitenwechsel innerhalb großer Blöcke).
+      for (let i = b.start; i <= b.ende; i++) {
+        const h = zeilenHoehe[i] || 0;
+        if (cursor + h > unterkante) cursor = seitenStart;
+        cursor += h;
+      }
+    }
+  } catch { /* Messung ist Kosmetik — im Zweifel fließt die Tabelle wie bisher */ }
+
+  const segmentGrenzen = [...new Set([0, ...bereichSeitenStarts, ...blockUmbrueche, tableBody.length])]
+    .sort((a, b) => a - b);
+  for (let segIdx = 0; segIdx < segmentGrenzen.length - 1; segIdx++) {
+  const segStart = segmentGrenzen[segIdx];
+  const segEnde = segmentGrenzen[segIdx + 1];
+  if (segEnde <= segStart) continue;
+  if (segIdx > 0) { pdf.addPage(); y = 26; }
+  const off = segStart;
+  autoTable(pdf, {
+    startY: y,
+    head: tableHead,
+    body: tableBody.slice(segStart, segEnde),
+    theme: "plain",
+    rowPageBreak: "avoid",
+    margin: { left: ml, right: mr, top: 26, bottom: footerH + 12 },
+    headStyles: kopfStyles,
+    bodyStyles: koerperStyles,
+    columnStyles: spaltenStyles,
+    didParseCell: machParseCell(pdf, off),
     didDrawCell: (data: any) => {
       // Seitenende-Tracking für die Übertrag-Zeilen: je Dokumentseite die
       // Unterkante der letzten Body-Zeile + die dortige laufende Summe.
@@ -962,6 +1062,19 @@ export async function generateInvoicePdf(
             summe: uebertragNachZeile[off + data.row.index] ?? 0,
           };
         } catch { /* Tracking ist nur Kosmetik */ }
+      }
+      // Zugehörigkeits-Klammer (Kundenwunsch 25.08.2026: „man erkennt, was
+      // zu diesem Aufbau gehört"): feiner senkrechter Strich links an allen
+      // eingerückten Zeilen einer Position. Er läuft über die ganze
+      // Aufzählung durch — auch über einen Seitenwechsel hinweg.
+      if (data.section === "body" && data.column.index === COL_BESCHREIBUNG
+          && detailRows.has(off + data.row.index)) {
+        try {
+          const x = data.cell.x + 2 + INDENT_MM / 2;
+          pdf.setDrawColor(200, 200, 200);
+          pdf.setLineWidth(0.3);
+          pdf.line(x, data.cell.y, x, data.cell.y + data.cell.height);
+        } catch { /* Kosmetik */ }
       }
       // autoTable hat den Kurztext in 9pt gezeichnet. Wir malen nun den
       // Langtext direkt darunter (ohne Overpaint, ohne Bottom-Border
