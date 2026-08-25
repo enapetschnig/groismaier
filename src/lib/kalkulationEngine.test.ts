@@ -66,8 +66,16 @@ describe("Materialzeile", () => {
     expect(r.vkProM2).toBe(0);
   });
 
-  it("Zeile ohne Artikel bleibt leer", () => {
-    const r = calcMaterialRow(zeile({ product: "" }), modul, bd);
+  it("Zeile mit NUR Kategorie rechnet mit (Kundenentscheid 25.08.2026)", () => {
+    // BV Knapp: frei getippte Positionen trugen den Namen nur in der
+    // Kategorie — sie fielen still aus der Summe. Jetzt zählen sie.
+    const r = calcMaterialRow(zeile({ product: "", ekPrice: 33, vkPrice: 52.5, vkManuell: true }), modul, bd);
+    expect(r.ekProM2).toBe(33);
+    expect(r.vkProM2).toBe(52.5);
+  });
+
+  it("die ganz leere Zeile bleibt leer", () => {
+    const r = calcMaterialRow(zeile({ category: "", product: "", ekPrice: 5, vkPrice: 7 }), modul, bd);
     expect(r.ekProM2).toBe(0);
     expect(r.vkProM2).toBe(0);
   });

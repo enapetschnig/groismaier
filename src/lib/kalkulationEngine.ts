@@ -533,7 +533,10 @@ export function calcMaterialRow(
     const betrag = num(m.area) * num(row.lmPerQm) * (num(row.dimension) / 100) * (num(row.dimension2) / 100) * num(row.ekPrice);
     return { ...leer, ekAbsolut: betrag, vkAbsolut: betrag };
   }
-  if (!row.category || !row.product) return leer;
+  // Kundenentscheid 25.08.2026: Auch eine Zeile mit NUR Kategorie (ohne
+  // Artikel) rechnet mit — vorher fiel sie still aus der Summe (BV Knapp,
+  // zwei frei getippte Positionen). Leer bleibt nur die ganz leere Zeile.
+  if (!row.category && !row.product) return leer;
   if (istRiegelZeile(row)) {
     // ekPrice/vkPrice der Zeile sind m³-Preise; der Aufschlag wirkt wie bei
     // jedem Material über die VK-Ableitung („× m³ Preis × Aufschlag").

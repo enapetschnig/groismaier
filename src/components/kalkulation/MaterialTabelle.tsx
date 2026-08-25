@@ -215,11 +215,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     } else if (row.manual && istDecke) {
       onReplaceRow(idx, { ...row, manual: false, calc: true });
     } else {
-      onReplaceRow(idx, {
-        ...row, manual: false, calc: false,
-        // DB-Zeile ohne Artikelnamen zählt nicht zur Summe → Namen nachziehen.
-        ...(row.product || !row.category ? {} : { product: row.category }),
-      });
+      onReplaceRow(idx, { ...row, manual: false, calc: false });
     }
   };
 
@@ -347,34 +343,13 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
           m²-Preise ein und erwartete × Fläche — der Bleistift-Modus rechnet
           aber absolute Beträge. Sichtbar machen + Ein-Klick-Umstieg auf
           €/m² (Namen und Preise bleiben, Zeile wird freie DB-Position). */}
-      {/* DB-Zeile mit Preisen, aber ohne Artikelnamen: rechnet 0 — das darf
-          nie wieder still passieren (Kundenvorfall 25.08.2026). */}
-      {!row.manual && !row.calc && !row.product && !!row.category && (num(row.ekPrice) > 0 || num(row.vkPrice) > 0) && (
-        <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-semibold text-red-700">
-          <span>⚠ Zeile zählt NICHT zur Summe — es fehlt der Artikel.</span>
-          <button
-            type="button"
-            className="rounded border border-red-300 bg-red-50 px-1.5 py-0.5 hover:bg-red-100"
-            onClick={() => onPatchRow(idx, { product: row.category })}
-            title="Den Namen aus der Kategorie als Artikel übernehmen — die Zeile rechnet dann Preis × Fläche"
-          >
-            „{row.category}“ als Artikel übernehmen
-          </button>
-        </div>
-      )}
       {row.manual && (
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-amber-700">
           <span>✏️ Pauschale: EK/VK gelten GESAMT — ohne × Fläche ({fmt(num(m.area))} m²).</span>
           <button
             type="button"
             className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold hover:bg-amber-200"
-            onClick={() => onPatchRow(idx, {
-              manual: false,
-              // Ohne Artikelnamen rechnet eine Datenbank-Zeile 0 (Kunden-
-              // vorfall 25.08.2026: zwei Positionen fielen still aus der
-              // Summe) — der frei getippte Name wandert deshalb mit.
-              ...(row.product ? {} : { product: row.category }),
-            })}
+            onClick={() => onPatchRow(idx, { manual: false })}
             title="Zeile auf €/m² umstellen — Namen und Preise bleiben, gerechnet wird dann Preis × Fläche"
           >
             Pro m² rechnen (× Fläche)
