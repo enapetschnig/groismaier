@@ -760,6 +760,11 @@ export default function InvoiceDetail() {
   const [kalkVerlassenOpen, setKalkVerlassenOpen] = useState(false);
   // „Mit Kalkulation verknüpfen": Wähler für Belege OHNE Herkunft.
   const [kalkVerknuepfenOpen, setKalkVerknuepfenOpen] = useState(false);
+  /** „Weitere Kalkulation einfügen" (Kundenwunsch 25.08.2026: die 4.
+   *  Kalkulation nachträglich ans bestehende Angebot heften). */
+  const [kalkEinfuegenOpen, setKalkEinfuegenOpen] = useState(false);
+  const [kalkEinfuegenPos, setKalkEinfuegenPos] = useState<"anfang" | "ende">("anfang");
+  const [kalkEinfuegenLaeuft, setKalkEinfuegenLaeuft] = useState(false);
   const [kalkSuche, setKalkSuche] = useState("");
   const [verfuegbareKalks, setVerfuegbareKalks] = useState<{ id: string; name: string; summe: number; updated_at: string }[]>([]);
   const [ladeKalks, setLadeKalks] = useState(false);
@@ -1284,6 +1289,134 @@ export default function InvoiceDetail() {
    *     zugeordnet über Gruppe + Beschreibung (Fallback: Beschreibung allein)
    *     — der Chef soll seine Auswahl nicht neu treffen müssen.
    */
+  /**
+   * Positionen EINER Kalkulation als Angebots-Bereich bauen (Überschrift +
+   * Aufbauten mit Bereichs-Suffix) — dieselbe Form, die das Sammelangebot im
+   * Kalkulations-Hub erzeugt.
+   */
+  const baueKalkBereich = async (quellId: string): Promise<{ name: string; items: AngebotItem[] } | null> => {
+    const { data: settingsData } = await supabase
+      .from("app_settings").select("key, value").like("key", "kalk\\_%");
+    const settings: Record<string, string> = {};
+    for (const row of ((settingsData as any[]) || [])) settings[row.key] = row.value;
+    const { data: kalk } = await (supabase.from("kalkulationen" as never) as any)
+      .select("id, name, data").eq("id", quellId).maybeSingle();
+    if (!kalk) return null;
+    const state = normalizeKalkulationState((kalk as any).data);
+    const bd = resolveBetriebsdaten(state.settings.businessData, settings);
+    const projekt = calcProjekt(state, bd);
+    const { items: rohItems } = buildAngebotItems(projekt);
+    const bereich = String((kalk as any).name || "");
+    if (rohItems.length === 0) return { name: bereich, items: [] };
+    const out: AngebotItem[] = [{
+      beschreibung: `Bereich: ${bereich}`,
+      menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+      gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+    } as AngebotItem];
+    for (const it of mitSelbstkosten(rohItems, projekt)) {
+      out.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe });
+    }
+    return { name: bereich, items: out };
+  };
+
+  /** AngebotItem → InvoiceItem (Positionsnummern vergibt der Aufrufer). */
+  const alsBelegPositionen = (quelle: AngebotItem[]): InvoiceItem[] =>
+    quelle.map((n, i) => ({
+      position: i + 1,
+      beschreibung: n.beschreibung,
+      kurztext: n.beschreibung,
+      langtext: "",
+      menge: Number(n.menge) || 0,
+      einheit: n.einheit === "" ? "" : (n.einheit || "Stk."),
+      einzelpreis: Number(n.einzelpreis) || 0,
+      rabatt_prozent: 0,
+      gesamtpreis: Number(n.gesamtpreis) || 0,
+      gruppe: n.gruppe ? String(n.gruppe) : null,
+      auf_pdf: n.auf_pdf !== false,
+      ist_gruppensumme: !!n.ist_gruppensumme,
+      ek_preis: Number(n.ek_preis) || 0,
+    })) as InvoiceItem[];
+
+  /**
+   * Weitere Kalkulation an den bestehenden Beleg heften (Kundenwunsch
+   * 25.08.2026: „Wie kann ich jetzt die 4. Kalkulation noch dazu heften?
+   * Die mit Allgemein soll ganz am Anfang ins Anbot dazu"). Der neue Bereich
+   * wird komplett eingefügt; die Herkunft (kalkulation_ids) wächst mit, damit
+   * „Positionen neu übernehmen" später ALLE Bereiche neu aufbaut.
+   */
+  const kalkulationEinfuegen = async (k: { id: string; name: string }) => {
+    if (kalkulationIds?.includes(k.id) || k.id === kalkulationId) {
+      toast({ variant: "destructive", title: "Schon enthalten", description: `„${k.name}" ist bereits Teil dieses Belegs.` });
+      return;
+    }
+    setKalkEinfuegenLaeuft(true);
+    try {
+      const bereich = await baueKalkBereich(k.id);
+      if (!bereich) {
+        toast({ variant: "destructive", title: "Nicht gefunden", description: "Die Kalkulation existiert nicht mehr." });
+        return;
+      }
+      if (bereich.items.length === 0) {
+        toast({ variant: "destructive", title: "Nichts zu übernehmen", description: `„${k.name}" enthält keine Aufbauten mit Betrag.` });
+        return;
+      }
+      const neu = alsBelegPositionen(bereich.items);
+      setItemsDirty((prev) => {
+        // Leere Startzeile eines frischen Belegs nicht mitschleppen.
+        const bestand = prev.filter((it) => (it.beschreibung || "").trim() || traegtBetrag(it));
+        const zusammen = kalkEinfuegenPos === "anfang" ? [...neu, ...bestand] : [...bestand, ...neu];
+        return zusammen.map((it, i) => ({ ...it, position: i + 1 }));
+      });
+      // Herkunft erweitern — Reihenfolge = Reihenfolge im Beleg.
+      const bisher = kalkulationIds && kalkulationIds.length > 0
+        ? kalkulationIds
+        : (kalkulationId ? [kalkulationId] : []);
+      const neueListe = kalkEinfuegenPos === "anfang" ? [k.id, ...bisher] : [...bisher, k.id];
+      setKalkulationIds(neueListe);
+      if (!kalkulationId) setKalkulationId(k.id);
+      setKalkEinfuegenOpen(false);
+      toast({
+        title: "Kalkulation eingefügt",
+        description: `„${k.name}" steht jetzt ${kalkEinfuegenPos === "anfang" ? "am Anfang" : "am Ende"} des Belegs. Bitte speichern.`,
+      });
+    } finally {
+      setKalkEinfuegenLaeuft(false);
+    }
+  };
+
+  /**
+   * Bereichs-Blöcke eines Sammelangebots (Kundenwunsch 25.08.2026: „die
+   * Reihenfolge ändern"). Ein Block beginnt bei der Textzeile „Bereich: …"
+   * und reicht bis zur nächsten; alles davor ist der Vorspann (freie
+   * Positionen/Textbausteine), der immer oben bleibt.
+   */
+  const BEREICH_PRAEFIX = "Bereich: ";
+  const bereichsBloecke = (liste: InvoiceItem[]): { titel: string; von: number; bis: number }[] => {
+    const bloecke: { titel: string; von: number; bis: number }[] = [];
+    liste.forEach((it, i) => {
+      if ((it.beschreibung || "").startsWith(BEREICH_PRAEFIX) && !traegtBetrag(it)) {
+        if (bloecke.length > 0) bloecke[bloecke.length - 1].bis = i - 1;
+        bloecke.push({ titel: (it.beschreibung || "").slice(BEREICH_PRAEFIX.length).trim(), von: i, bis: liste.length - 1 });
+      }
+    });
+    return bloecke;
+  };
+  const belegBereiche = bereichsBloecke(items);
+
+  /** Ganzen Bereich (Überschrift + alle Aufbauten) nach oben/unten schieben. */
+  const verschiebeBereich = (index: number, richtung: -1 | 1) => {
+    setItemsDirty((prev) => {
+      const bloecke = bereichsBloecke(prev);
+      const ziel = index + richtung;
+      if (index < 0 || ziel < 0 || index >= bloecke.length || ziel >= bloecke.length) return prev;
+      const vorspann = prev.slice(0, bloecke[0].von);
+      const teile = bloecke.map((b) => prev.slice(b.von, b.bis + 1));
+      const [raus] = teile.splice(index, 1);
+      teile.splice(ziel, 0, raus);
+      return [...vorspann, ...teile.flat()].map((it, i) => ({ ...it, position: i + 1 }));
+    });
+  };
+
   const positionenNeuUebernehmen = async () => {
     if (!kalkulationId) return;
     setKalkErsetzenLaeuft(true);
@@ -4985,8 +5118,46 @@ export default function InvoiceDetail() {
                     <RefreshCw className="h-4 w-4" />
                     Positionen neu übernehmen
                   </Button>
+                  {!isLocked && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      data-testid="kalk-einfuegen"
+                      onClick={() => { setKalkEinfuegenPos("anfang"); void ladeVerfuegbareKalks(); setKalkEinfuegenOpen(true); }}
+                      title="Eine weitere Kalkulation als eigenen Bereich in diesen Beleg übernehmen"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Kalkulation einfügen
+                    </Button>
+                  )}
                 </div>
               </CardContent>
+              {/* Bereiche des Sammelangebots: Reihenfolge ändern
+                  (Kundenwunsch 25.08.2026) */}
+              {belegBereiche.length > 1 && !isLocked && (
+                <CardContent className="border-t border-blue-200/60 pt-3">
+                  <div className="mb-1.5 text-xs font-semibold text-blue-900">
+                    Bereiche in diesem Beleg — Reihenfolge
+                  </div>
+                  <div className="space-y-1">
+                    {belegBereiche.map((b, i) => (
+                      <div key={`${b.titel}-${i}`} className="flex items-center gap-2 rounded border bg-white px-2 py-1.5 text-sm">
+                        <span className="w-5 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
+                        <span className="min-w-0 flex-1 truncate">{b.titel}</span>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0}
+                          title="Bereich nach oben" onClick={() => verschiebeBereich(i, -1)}>
+                          <ChevronUp className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === belegBereiche.length - 1}
+                          title="Bereich nach unten" onClick={() => verschiebeBereich(i, 1)}>
+                          <ChevronDown className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              )}
             </Card>
           )}
 
@@ -8301,6 +8472,75 @@ export default function InvoiceDetail() {
         </AlertDialog>
 
         {/* Wähler „Mit Kalkulation verknüpfen“ — für Belege ohne Herkunft. */}
+        {/* Weitere Kalkulation einfügen (Kundenwunsch 25.08.2026) */}
+        <Dialog open={kalkEinfuegenOpen} onOpenChange={setKalkEinfuegenOpen}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Weitere Kalkulation einfügen</DialogTitle>
+              <DialogDescription>
+                Die gewählte Kalkulation wird als eigener Bereich mit Überschrift
+                in diesen Beleg übernommen — mit allen Aufbauten und Texten.
+                Danach bitte speichern.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium">Einfügen</span>
+              {([["anfang", "ganz am Anfang"], ["ende", "am Ende"]] as const).map(([wert, label]) => (
+                <button
+                  key={wert}
+                  type="button"
+                  onClick={() => setKalkEinfuegenPos(wert)}
+                  className={`min-h-[36px] rounded-md border px-3 text-sm ${
+                    kalkEinfuegenPos === wert ? "border-primary bg-primary/10 font-semibold text-primary" : "bg-background"
+                  }`}
+                >{label}</button>
+              ))}
+            </div>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                autoFocus
+                className="pl-8"
+                placeholder="Kalkulation suchen …"
+                value={kalkSuche}
+                onChange={(e) => setKalkSuche(e.target.value)}
+              />
+            </div>
+            <div className="max-h-72 overflow-y-auto rounded-md border">
+              {ladeKalks ? (
+                <p className="p-4 text-center text-sm text-muted-foreground">Lädt …</p>
+              ) : (() => {
+                const q = kalkSuche.trim().toLowerCase();
+                const schonDrin = new Set([...(kalkulationIds || []), ...(kalkulationId ? [kalkulationId] : [])]);
+                const liste = verfuegbareKalks.filter((k) => !q || k.name.toLowerCase().includes(q));
+                if (liste.length === 0) {
+                  return <p className="p-4 text-center text-sm text-muted-foreground">Keine Treffer.</p>;
+                }
+                return liste.map((k) => {
+                  const drin = schonDrin.has(k.id);
+                  return (
+                    <button
+                      key={k.id}
+                      type="button"
+                      disabled={drin || kalkEinfuegenLaeuft}
+                      onClick={() => void kalkulationEinfuegen(k)}
+                      className="flex w-full items-center justify-between gap-3 border-b px-3 py-2.5 text-left last:border-b-0 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <span className="flex min-w-0 items-center gap-2">
+                        <Calculator className="h-4 w-4 shrink-0 text-primary" />
+                        <span className="min-w-0 truncate">{k.name}</span>
+                      </span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {drin ? "bereits enthalten" : eur(Number((k as any).summe) || 0)}
+                      </span>
+                    </button>
+                  );
+                });
+              })()}
+            </div>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={kalkVerknuepfenOpen} onOpenChange={setKalkVerknuepfenOpen}>
           <DialogContent className="sm:max-w-lg">
             <DialogHeader>
