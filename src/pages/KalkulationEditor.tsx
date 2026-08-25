@@ -415,7 +415,8 @@ export default function KalkulationEditor() {
   // Stand beim Öffnen + höchstens alle 10 Minuten eine Version; max. 40.
   const letzteVersionRef = useRef<{ zeit: number; fp: string }>({ zeit: 0, fp: "" });
   const [verlaufOpen, setVerlaufOpen] = useState(false);
-  const [verlauf, setVerlauf] = useState<{ id: string; created_at: string; name: string | null; summe: number | null }[]>([]);
+  const [verlauf, setVerlauf] = useState<{ id: string; created_at: string; name: string | null; summe: number | null; created_by: string | null }[]>([]);
+  const [verlaufNamen, setVerlaufNamen] = useState<Record<string, string>>({});
   const [verlaufLaedt, setVerlaufLaedt] = useState(false);
 
   /** Kompakter Inhalts-Fingerabdruck (djb2 + Länge) — nur für „gleich/ungleich". */
@@ -429,8 +430,9 @@ export default function KalkulationEditor() {
     if (!id) return;
     const fp = hashFp(JSON.stringify(data));
     if (fp === letzteVersionRef.current.fp) return;
+    const { data: { session } } = await supabase.auth.getSession();
     const { error } = await (supabase.from("kalkulation_versionen" as never) as any)
-      .insert({ kalkulation_id: id, name: nm || null, summe, data, fingerprint: fp });
+      .insert({ kalkulation_id: id, name: nm || null, summe, data, fingerprint: fp, created_by: session?.user?.id || null });
     if (error) return; // Verlauf ist Komfort — er darf den Editor nie stören
     letzteVersionRef.current = { zeit: Date.now(), fp };
     // Aufräumen: nur die neuesten 40 Versionen je Kalkulation behalten.
@@ -459,9 +461,18 @@ export default function KalkulationEditor() {
     if (!id) return;
     setVerlaufLaedt(true);
     const { data } = await (supabase.from("kalkulation_versionen" as never) as any)
-      .select("id, created_at, name, summe").eq("kalkulation_id", id)
+      .select("id, created_at, name, summe, created_by").eq("kalkulation_id", id)
       .order("created_at", { ascending: false }).limit(40);
-    setVerlauf(((data as any[]) || []));
+    const rows = ((data as any[]) || []);
+    setVerlauf(rows);
+    // Wer hat gespeichert? Namen aus profiles nachladen.
+    const ids = [...new Set(rows.map((r) => r.created_by).filter(Boolean))] as string[];
+    if (ids.length > 0) {
+      const { data: profs } = await supabase.from("profiles").select("id, vorname, nachname").in("id", ids);
+      const map: Record<string, string> = {};
+      for (const p of profs || []) map[p.id] = `${p.vorname || ""} ${p.nachname || ""}`.trim() || "Benutzer";
+      setVerlaufNamen(map);
+    }
     setVerlaufLaedt(false);
   }, [id]);
 
@@ -576,9 +587,10 @@ export default function KalkulationEditor() {
     }
     standRef.current = (rows as any[])?.[0]?.updated_at ?? standRef.current;
     lastSavedRef.current = fingerprint;
-    // Verlauf: höchstens alle 10 Minuten eine Version (Autosave läuft alle
-    // 1,2 s — ungedrosselt gäbe das Versions-Spam).
-    if (Date.now() - letzteVersionRef.current.zeit > 10 * 60 * 1000) {
+    // Verlauf: der bewusste Speichern-Klick sichert IMMER einen Stand
+    // (Fingerprint verhindert Duplikate); der Autosave höchstens alle
+    // 10 Minuten — ungedrosselt gäbe das Versions-Spam (läuft alle 1,2 s).
+    if (!opts?.silent || Date.now() - letzteVersionRef.current.zeit > 10 * 60 * 1000) {
       void versionAnlegen(data, nameRef.current, summeRef.current);
     }
     setDirty(false);
@@ -1365,9 +1377,10 @@ export default function KalkulationEditor() {
           <DialogHeader>
             <DialogTitle>Verlauf dieser Kalkulation</DialogTitle>
             <DialogDescription>
-              Gesicherte Stände (beim Öffnen und höchstens alle 10 Minuten,
-              die letzten 40). Wiederherstellen ersetzt den aktuellen Stand —
-              er bleibt über Rückgängig erreichbar.
+              Gesicherte Stände aller Benutzer (beim Öffnen, bei jedem
+              Speichern-Klick, sonst höchstens alle 10 Minuten — die letzten
+              40). Wiederherstellen ersetzt den aktuellen Stand; er bleibt
+              über Rückgängig erreichbar.
             </DialogDescription>
           </DialogHeader>
           {verlaufLaedt ? (
@@ -1387,6 +1400,7 @@ export default function KalkulationEditor() {
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
                       {v.name || "—"}{v.summe != null ? ` · ${new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(Number(v.summe))}` : ""}
+                      {v.created_by && verlaufNamen[v.created_by] ? ` · von ${verlaufNamen[v.created_by]}` : ""}
                     </span>
                   </span>
                   <Button size="sm" variant="outline" className="h-9 shrink-0"
