@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import {
   Calculator, Plus, FileText, Trash2, User, Clock, MoreVertical,
-  Copy, LayoutTemplate, Pencil, FilePlus2,
+  Copy, LayoutTemplate, Pencil, FilePlus2, FolderOpen, ArrowLeft,
 } from "lucide-react";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -228,6 +228,31 @@ export default function KalkulationHub() {
 
   const kalkulationen = useMemo(() => rows.filter((r) => !r.ist_vorlage), [rows]);
   const vorlagen = useMemo(() => rows.filter((r) => r.ist_vorlage), [rows]);
+
+  /**
+   * Bauvorhaben-Ansicht (Kundenwunsch 25.08.2026: „die Kalkulations-
+   * uebersicht pro BV ... dann klickt man drauf und kommt rein").
+   * Gruppiert wird nach dem KUNDEN — der ist an der Kalkulation bereits
+   * gepflegt (Anlege-Dialog) und entspricht Christians „BV Knapp".
+   * Kalkulationen ohne Kunde landen in einer eigenen Gruppe.
+   */
+  const OHNE_KUNDE = "__ohne__";
+  const [offenesBv, setOffenesBv] = useState<string | null>(null);
+  const bauvorhaben = useMemo(() => {
+    const map = new Map<string, { key: string; titel: string; rows: KalkRow[]; summe: number; letzte: string }>();
+    for (const r of kalkulationen) {
+      const key = r.customer_id || OHNE_KUNDE;
+      const titel = r.customers?.name || "Ohne Kunde";
+      const e = map.get(key) || { key, titel, rows: [], summe: 0, letzte: r.updated_at };
+      e.rows.push(r);
+      e.summe += Number(r.summe) || 0;
+      if (r.updated_at > e.letzte) e.letzte = r.updated_at;
+      map.set(key, e);
+    }
+    // Zuletzt bearbeitete Bauvorhaben zuerst.
+    return [...map.values()].sort((a, b) => (a.letzte < b.letzte ? 1 : -1));
+  }, [kalkulationen]);
+  const offenesBvObjekt = bauvorhaben.find((b) => b.key === offenesBv) || null;
 
   /** Vollständige Zeile (inkl. data-Blob) für Kopier-Aktionen laden. */
   const fetchFull = async (id: string): Promise<any | null> => {
@@ -493,7 +518,7 @@ export default function KalkulationHub() {
           <button
             type="button"
             className={tab === "vorlagen" ? "kb-tab kb-tab-active" : "kb-tab"}
-            onClick={() => setTab("vorlagen")}
+            onClick={() => { setTab("vorlagen"); setOffenesBv(null); }}
           >
             Vorlagen{vorlagen.length > 0 ? ` (${vorlagen.length})` : ""}
           </button>
@@ -544,10 +569,55 @@ export default function KalkulationHub() {
               <Button onClick={() => setDialogOpen(true)}><Plus className="h-4 w-4 mr-2" /> Neue Kalkulation</Button>
             </div>
           )
-        ) : (
+        ) : tab === "kalkulationen" && !offenesBv ? (
+          /* Bauvorhaben-Ordner (Kundenwunsch 25.08.2026): erst das BV, dann
+             die Kalkulationen darin — "dann bleibt das übersichtlicher". */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {list.map(renderCard)}
+            {bauvorhaben.map((bv) => (
+              <Card
+                key={bv.key}
+                className="flex cursor-pointer flex-col transition-shadow hover:shadow-md"
+                onClick={() => setOffenesBv(bv.key)}
+              >
+                <CardHeader className="space-y-2 pb-3">
+                  <div className="flex items-start gap-2">
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                      <FolderOpen className="h-5 w-5 text-primary" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <CardTitle className="text-base leading-snug">{bv.titel}</CardTitle>
+                      <CardDescription className="text-xs">
+                        {bv.rows.length} Kalkulation{bv.rows.length === 1 ? "" : "en"} · zuletzt {fmtDate(bv.letzte)}
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="mt-auto">
+                  <div className="text-lg font-bold text-primary">{fmtEuro(bv.summe)}</div>
+                  <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                    {bv.rows.slice(0, 3).map((r) => r.name).join(" · ")}
+                    {bv.rows.length > 3 ? " …" : ""}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
           </div>
+        ) : (
+          <>
+            {/* Innerhalb eines Bauvorhabens: Kopfzeile mit Zurück */}
+            {tab === "kalkulationen" && offenesBvObjekt && (
+              <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border bg-card px-3 py-2">
+                <Button variant="ghost" size="sm" className="h-9 gap-1" onClick={() => setOffenesBv(null)}>
+                  <ArrowLeft className="h-4 w-4" /> Alle Bauvorhaben
+                </Button>
+                <span className="min-w-0 truncate text-sm font-semibold">{offenesBvObjekt.titel}</span>
+                <span className="ml-auto text-sm font-bold text-primary">{fmtEuro(offenesBvObjekt.summe)}</span>
+              </div>
+            )}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {(tab === "kalkulationen" && offenesBvObjekt ? offenesBvObjekt.rows : list).map(renderCard)}
+            </div>
+          </>
         )}
       </div>
 
