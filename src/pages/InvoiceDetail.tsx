@@ -3360,9 +3360,18 @@ export default function InvoiceDetail() {
         // Entwurf: KEINE laufende Nummer ziehen — sonst wäre sie verbraucht,
         // auch wenn der Entwurf nie zur Rechnung wird (Lücke im Nummernkreis).
         // Platzhalter ist eindeutig (nummer ist UNIQUE) und klar erkennbar.
+        //
+        // NUR für rechnungsartige Belege! Sie allein kennen die zweite Stufe
+        // („Rechnung erstellen"), die den Platzhalter gegen die echte Nummer
+        // tauscht. Angebote/AB/Lieferscheine starten zwar ebenfalls im Status
+        // „entwurf" (Belegliste), haben aber keinen Erstellen-Schritt — sie
+        // blieben mit Platzhalter für immer ohne Nummer und liessen sich
+        // weder drucken noch senden (Kundenmeldung 25.08.2026:
+        // „Belegnummer fehlt noch").
+        const platzhalterErlaubt = RECHNUNGSARTIGE_TYPEN.has(form.typ);
         let nummer: string;
         let laufnummer: number;
-        if (saveStatus === "entwurf") {
+        if (saveStatus === "entwurf" && platzhalterErlaubt) {
           nummer = `ENTWURF-${crypto.randomUUID().slice(0, 8)}`;
           laufnummer = 0;
         } else {
