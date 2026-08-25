@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
@@ -82,6 +83,9 @@ interface TimeBlock {
   /** Fahrzeug/Maschine bei Kostenstelle fuhrpark/maschinen — Stunden laufen
    *  automatisch in den KFZ-Manager (time_entry_vehicles). */
   geraetId: string;
+  /** Kundenwunsch 25.08.2026: aus diesem Zeitblock beim Speichern gleich
+   *  einen Regiebericht erstellen (Fotos dann dort ergänzen). */
+  regieberichtErstellen: boolean;
 }
 
 type Disturbance = {
@@ -111,10 +115,12 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   selectedDisturbanceIds: [],
   wetterschichtStunden: "",
   geraetId: "",
+  regieberichtErstellen: false,
 });
 
 const TimeTracking = () => {
   const { toast } = useToast();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState<Project[]>([]);
   const [vehicles, setVehicles] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
   const [taetigkeitOptions, setTaetigkeitOptions] = useState<string[]>([]);
@@ -779,6 +785,8 @@ const TimeTracking = () => {
     // Insert all blocks with team members via Edge Function
     let totalEntriesCreated = 0;
     let hasError = false;
+    /** Beim Speichern erzeugte Regieberichte (Kundenwunsch 25.08.2026). */
+    const neueRegieberichte: string[] = [];
 
     for (const block of timeBlocks) {
       const pauseMinutes = calculateBlockPauseMinutes(block);
@@ -908,6 +916,52 @@ const TimeTracking = () => {
         }
       }
 
+      // Kundenwunsch 25.08.2026: aus dem Block gleich einen Regiebericht
+      // erstellen. Die soeben angelegten Zeiteinträge werden mit dem Bericht
+      // VERKNÜPFT (disturbance_id) statt neu erzeugt — exakt das Muster des
+      // Regiebericht-Formulars; die Stunden existieren also nur einmal.
+      if (block.regieberichtErstellen && block.kostenstelle === "baustelle") {
+        const projektName = projects.find((p) => p.id === block.projectId)?.name || "";
+        const { data: bericht, error: regieErr } = await supabase
+          .from("disturbances")
+          .insert({
+            user_id: user.id,
+            datum: selectedDate,
+            start_time: block.startTime,
+            end_time: block.endTime,
+            pause_minutes: pauseMinutes,
+            stunden: blockHours,
+            kunde_name: projektName || "Baustelle",
+            beschreibung: block.taetigkeit.trim() || `Regiearbeit ${projektName}`.trim(),
+            project_id: block.projectId || null,
+          })
+          .select("id")
+          .single();
+        if (regieErr || !bericht) {
+          toast({
+            variant: "destructive",
+            title: "Regiebericht nicht erstellt",
+            description: `Die Zeit wurde gebucht, aber der Regiebericht schlug fehl: ${regieErr?.message || "unbekannt"}`,
+          });
+        } else {
+          // Beteiligte wie im Regiebericht-Formular eintragen.
+          await supabase.from("disturbance_workers").insert([
+            { disturbance_id: bericht.id, user_id: user.id, is_main: true },
+            ...block.selectedEmployees
+              .filter((idW) => idW !== user.id)
+              .map((idW) => ({ disturbance_id: bericht.id, user_id: idW, is_main: false })),
+          ]);
+          // Zeiteinträge des Blocks an den Bericht hängen (keine Doppel-Stunden).
+          const verknuepfen = [mainId, ...teamIds].filter(Boolean) as string[];
+          if (verknuepfen.length > 0) {
+            await (supabase.from("time_entries" as never) as any)
+              .update({ disturbance_id: bericht.id, notizen: `Regie-Zuordnung: ${bericht.id}` })
+              .in("id", verknuepfen);
+          }
+          neueRegieberichte.push(bericht.id);
+        }
+      }
+
       totalEntriesCreated += result.totalCreated || 1;
     }
 
@@ -915,10 +969,17 @@ const TimeTracking = () => {
       const teamInfo = timeBlocks.some(b => b.selectedEmployees.length > 0)
         ? ` (inkl. Team-Mitglieder)`
         : "";
-      toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert${teamInfo}` });
-      
+      toast({ title: "Erfolg", description: `${totalEntriesCreated} Eintrag/Einträge gespeichert${teamInfo}${neueRegieberichte.length > 0 ? ` · ${neueRegieberichte.length} Regiebericht(e) erstellt` : ""}` });
+
       // Refresh existing entries
       await fetchExistingDayEntries(selectedDate);
+
+      // Direkt in den neuen Regiebericht springen — dort Fotos ergänzen.
+      if (neueRegieberichte.length > 0) {
+        navigate(`/disturbances/${neueRegieberichte[0]}`);
+        setSaving(false);
+        return;
+      }
     } else {
       toast({ variant: "destructive", title: "Fehler", description: "Einige Einträge konnten nicht gespeichert werden" });
     }
@@ -1228,6 +1289,30 @@ const TimeTracking = () => {
                           </div>
                         )}
 
+                        {/* Kundenwunsch 25.08.2026: aus dem Zeitblock direkt einen
+                            Regiebericht erstellen — Datum, Zeiten, Stunden, Projekt
+                            und Team werden übernommen; Fotos ergänzt man danach im
+                            Bericht. Nur bei Kostenstelle Baustelle (dort ist ein
+                            Projekt Pflicht); der Regie-Modus ordnet BESTEHENDEN
+                            Berichten zu und braucht den Haken nicht. */}
+                        {block.locationType !== "regie" && block.kostenstelle === "baustelle" && (
+                          <label className="flex min-h-[44px] cursor-pointer items-start gap-3 rounded-md border bg-muted/20 px-3 py-2.5">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-5 w-5 accent-kb-blue-dark"
+                              checked={block.regieberichtErstellen}
+                              onChange={(e) => updateBlock(block.id, { regieberichtErstellen: e.target.checked })}
+                            />
+                            <span className="text-sm">
+                              <span className="font-medium">Regiebericht zu diesem Block erstellen</span>
+                              <span className="block text-xs text-muted-foreground">
+                                Übernimmt Zeiten, Stunden, Projekt und Team — danach
+                                öffnet sich der Bericht zum Fotos-Hinzufügen.
+                              </span>
+                            </span>
+                          </label>
+                        )}
+
                         {/* Gerätewahl bei Kostenstelle Fuhrpark/Maschinen
                             (Kundenwunsch): STATT eines Projekts wird das
                             Fahrzeug bzw. die Maschine gewählt; die Stunden
@@ -1276,9 +1361,9 @@ const TimeTracking = () => {
                             <Select value={block.startTime} onValueChange={(v) => updateBlock(block.id, { startTime: v })}>
                               <SelectTrigger className="h-12 text-base"><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
-                                {Array.from({ length: 48 }, (_, i) => {
-                                  const h = Math.floor(i / 2);
-                                  const m = (i % 2) * 30;
+                                {Array.from({ length: 96 }, (_, i) => {
+                                  const h = Math.floor(i / 4);
+                                  const m = (i % 4) * 15;
                                   const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
                                   return <SelectItem key={t} value={t}>{t}</SelectItem>;
                                 })}
@@ -1290,9 +1375,9 @@ const TimeTracking = () => {
                             <Select value={block.endTime} onValueChange={(v) => updateBlock(block.id, { endTime: v })}>
                               <SelectTrigger className="h-12 text-base"><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                               <SelectContent>
-                                {Array.from({ length: 48 }, (_, i) => {
-                                  const h = Math.floor(i / 2);
-                                  const m = (i % 2) * 30;
+                                {Array.from({ length: 96 }, (_, i) => {
+                                  const h = Math.floor(i / 4);
+                                  const m = (i % 4) * 15;
                                   const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
                                   return <SelectItem key={t} value={t}>{t}</SelectItem>;
                                 })}
@@ -1607,7 +1692,7 @@ const TimeTracking = () => {
                       <Select value={absenceData.absenceStartTime} onValueChange={(v) => setAbsenceData({ ...absenceData, absenceStartTime: v })}>
                         <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 48 }, (_, i) => { const h = Math.floor(i / 2); const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
+                          {Array.from({ length: 96 }, (_, i) => { const h = Math.floor(i / 4); const m = (i % 4) * 15; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1616,7 +1701,7 @@ const TimeTracking = () => {
                       <Select value={absenceData.absenceEndTime} onValueChange={(v) => setAbsenceData({ ...absenceData, absenceEndTime: v })}>
                         <SelectTrigger><SelectValue placeholder="Uhrzeit" /></SelectTrigger>
                         <SelectContent>
-                          {Array.from({ length: 48 }, (_, i) => { const h = Math.floor(i / 2); const m = (i % 2) * 30; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
+                          {Array.from({ length: 96 }, (_, i) => { const h = Math.floor(i / 4); const m = (i % 4) * 15; const t = `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`; return <SelectItem key={t} value={t}>{t}</SelectItem>; })}
                         </SelectContent>
                       </Select>
                     </div>

@@ -106,6 +106,12 @@ export interface KalkModule {
   name: string;
   aufbauKategorie: "" | "Wand" | "Decke" | "Dach" | "AW";
   note: string;
+  /**
+   * Freier Text, der im ANGEBOT VOR dem Aufbau steht (Kundenwunsch
+   * 25.08.2026) — wandert als eigene Textzeile in die Aufbau-Gruppe und ist
+   * dort über das Auge ausblendbar. "" = kein Vortext.
+   */
+  vortext?: string;
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1148,6 +1154,19 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     vergebeneGruppen.add(gruppe);
     const mitNotiz = (titel: string) => (m.note ? `${titel}\n${m.note}` : titel);
 
+    // --- Vortext (Kundenwunsch 25.08.2026): eigene Textzeile VOR der
+    // Sammelzeile, in derselben Gruppe — druckt nur den Text (istTextzeile),
+    // ist im Beleg-Editor über das Auge ausblendbar und läuft beim
+    // Sammelangebot mit dem Bereichs-Suffix der Gruppe automatisch mit.
+    const vortext = (m.vortext || "").trim();
+    if (vortext) {
+      items.push({
+        beschreibung: vortext,
+        menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+        gruppe, auf_pdf: true, ist_gruppensumme: false,
+      });
+    }
+
     // --- a) Sammelzeile (Betrag unverändert wie bisher) ---------------------
     const aufteilung = preisAufteilung(gesamt, num(m.area));
     if (aufteilung) {
@@ -1274,7 +1293,7 @@ export function newMaterialRow(): MaterialRow {
 
 export function newModule(id: number): KalkModule {
   return {
-    id, name: "", aufbauKategorie: "", note: "", area: 0, wallHeight: 0,
+    id, name: "", aufbauKategorie: "", note: "", vortext: "", area: 0, wallHeight: 0,
     insulationThickness: 20, isOptional: false, collapsed: false,
     materialRows: Array.from({ length: INITIAL_MATERIAL_ROWS }, newMaterialRow),
     workers: 0, days: 0, distanceKM: 0, busTrips: 0, lkwTrips: 0,
@@ -1374,6 +1393,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         name: typeof m.name === "string" ? m.name : "",
         aufbauKategorie: (["Wand", "Decke", "Dach", "AW"].includes(m.aufbauKategorie) ? m.aufbauKategorie : "") as KalkModule["aufbauKategorie"],
         note: typeof m.note === "string" ? m.note : "",
+        vortext: typeof m.vortext === "string" ? m.vortext : "",
         area: num(m.area),
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,

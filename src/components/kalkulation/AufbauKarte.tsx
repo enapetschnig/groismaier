@@ -141,6 +141,17 @@ export function AufbauKarte({
                 <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.note}
                   onChange={(e) => onPatch({ note: e.target.value })} />
               </Feld>
+              {/* Kundenwunsch 25.08.2026: kleiner Text, der im Angebot VOR dem
+                  Aufbau steht — im Beleg per Auge ausblendbar. */}
+              <Feld label="Text vor dem Aufbau (erscheint im Angebot über der Position)">
+                <textarea
+                  className="kb-input min-h-[44px] w-full px-2 py-1 text-sm sm:min-h-[34px]"
+                  rows={2}
+                  value={m.vortext || ""}
+                  placeholder="z. B. Ausführung lt. Besprechung vom …"
+                  onChange={(e) => onPatch({ vortext: e.target.value })}
+                />
+              </Feld>
               <MaterialTabelle
                 module={m} bd={bd} kategorien={kategorien}
                 onArtikelKalkulieren={onArtikelKalkulieren}

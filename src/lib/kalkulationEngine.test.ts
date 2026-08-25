@@ -9,6 +9,7 @@ import {
   calcMaterialRow, calcLohnkosten, calcLohnSelbstkosten, calcArbeitsstunden,
   istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
   zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
+  buildAngebotItems, calcProjekt, newEmptyState, newMaterialRow, newModule,
   type MaterialRow, type Betriebsdaten,
 } from "./kalkulationEngine";
 
@@ -260,5 +261,28 @@ describe("Formel-Verbindung in der Materialzeile (Kundenmeldung 24.08.2026)", ()
     const neu = { ...alt, ...zeilenPatchFuerEk(alt, 110, bd) };
     const r = calcMaterialRow(neu, modul, bd);
     expect(r.vkProM2).toBeCloseTo(110 * 1.35, 2);
+  });
+});
+
+describe("Vortext je Aufbau (Kundenwunsch 25.08.2026)", () => {
+  it("wandert als Textzeile VOR die Sammelzeile derselben Gruppe", () => {
+    const st = newEmptyState();
+    const m = newModule(1);
+    m.name = "Dachaufbau"; m.area = 100; m.vortext = "Ausführung lt. Besprechung";
+    m.materialRows = [{ ...newMaterialRow(), category: "Platten", product: "OSB", ekPrice: 10, vkPrice: 13.5 }];
+    st.modules = [m];
+    const projekt = calcProjekt(st, DEFAULT_BETRIEBSDATEN);
+    const { items } = buildAngebotItems(projekt);
+    const iText = items.findIndex((x) => x.beschreibung === "Ausführung lt. Besprechung");
+    const iSammel = items.findIndex((x) => x.ist_gruppensumme);
+    expect(iText).toBeGreaterThanOrEqual(0);
+    expect(iText).toBeLessThan(iSammel);            // steht VOR der Sammelzeile
+    expect(items[iText].gruppe).toBe(items[iSammel].gruppe); // gleiche Gruppe
+    expect(items[iText].gesamtpreis).toBe(0);       // reine Textzeile
+    expect(items[iText].menge).toBe(0);
+    expect(items[iText].einheit).toBe("");
+    // Summen unverändert: der Vortext kostet nichts
+    const summe = items.reduce((s, x) => s + x.gesamtpreis, 0);
+    expect(round2(summe)).toBeCloseTo(round2(projekt.totalGesamt), 1);
   });
 });
