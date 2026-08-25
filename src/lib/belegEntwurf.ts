@@ -26,6 +26,20 @@ export const RECHNUNGSARTIGE_BELEGE = new Set([
 /** Präfix der Platzhalter-Nummer, solange nichts ausgestellt ist. */
 export const ENTWURF_NUMMER_PRAEFIX = "ENTWURF-";
 
+/**
+ * Darf dieser Belegtyp überhaupt eine Platzhalter-Nummer tragen?
+ *
+ * NUR rechnungsartige Belege — sie allein kennen die zweite Stufe
+ * („Rechnung erstellen"), die den Platzhalter gegen die laufende Nummer
+ * tauscht. Angebote, Auftragsbestätigungen und Lieferscheine starten zwar
+ * ebenfalls im Status „entwurf" (nur für die Belegliste), haben aber keinen
+ * Erstellen-Schritt: Mit Platzhalter blieben sie für immer ohne Nummer und
+ * ließen sich weder drucken noch senden (Kundenmeldung 25.08.2026).
+ */
+export function darfPlatzhalterNummerTragen(typ: string | null | undefined): boolean {
+  return RECHNUNGSARTIGE_BELEGE.has(String(typ || ""));
+}
+
 /** Ist der Beleg ein noch nicht ausgestellter Entwurf? */
 export function istEntwurfBeleg(
   typ: string | null | undefined,

@@ -4,6 +4,7 @@ import {
   hatPlatzhalterNummer,
   nummerFuerAnzeige,
   darfAusgegebenWerden,
+  darfPlatzhalterNummerTragen,
 } from "./belegEntwurf";
 
 describe("Beleg-Entwurf: was darf raus?", () => {
@@ -59,6 +60,28 @@ describe("Beleg-Entwurf: was darf raus?", () => {
   it("ein gespeichertes Angebot darf raus (kein Ausstellen nötig)", () => {
     expect(darfAusgegebenWerden({
       istNeu: false, istGeaendert: false, typ: "angebot", status: "offen", nummer: "A-2026-034",
+    })).toBe(true);
+  });
+});
+
+describe("Platzhalter-Nummern: welche Belege dürfen ohne Nummer sein?", () => {
+  it("nur rechnungsartige Belege dürfen eine Platzhalter-Nummer tragen", () => {
+    for (const typ of ["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]) {
+      expect(darfPlatzhalterNummerTragen(typ)).toBe(true);
+    }
+  });
+
+  it("Angebot, AB und Lieferschein NIE — sie haben keinen Erstellen-Schritt", () => {
+    // Kundenmeldung 25.08.2026: Ein Angebot mit ENTWURF-Nummer liess sich
+    // nie drucken oder senden, weil es die zweite Stufe gar nicht kennt.
+    for (const typ of ["angebot", "auftragsbestaetigung", "lieferschein"]) {
+      expect(darfPlatzhalterNummerTragen(typ)).toBe(false);
+    }
+  });
+
+  it("ein Angebot mit echter Nummer darf raus — auch im Status Entwurf", () => {
+    expect(darfAusgegebenWerden({
+      istNeu: false, istGeaendert: false, typ: "angebot", status: "entwurf", nummer: "A-2026-034",
     })).toBe(true);
   });
 });

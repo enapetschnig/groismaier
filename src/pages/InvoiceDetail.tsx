@@ -16,7 +16,7 @@ import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Pack
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
-import { istEntwurfBeleg, hatPlatzhalterNummer, darfAusgegebenWerden as belegDarfRaus } from "@/lib/belegEntwurf";
+import { istEntwurfBeleg, hatPlatzhalterNummer, darfPlatzhalterNummerTragen, darfAusgegebenWerden as belegDarfRaus } from "@/lib/belegEntwurf";
 import { BelegMailDialog } from "@/components/BelegMailDialog";
 import { EinheitSelect } from "@/components/EinheitSelect";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -3368,7 +3368,7 @@ export default function InvoiceDetail() {
         // blieben mit Platzhalter für immer ohne Nummer und liessen sich
         // weder drucken noch senden (Kundenmeldung 25.08.2026:
         // „Belegnummer fehlt noch").
-        const platzhalterErlaubt = RECHNUNGSARTIGE_TYPEN.has(form.typ);
+        const platzhalterErlaubt = darfPlatzhalterNummerTragen(form.typ);
         let nummer: string;
         let laufnummer: number;
         if (saveStatus === "entwurf" && platzhalterErlaubt) {
@@ -3403,7 +3403,13 @@ export default function InvoiceDetail() {
       } else {
         // Gespeicherter ENTWURF wird jetzt zur Rechnung: laufende Nummer ziehen
         // und mit in dasselbe Update schreiben (ein Vorgang, kein Zwischenstand).
-        if (opts?.erstellen && String(form.nummer || "").startsWith("ENTWURF-")) {
+        // Sicherheitsnetz: Ein Beleg, der gar keine Platzhalter-Nummer tragen
+        // DARF (Angebot/AB/Lieferschein), aber noch eine hat (Altbestand),
+        // holt sie sich beim nächsten Speichern von selbst — sonst bliebe er
+        // dauerhaft ungedruckt.
+        const platzhalterUnzulaessig =
+          hatPlatzhalterNummer(form.nummer) && !darfPlatzhalterNummerTragen(form.typ);
+        if ((opts?.erstellen || platzhalterUnzulaessig) && String(form.nummer || "").startsWith("ENTWURF-")) {
           const { data: numData, error: numError } = await supabase.rpc("next_document_number" as never, {
             p_typ: form.typ,
             p_jahr: form.jahr,
