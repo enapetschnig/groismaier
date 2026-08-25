@@ -59,6 +59,13 @@ export interface MaterialRow {
   katalogEk?: number | null;
   katalogVk?: number | null;
   /**
+   * Kundenwunsch 25.08.2026 ("die eingegebenen Artikel auswählen können, ob
+   * sie in den Angebots-Text übernommen werden"): true = die Zeile erscheint
+   * im Angebot SICHTBAR als Aufzählung unter der Aufbau-Position. false/
+   * undefined = wie bisher als interne Detailzeile (im Beleg einblendbar).
+   */
+  imAngebot?: boolean;
+  /**
    * true: Der Zeilen-VK wurde von Hand eingetippt — EK-Änderungen lassen ihn
    * in Ruhe. false/undefined: VK hängt an der Formel (EK × VK-Faktor) und
    * rechnet bei jeder EK-Änderung der Zeile mit (Kundenmeldung 24.08.2026:
@@ -112,6 +119,8 @@ export interface KalkModule {
    * dort über das Auge ausblendbar. "" = kein Vortext.
    */
   vortext?: string;
+  /** Textbaustein UNTER der Artikel-Aufzählung (Kundenwunsch 25.08.2026). */
+  nachtext?: string;
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1200,7 +1209,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     // die ECHTE Einheit/Menge aus der Kalkulation stehen (Detailzeilen
     // drucken ohnehin keinen eigenen Betrag — der steckt in ek_preis);
     // vorher fiel die Zeile fälschlich auf „Pauschale" zurück.
-    const detail = (bezeichnung: string, betragRoh: number, menge?: number, einheit?: string, auchOhneBetrag = false) => {
+    const detail = (bezeichnung: string, betragRoh: number, menge?: number, einheit?: string, auchOhneBetrag = false, sichtbar = false) => {
       const betrag = round2(betragRoh);
       if (!bezeichnung) return;
       if (betrag <= 0 && !auchOhneBetrag) return;
@@ -1213,7 +1222,9 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         einheit: auf ? (einheit || "Stk.") : hatMenge ? (einheit || "Stk.") : "Pauschale",
         einzelpreis: auf ? auf.einzelpreis : hatMenge ? round2(betrag / mengeZahl) : betrag,
         gesamtpreis: 0,
-        gruppe, auf_pdf: false, ist_gruppensumme: false,
+        // sichtbar = Kundenwunsch 25.08.2026: angehakte Artikel erscheinen
+        // im Angebot als Aufzählung; alles andere bleibt intern einblendbar.
+        gruppe, auf_pdf: sichtbar, ist_gruppensumme: false,
         ek_preis: betrag,
       });
     };
@@ -1228,11 +1239,23 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     for (const mz of erg.material.zeilen) {
       const hatName = !!mz.bezeichnung;
       const bezeichnung = mz.bezeichnung || "Sonstiges Material";
+      const sichtbar = mz.row.imAngebot === true;
       if (mz.pauschal) {
-        detail(bezeichnung, mz.vkBetrag * faktor, undefined, undefined, hatName);
+        detail(bezeichnung, mz.vkBetrag * faktor, undefined, undefined, hatName || sichtbar, sichtbar);
       } else {
-        detail(bezeichnung, mz.vkBetrag * faktor, num(m.area), "m²", hatName);
+        detail(bezeichnung, mz.vkBetrag * faktor, num(m.area), "m²", hatName || sichtbar, sichtbar);
       }
+    }
+
+    // Textbaustein UNTER der Artikel-Aufzählung (Kundenwunsch 25.08.2026) —
+    // wie der Vortext eine reine Textzeile der Gruppe, per Auge ausblendbar.
+    const nachtext = (m.nachtext || "").trim();
+    if (nachtext) {
+      items.push({
+        beschreibung: nachtext,
+        menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+        gruppe, auf_pdf: true, ist_gruppensumme: false,
+      });
     }
 
     // Arbeitszeit
@@ -1293,7 +1316,7 @@ export function newMaterialRow(): MaterialRow {
 
 export function newModule(id: number): KalkModule {
   return {
-    id, name: "", aufbauKategorie: "", note: "", vortext: "", area: 0, wallHeight: 0,
+    id, name: "", aufbauKategorie: "", note: "", vortext: "", nachtext: "", area: 0, wallHeight: 0,
     insulationThickness: 20, isOptional: false, collapsed: false,
     materialRows: Array.from({ length: INITIAL_MATERIAL_ROWS }, newMaterialRow),
     workers: 0, days: 0, distanceKM: 0, busTrips: 0, lkwTrips: 0,
@@ -1386,6 +1409,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
             katalogEk: numOrNull(r?.katalogEk),
             katalogVk: numOrNull(r?.katalogVk),
             vkManuell: typeof r?.vkManuell === "boolean" ? r.vkManuell : undefined,
+            imAngebot: r?.imAngebot === true ? true : undefined,
           }))
         : base.materialRows;
       return {
@@ -1394,6 +1418,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         aufbauKategorie: (["Wand", "Decke", "Dach", "AW"].includes(m.aufbauKategorie) ? m.aufbauKategorie : "") as KalkModule["aufbauKategorie"],
         note: typeof m.note === "string" ? m.note : "",
         vortext: typeof m.vortext === "string" ? m.vortext : "",
+        nachtext: typeof m.nachtext === "string" ? m.nachtext : "",
         area: num(m.area),
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,

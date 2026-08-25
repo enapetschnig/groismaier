@@ -285,4 +285,27 @@ describe("Vortext je Aufbau (Kundenwunsch 25.08.2026)", () => {
     const summe = items.reduce((s, x) => s + x.gesamtpreis, 0);
     expect(round2(summe)).toBeCloseTo(round2(projekt.totalGesamt), 1);
   });
+
+  it("angehakte Artikel erscheinen sichtbar, Nachtext steht nach der Aufzählung", () => {
+    const st = newEmptyState();
+    const m = newModule(1);
+    m.name = "AW Putz"; m.area = 100;
+    m.vortext = "Liefern und Montieren von folgendem Aufbau:";
+    m.nachtext = "inkl. Befestigungsmaterial";
+    m.materialRows = [
+      { ...newMaterialRow(), category: "Platten", product: "OSB", ekPrice: 10, vkPrice: 13.5, imAngebot: true },
+      { ...newMaterialRow(), category: "Dämmstoffe", product: "Stroh", ekPrice: 100, vkPrice: 135 },
+    ];
+    st.modules = [m];
+    const { items } = buildAngebotItems(calcProjekt(st, DEFAULT_BETRIEBSDATEN));
+    const osb = items.find((x) => x.beschreibung === "OSB")!;
+    const stroh = items.find((x) => x.beschreibung === "Stroh")!;
+    expect(osb.auf_pdf).toBe(true);      // angehakt → sichtbare Aufzählung
+    expect(stroh.auf_pdf).toBe(false);   // nicht angehakt → intern wie bisher
+    const iNach = items.findIndex((x) => x.beschreibung === "inkl. Befestigungsmaterial");
+    const iStroh = items.findIndex((x) => x.beschreibung === "Stroh");
+    expect(iNach).toBeGreaterThan(iStroh); // Nachtext NACH der Artikel-Aufzählung
+    expect(items[iNach].gesamtpreis).toBe(0);
+    expect(items[iNach].auf_pdf).toBe(true);
+  });
 });

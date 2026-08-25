@@ -29,7 +29,7 @@
 //         sich am Handy durch 10 leere Zeilen scrollen.
 // ============================================================================
 import { useRef, useState } from "react";
-import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, Eye, EyeOff, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
   newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
@@ -501,6 +501,17 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   )}
                 </label>
               </div>
+              {!istLeereZeile(row) && (
+                <label className="mt-2 flex min-h-[40px] cursor-pointer items-center gap-2 rounded border bg-muted/20 px-2 text-xs">
+                  <input
+                    type="checkbox"
+                    className="h-4 w-4 accent-kb-blue-dark"
+                    checked={row.imAngebot === true}
+                    onChange={(e) => onPatchRow(idx, { imAngebot: e.target.checked })}
+                  />
+                  Im Angebots-Text aufzählen
+                </label>
+              )}
             </div>
           );
         })}
@@ -519,7 +530,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
               <th className="py-1 pr-1 font-semibold">Artikel</th>
               <th className="w-[74px] py-1 pr-1 text-right font-semibold">EK</th>
               <th className="w-[74px] py-1 pr-1 text-right font-semibold">VK</th>
-              <th className="w-14 py-1" />
+              <th className="w-20 py-1" title="Im Angebot zeigen · Kalkulieren · Entfernen" />
             </tr>
           </thead>
           <tbody>
@@ -625,6 +636,21 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
                   </td>
                   <td className="py-1">
                     <span className="flex items-center">
+                      {/* Kundenwunsch 25.08.2026: Artikel auswählen, ob er im
+                          Angebots-Text unter der Position aufgezählt wird. */}
+                      {!istLeereZeile(row) && (
+                        <button
+                          type="button"
+                          onClick={() => onPatchRow(idx, { imAngebot: row.imAngebot !== true })}
+                          className={`flex h-7 w-6 items-center justify-center rounded ${
+                            row.imAngebot ? "text-kb-blue-dark hover:bg-kb-blue/10" : "text-muted-foreground/50 hover:bg-muted"
+                          }`}
+                          title={row.imAngebot
+                            ? "Wird im Angebot unter der Position aufgezählt — klicken zum Ausblenden"
+                            : "Nur intern — klicken, damit der Artikel im Angebots-Text aufgezählt wird"}
+                          aria-label="Im Angebots-Text aufzählen"
+                        >{row.imAngebot ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}</button>
+                      )}
                       {onArtikelKalkulieren && r.artikel?.quelle === "template" && (
                         <button
                           type="button"
