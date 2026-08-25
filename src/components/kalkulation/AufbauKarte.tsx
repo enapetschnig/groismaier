@@ -143,7 +143,7 @@ export function AufbauKarte({
               </Feld>
               {/* Kundenwunsch 25.08.2026: kleiner Text, der im Angebot VOR dem
                   Aufbau steht — im Beleg per Auge ausblendbar. */}
-              <Feld label="Text vor dem Aufbau (erscheint im Angebot über der Position)">
+              <Feld label="Einleitungstext (erscheint im Angebot unter der Position, vor den Artikeln)">
                 <textarea
                   className="kb-input min-h-[44px] w-full px-2 py-1 text-sm sm:min-h-[34px]"
                   rows={2}

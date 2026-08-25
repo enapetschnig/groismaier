@@ -265,7 +265,7 @@ describe("Formel-Verbindung in der Materialzeile (Kundenmeldung 24.08.2026)", ()
 });
 
 describe("Vortext je Aufbau (Kundenwunsch 25.08.2026)", () => {
-  it("wandert als Textzeile VOR die Sammelzeile derselben Gruppe", () => {
+  it("Einleitungstext steht UNTER der Position, vor den Artikeln", () => {
     const st = newEmptyState();
     const m = newModule(1);
     m.name = "Dachaufbau"; m.area = 100; m.vortext = "Ausführung lt. Besprechung";
@@ -276,7 +276,10 @@ describe("Vortext je Aufbau (Kundenwunsch 25.08.2026)", () => {
     const iText = items.findIndex((x) => x.beschreibung === "Ausführung lt. Besprechung");
     const iSammel = items.findIndex((x) => x.ist_gruppensumme);
     expect(iText).toBeGreaterThanOrEqual(0);
-    expect(iText).toBeLessThan(iSammel);            // steht VOR der Sammelzeile
+    // Kunden-Korrektur 25.08.2026: Position zuerst, der Text darunter.
+    expect(iText).toBeGreaterThan(iSammel);
+    const iArtikel = items.findIndex((x) => x.beschreibung === "OSB");
+    if (iArtikel >= 0) expect(iText).toBeLessThan(iArtikel); // vor der Aufzählung
     expect(items[iText].gruppe).toBe(items[iSammel].gruppe); // gleiche Gruppe
     expect(items[iText].gesamtpreis).toBe(0);       // reine Textzeile
     expect(items[iText].menge).toBe(0);

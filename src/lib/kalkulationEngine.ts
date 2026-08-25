@@ -1163,19 +1163,6 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     vergebeneGruppen.add(gruppe);
     const mitNotiz = (titel: string) => (m.note ? `${titel}\n${m.note}` : titel);
 
-    // --- Vortext (Kundenwunsch 25.08.2026): eigene Textzeile VOR der
-    // Sammelzeile, in derselben Gruppe — druckt nur den Text (istTextzeile),
-    // ist im Beleg-Editor über das Auge ausblendbar und läuft beim
-    // Sammelangebot mit dem Bereichs-Suffix der Gruppe automatisch mit.
-    const vortext = (m.vortext || "").trim();
-    if (vortext) {
-      items.push({
-        beschreibung: vortext,
-        menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
-        gruppe, auf_pdf: true, ist_gruppensumme: false,
-      });
-    }
-
     // --- a) Sammelzeile (Betrag unverändert wie bisher) ---------------------
     const aufteilung = preisAufteilung(gesamt, num(m.area));
     if (aufteilung) {
@@ -1192,6 +1179,20 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         beschreibung: mitNotiz(flaeche > 0 ? `${name} (${fmt(flaeche)} m²)` : name),
         menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
+      });
+    }
+
+    // --- Einleitungstext (Kundenwunsch 25.08.2026, korrigiert am selben
+    // Tag: "diese Texte sollen immer UNTER der Position stehen"): eigene
+    // Textzeile direkt NACH der Sammelzeile, vor der Artikel-Aufzählung —
+    // druckt nur den Text, per Auge ausblendbar, läuft beim Sammelangebot
+    // mit dem Bereichs-Suffix der Gruppe automatisch mit.
+    const vortext = (m.vortext || "").trim();
+    if (vortext) {
+      items.push({
+        beschreibung: vortext,
+        menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+        gruppe, auf_pdf: true, ist_gruppensumme: false,
       });
     }
 
