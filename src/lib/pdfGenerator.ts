@@ -957,10 +957,13 @@ export async function generateInvoicePdf(
   //      Zeilenhöhen (Textumbrüche, Langtexte, mehrzeilige Mengen).
   //   2. Seitenfluss damit simulieren; passt ein Block nicht mehr komplett,
   //      wird an seinem Anfang ein Seitenumbruch gesetzt.
-  //   3. Große Blöcke (> BLOCK_MAX_ANTEIL einer Seite) dürfen weiterhin
-  //      fließen — sie würden sonst ganze Seiten leer lassen. Dort bleibt
-  //      wenigstens der Kopf (Position + erste Zeilen) zusammen.
-  const BLOCK_MAX_ANTEIL = 0.6;
+  //   3. Entscheidend ist der entstehende LEERRAUM, nicht die Blockgröße:
+  //      Ein Umbruch wird nur gesetzt, wenn dadurch höchstens
+  //      MAX_LEERRAUM_ANTEIL der Seite frei bleibt (Kundenvorgabe: „wichtig
+  //      ist, dass nie extrem viel Leerraum entsteht"). Große Blöcke fließen
+  //      also weiter — dort bleibt wenigstens der Kopf (Position + erste
+  //      Zeilen) zusammen, damit kein Titel allein am Seitenende steht.
+  const MAX_LEERRAUM_ANTEIL = 0.3;
   /** Mindestens so viele Zeilen eines fließenden Blocks bleiben zusammen. */
   const BLOCK_MIN_KOPF = 3;
   const blockUmbrueche: number[] = [];
@@ -1011,16 +1014,22 @@ export async function generateInvoicePdf(
       for (let i = b.start; i <= b.ende; i++) blockHoehe += zeilenHoehe[i] || 0;
       const platz = unterkante - cursor;
       if (blockHoehe > platz) {
-        const kompaktGenug = blockHoehe <= leereSeite * BLOCK_MAX_ANTEIL;
+        // Der Leerraum, den ein Umbruch hier hinterließe, ist genau `platz`.
+        const leerraumVertretbar = platz <= leereSeite * MAX_LEERRAUM_ANTEIL;
+        const passtAufLeereSeite = blockHoehe <= leereSeite;
         // Fließender Block: wenigstens Positionszeile + erste Zeilen dürfen
-        // nicht allein am Seitenende zurückbleiben.
+        // nicht allein am Seitenende zurückbleiben. Dieser Fall erzeugt
+        // ohnehin nur wenig Leerraum (weniger als drei Zeilen hoch).
         let kopfHoeheBlock = 0;
         for (let i = b.start; i <= Math.min(b.ende, b.start + BLOCK_MIN_KOPF - 1); i++) {
           kopfHoeheBlock += zeilenHoehe[i] || 0;
         }
-        if ((kompaktGenug || kopfHoeheBlock > platz) && b.start > 0 && !bereichStartSet.has(b.start)) {
-          blockUmbrueche.push(b.start);
-          cursor = seitenStart;
+        const kopfBleibtHaengen = kopfHoeheBlock > platz;
+        if ((passtAufLeereSeite && leerraumVertretbar) || kopfBleibtHaengen) {
+          if (b.start > 0 && !bereichStartSet.has(b.start)) {
+            blockUmbrueche.push(b.start);
+            cursor = seitenStart;
+          }
         }
       }
       // Zeilenweise weiterlaufen (Seitenwechsel innerhalb großer Blöcke).
