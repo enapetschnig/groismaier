@@ -466,13 +466,14 @@ function KBWizardTabs({
 export default function InvoiceDetail() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
-  const isNew = id === "new" || !id;
+  /** Route zeigt auf einen neuen Beleg (/invoices/new). */
+  const istNeueRoute = id === "new" || !id;
   const navigate = useNavigate();
   const zurueck = useZurueck("/invoices");
   const { toast } = useToast();
   const einheiten = useEinheiten();
 
-  const [loading, setLoading] = useState(!isNew);
+  const [loading, setLoading] = useState(!istNeueRoute);
   const [saving, setSaving] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
 
@@ -618,7 +619,18 @@ export default function InvoiceDetail() {
     ro.observe(el);
     return () => ro.disconnect();
   }, [loading, activeStep, artikelSubTab]);
-  const [invoiceId, setInvoiceId] = useState<string | null>(isNew ? null : id || null);
+  const [invoiceId, setInvoiceId] = useState<string | null>(istNeueRoute ? null : id || null);
+  /**
+   * Ist der Beleg NOCH NICHT in der Datenbank?
+   *
+   * Kundenmeldung 25.08.2026: Nach „Jetzt speichern" blieben Drucken,
+   * Senden und E-Rechnung ausgegraut. Ursache: Bei OFFENER Vorschau wird
+   * nach dem Speichern bewusst nicht navigiert (das verlöre den
+   * Formularzustand) — die URL wird nur still ersetzt. React Router liefert
+   * darum weiterhin id === "new", und ein rein routenbasiertes `isNew`
+   * blieb für immer wahr. Maßgeblich ist deshalb die vergebene invoiceId.
+   */
+  const isNew = istNeueRoute && !invoiceId;
   /**
    * Optimistic Locking: der `updated_at`-Stand, den DIESER Tab geladen hat.
    * Beim Speichern wird er als Bedingung mitgeschickt — hat ein anderer Tab
@@ -925,7 +937,7 @@ export default function InvoiceDetail() {
   // Rechnungsartige Belege (Rechnung, Anzahlungs-, Schlussrechnung, Gutschrift)
   // sind nach dem Ausstellen gesperrt; Entwürfe und Angebote bleiben editierbar.
   const isLocked =
-    !isNew && id !== "new" && !!invoiceId
+    !isNew && !!invoiceId
     && RECHNUNGSARTIGE_TYPEN.has(form.typ)
     && form.status !== "entwurf";
   const isKundeLocked = isLocked;
@@ -938,6 +950,19 @@ export default function InvoiceDetail() {
   const darfAusgegebenWerden = belegDarfRaus({
     istNeu: isNew, istGeaendert: isDirty, typ: form.typ, status: form.status, nummer: form.nummer,
   });
+  /**
+   * WARUM ist die Ausgabe gesperrt? (Kundenmeldung 25.08.2026: „bleibt
+   * weiterhin ausgegraut" — der pauschale Hinweis „Noch nicht gespeichert"
+   * verriet nicht, woran es liegt.) Reihenfolge = Prüfreihenfolge in
+   * belegDarfRaus.
+   */
+  const ausgabeSperrGrund: "neu" | "geaendert" | "entwurf" | "keineNummer" | null =
+    darfAusgegebenWerden ? null
+      : isNew ? "neu"
+        : isDirty ? "geaendert"
+          : istEntwurfBeleg(form.typ, form.status) ? "entwurf"
+            : hatPlatzhalterNummer(form.nummer) ? "keineNummer"
+              : "geaendert";
 
   // Angebot→Rechnung Vergleichs-Dialog
   const [convertDialogOpen, setConvertDialogOpen] = useState(false);
@@ -2925,7 +2950,7 @@ export default function InvoiceDetail() {
   // (Rechnung, Anzahlungsrechnung, Schlussrechnung, Gutschrift) —
   // AT-Rechtsvorschrift: ein Rechnungsbeleg muss stornierbar sein.
   const _cancelableTypes = new Set(["rechnung", "anzahlungsrechnung", "schlussrechnung", "gutschrift"]);
-  const canCancel = !isNew && !!invoiceId && id !== "new" && _cancelableTypes.has(form.typ)
+  const canCancel = !isNew && !!invoiceId && _cancelableTypes.has(form.typ)
     && form.status !== "storniert"
     // Ein Entwurf wurde nie ausgestellt — er wird gelöscht, nicht storniert.
     && !istEntwurfBeleg(form.typ, form.status);
@@ -4445,7 +4470,7 @@ export default function InvoiceDetail() {
   };
 
   const canAbAction =
-    !isNew && !!invoiceId && id !== "new"
+    !isNew && !!invoiceId
     && form.typ === "auftragsbestaetigung"
     && form.status !== "storniert";
 
@@ -7857,7 +7882,7 @@ export default function InvoiceDetail() {
              in der Datenbank steht UND seither nichts geändert wurde — sonst
              ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
           belegGespeichert={darfAusgegebenWerden}
-          sperrGrund={istEntwurf ? "entwurf" : "ungespeichert"}
+          sperrGrund={ausgabeSperrGrund || "ungespeichert"}
           aktionLabel={`${typLabel} erstellen`}
           onSpeichern={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
           speichertGerade={saving}

@@ -79,7 +79,7 @@ interface InvoiceLivePreviewProps {
    * "entwurf" = muss erst erstellt werden (Rechnung bekommt dabei ihre
    * Nummer), "ungespeichert" = einfach noch nicht gespeichert.
    */
-  sperrGrund?: "entwurf" | "ungespeichert";
+  sperrGrund?: "entwurf" | "ungespeichert" | "neu" | "geaendert" | "keineNummer";
   /** Beschriftung der Ausstell-Aktion, z. B. "Rechnung erstellen". */
   aktionLabel?: string;
   /** Speichern direkt aus der Vorschau heraus. */
@@ -588,7 +588,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           <div className="rounded-md border border-amber-300 bg-amber-50 p-2 text-[11px] leading-snug text-amber-900">
             <div className="mb-1 flex items-center gap-1 font-bold">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-              {sperrGrund === "entwurf" ? "Noch nicht erstellt" : "Noch nicht gespeichert"}
+              {sperrGrund === "entwurf" ? "Noch nicht erstellt"
+                : sperrGrund === "geaendert" ? "Ungespeicherte Änderungen"
+                  : sperrGrund === "keineNummer" ? "Belegnummer fehlt noch"
+                    : "Noch nicht gespeichert"}
             </div>
             {sperrGrund === "entwurf" ? (
               <>
@@ -600,7 +603,11 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
               </>
             ) : (
               <>
-                Senden, Drucken und E-Rechnung sind erst nach dem Speichern möglich.
+                {sperrGrund === "geaendert"
+                  ? "Seit dem letzten Speichern wurde etwas geändert — bitte erneut speichern, damit der aktuelle Stand rausgeht."
+                  : sperrGrund === "keineNummer"
+                    ? "Der Beleg hat noch keine endgültige Nummer."
+                    : "Senden, Drucken und E-Rechnung sind erst nach dem Speichern möglich."}
                 {onSpeichern && (
                   <KBButton
                     className="mt-2 w-full"
