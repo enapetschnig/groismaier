@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  waehleSollBelege, berechneVerrechnet, bereitsInSchlussrechnung,
+  waehleSollBelege, istSollKandidat, berechneVerrechnet, bereitsInSchlussrechnung,
   verteileEingangsrechnung, fremdkostenJeProjekt, type NkBeleg,
 } from "./nachkalkulation";
 
@@ -196,5 +196,42 @@ describe("Eingangsrechnungen auf Projekte verteilen", () => {
       { id: "er4", project_id: null, status: "offen", betrag_netto: 800 },
       [{ purchase_invoice_id: "er4", project_id: null, betrag_netto: 300, ziel: "lager" }]);
     expect(a).toHaveLength(0);
+  });
+});
+
+describe("Soll-Kandidaten (Stunden UND Betrag aus derselben Quelle)", () => {
+  const beleg = (p: Partial<NkBeleg>): NkBeleg =>
+    ({ id: "x", typ: "angebot", status: "angenommen", netto_summe: 1000, ...p }) as NkBeleg;
+
+  it("verrechnetes Angebot bleibt Soll-Kandidat", () => {
+    // Kundenfall 25.08.2026 (BV Schindelböck): Sobald aus dem Angebot eine
+    // Rechnung wird, wechselt der Status auf "verrechnet". Der Auftragswert
+    // blieb, die Soll-STUNDEN verschwanden — beides muss gleich laufen.
+    for (const status of ["angenommen", "verrechnet", "bezahlt", "teilbezahlt"]) {
+      expect(istSollKandidat(beleg({ status }))).toBe(true);
+    }
+  });
+
+  it("Entwurf, Storno und abgelehnt zählen nie", () => {
+    for (const status of ["entwurf", "storniert", "abgelehnt"]) {
+      expect(istSollKandidat(beleg({ status }))).toBe(false);
+    }
+  });
+
+  it("Auftragsbestätigung zählt unabhängig vom Status, Rechnungen nie", () => {
+    expect(istSollKandidat(beleg({ typ: "auftragsbestaetigung", status: "offen" }))).toBe(true);
+    expect(istSollKandidat(beleg({ typ: "auftragsbestaetigung", status: "storniert" }))).toBe(false);
+    expect(istSollKandidat(beleg({ typ: "rechnung", status: "offen" }))).toBe(false);
+  });
+
+  it("deckt sich mit waehleSollBelege", () => {
+    const belege = [
+      beleg({ id: "a", status: "verrechnet" }),
+      beleg({ id: "b", status: "abgelehnt" }),
+      beleg({ id: "c", status: "angenommen" }),
+    ];
+    const gewaehlt = waehleSollBelege(belege).map((b) => b.id);
+    const kandidaten = belege.filter(istSollKandidat).map((b) => b.id);
+    expect(kandidaten).toEqual(gewaehlt);
   });
 });

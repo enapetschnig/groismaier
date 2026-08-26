@@ -16,7 +16,7 @@ import { getStatusLabel } from "@/lib/statusColors";
 import { formatDateShort } from "@/lib/dateFormat";
 import { istArbeitszeitZeile } from "@/lib/stunden";
 import { cn } from "@/lib/utils";
-import { waehleSollBelege, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
+import { waehleSollBelege, istSollKandidat, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
 import {
   AMPEL,
   PAYABLE_INVOICE_TYPES,
@@ -326,13 +326,10 @@ export function ProjektNachkalkulation() {
       // Soll-Stunden: invoice_items der Soll-Belege (AB + angenommene Angebote)
       // per Lutz-Heuristik: explizite Stunden-Positionen zählen 1:1, sonst
       // kalkulierte Arbeitszeit (Menge × arbeitszeit_minuten / 60).
-      const sollDocIds = invs
-        .filter(
-          (i) =>
-            (i.typ === "auftragsbestaetigung" && i.status !== "storniert") ||
-            (i.typ === "angebot" && i.status === "angenommen"),
-        )
-        .map((i) => i.id);
+      // Dieselbe Regel wie beim Soll-BETRAG (istSollKandidat) — sonst
+      // verschwinden die Soll-Stunden, sobald aus dem Angebot eine Rechnung
+      // wird und der Status auf „verrechnet" wechselt.
+      const sollDocIds = invs.filter((i) => istSollKandidat(i as any)).map((i) => i.id);
 
       const itemChunks = await Promise.all(
         chunk(sollDocIds, 150).map((ids) =>

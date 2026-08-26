@@ -55,6 +55,23 @@ export function waehleSollBelege(belege: NkBeleg[]): NkBeleg[] {
 }
 
 /**
+ * Kann dieser Beleg das SOLL tragen? Gleiche Regel wie waehleSollBelege, nur
+ * je Beleg statt je Projekt — für Vorab-Abfragen (z.B. welche invoice_items
+ * für die Soll-STUNDEN geladen werden müssen).
+ *
+ * WARUM eigens: Die Stunden-Abfrage prüfte früher nur auf Status
+ * „angenommen". Sobald aus dem Angebot eine Rechnung wurde (Status
+ * „verrechnet"), zeigte die Nachkalkulation zwar weiter den Auftragswert,
+ * aber 0 Soll-Stunden — derselbe Fehler, der für den Betrag schon behoben
+ * war (siehe Kopf dieser Datei), nur bei den Stunden übersehen.
+ */
+export function istSollKandidat(b: NkBeleg): boolean {
+  if (!lebt(b)) return false;
+  if (b.typ === "auftragsbestaetigung") return true;
+  return b.typ === "angebot" && AUFTRAGS_STATUS.has(b.status);
+}
+
+/**
  * Anzahlungsrechnungen, die bereits in einer Schlussrechnung derselben Kette
  * enthalten sind — sie dürfen nicht ein zweites Mal als Erlös zählen.
  */
