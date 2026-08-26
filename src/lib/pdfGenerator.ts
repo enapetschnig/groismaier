@@ -593,8 +593,14 @@ export async function generateInvoicePdf(
   const kapitelRows = new Set<number>();
   const detailRows = new Set<number>();
   const summenRows = new Set<number>();
-  /** Reine Textzeilen — drucken fett (Bereichs-/Sammelrechnungs-Überschriften). */
+  /** Reine Textzeilen — drucken fett (Einleitungs-/Sammelrechnungs-Texte). */
   const textRows = new Set<number>();
+  /**
+   * Bereichs-Überschriften eines Sammelangebots („Bereich: …"). Sie trennen
+   * die Kalkulationen und müssen sofort ins Auge stechen (Kundenwunsch
+   * 26.08.2026) — kräftiger Beige-Balken in der Farbe des Tabellenkopfes.
+   */
+  const bereichsTitelRows = new Set<number>();
   /** Bereichs-Zwischensummen (Sammelangebot, Kundenwunsch 24.08.2026). */
   const zwischenRows = new Set<number>();
   /** Projektbereich je Body-Zeile (null = keiner) — steuert Zwischensummen
@@ -607,13 +613,21 @@ export async function generateInvoicePdf(
     const idx = Object.keys(uebertragNachZeile).map(Number);
     return idx.length ? uebertragNachZeile[Math.max(...idx)] : 0;
   };
+  // Zuletzt gesehener Bereich — sein Name hängt technisch an jedem
+  // Gruppennamen („Dach — Bereich X"), damit gleichnamige Aufbauten
+  // verschiedener Kalkulationen nicht zusammenfallen. GEDRUCKT wäre das
+  // eine unnötige Wiederholung: Der Bereichs-Balken steht ja darüber.
+  let offenerBereich = "";
   druckplan.forEach((e) => {
     const rowIdx = tableBody.length;
     if (e.art === "kapitel") {
       kapitelRows.add(rowIdx);
+      const titel = offenerBereich && e.titel.endsWith(` — ${offenerBereich}`)
+        ? e.titel.slice(0, -(offenerBereich.length + 3))
+        : e.titel;
       // Eine Zelle über die volle Breite — die Kapitelüberschrift beginnt
       // am linken Rand, nicht erst in der Beschreibungsspalte.
-      tableBody.push([{ content: e.titel, colSpan: SPALTEN_ANZAHL }]);
+      tableBody.push([{ content: titel, colSpan: SPALTEN_ANZAHL }]);
       uebertragNachZeile[rowIdx] = letzterUebertrag();
       bereichVonRow.push(null); // erbt im Nachlauf den Bereich der nächsten Zeile
       return;
@@ -627,13 +641,31 @@ export async function generateInvoicePdf(
     }
     if (e.detail) detailRows.add(rowIdx);
     if (e.summenzeile) summenRows.add(rowIdx);
-    if (istTextzeile(item)) textRows.add(rowIdx);
+    if (istTextzeile(item)) {
+      textRows.add(rowIdx);
+      const txt = String(item.beschreibung || "").trim();
+      if (txt.startsWith("Bereich: ")) {
+        bereichsTitelRows.add(rowIdx);
+        offenerBereich = txt.slice("Bereich: ".length).trim();
+      }
+    }
     bereichVonRow.push(((item as any).bereich as string) || null);
     // Nur Kurztext in die Zelle. Langtext wird in didDrawCell manuell
     // darunter gezeichnet; die zusätzliche Höhe reserviert didParseCell
     // via minCellHeight.
     const mengeText = `${fmtMenge(p.menge)} ${item.einheit || "Stk."}`;
-    const row = [e.nummer, kurztext];
+    // Im Balken genügt der Name — das Wort „Bereich:" ist Technik, kein Inhalt.
+    const zellenText = bereichsTitelRows.has(rowIdx)
+      ? kurztext.replace(/^Bereich:\s*/, "")
+      : kurztext;
+    // Bereichs-Überschrift: EINE Zelle über die volle Breite — sonst
+    // zerschneiden die Spaltenkanten den Balken.
+    if (bereichsTitelRows.has(rowIdx)) {
+      tableBody.push([{ content: zellenText, colSpan: SPALTEN_ANZAHL }]);
+      uebertragNachZeile[rowIdx] = r2(uebertragNachZeile[rowIdx - 1] ?? letzterUebertrag());
+      return;
+    }
+    const row = [e.nummer, zellenText];
     if (istTextzeile(item)) {
       // Reine Textzeile (z.B. Sammelrechnungs-Titel "Regiebericht 12.08."):
       // keine "0 Stk."/"0,00 €"-Spalten, nur der Text.
@@ -688,7 +720,7 @@ export async function generateInvoicePdf(
     // aller Karten (langtextInfo, Sets, Übertrag) gültig und nur die hinteren
     // müssen um 1 rücken.
     const shiftAb = (ab: number) => {
-      for (const set of [kapitelRows, detailRows, summenRows, textRows, zwischenRows]) {
+      for (const set of [kapitelRows, detailRows, summenRows, textRows, zwischenRows, bereichsTitelRows]) {
         const neu = [...set].map((i) => (i >= ab ? i + 1 : i));
         set.clear(); neu.forEach((i) => set.add(i));
       }
@@ -702,6 +734,8 @@ export async function generateInvoicePdf(
       const pos = run.ende + 1;
       shiftAb(pos);
       const zw: any[] = [{ content: `Zwischensumme ${run.bereich}`, colSpan: SPALTEN_ANZAHL - 1 }, fmtCurrency(summe)];
+      // (Bereichsname bleibt hier bewusst stehen: die Zwischensumme kann
+      //  weit unter dem Balken stehen — dort hilft die Wiederholung.)
       tableBody.splice(pos, 0, zw);
       bereichVonRow.splice(pos, 0, run.bereich);
       zwischenRows.add(pos);
@@ -895,9 +929,19 @@ export async function generateInvoicePdf(
       if (data.section === "body") {
         const ri = off + data.row.index;
         if (textRows.has(ri)) {
-          // Bereichs-/Titel-Textzeile: FETT (Kundenwunsch 24.08.2026).
+          // Titel-/Einleitungs-Textzeile: FETT (Kundenwunsch 24.08.2026).
           data.cell.styles.fontStyle = "bold";
           data.cell.styles.fontSize = 9.5;
+        }
+        if (bereichsTitelRows.has(ri)) {
+          // Bereichs-Überschrift: kräftiger Beige-Balken wie der
+          // Tabellenkopf, größer und mit Luft — die Bereichsgrenze soll
+          // sofort erkennbar sein (Kundenwunsch 26.08.2026).
+          data.cell.styles.fontStyle = "bold";
+          data.cell.styles.fontSize = 11;
+          data.cell.styles.fillColor = [226, 219, 197];
+          data.cell.styles.textColor = [60, 45, 20];
+          data.cell.styles.cellPadding = { top: 3.5, bottom: 3.5, left: 2, right: 2 };
         }
         if (zwischenRows.has(ri)) {
           data.cell.styles.fontStyle = "bold";
