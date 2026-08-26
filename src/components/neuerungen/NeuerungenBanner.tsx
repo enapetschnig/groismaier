@@ -30,9 +30,16 @@ export function NeuerungenBanner({ userId }: { userId: string }) {
   const [schliesst, setSchliesst] = useState(false);
 
   const laden = useCallback(async () => {
-    // Die letzten Neuerungen holen und die bereits bestätigten abziehen.
+    // Nur die letzten Wochen zeigen: Wer länger nicht in der App war (oder
+    // neu dazukommt), soll nicht von alten Meldungen erschlagen werden —
+    // die gelten als bekannt.
+    const grenze = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const [{ data: alle }, { data: gelesen }] = await Promise.all([
-      neuerungenTable().select("id, titel, text, created_at").order("created_at", { ascending: false }).limit(20),
+      neuerungenTable()
+        .select("id, titel, text, created_at")
+        .gte("created_at", grenze)
+        .order("created_at", { ascending: false })
+        .limit(20),
       gelesenTable().select("neuerung_id").eq("user_id", userId),
     ]);
     const erledigt = new Set(((gelesen as { neuerung_id: string }[]) || []).map((g) => g.neuerung_id));
@@ -46,10 +53,11 @@ export function NeuerungenBanner({ userId }: { userId: string }) {
     setSchliesst(true);
     // Fehler hier dürfen den Anwender nicht aufhalten — im Zweifel erscheint
     // die Meldung noch einmal, statt dass etwas hängen bleibt.
-    await gelesenTable()
+    const { error } = await gelesenTable()
       .upsert(offen.map((n) => ({ neuerung_id: n.id, user_id: userId })), { onConflict: "neuerung_id,user_id" });
     setOffen([]);
     setSchliesst(false);
+    if (error) console.warn("Neuerungen nicht als gelesen vermerkt:", error.message);
   };
 
   if (offen.length === 0) return null;
