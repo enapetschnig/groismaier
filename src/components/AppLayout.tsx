@@ -1,4 +1,5 @@
 import { Outlet } from "react-router-dom";
+import { AenderungswunschKnopf } from "@/components/aenderungswunsch/AenderungswunschKnopf";
 
 /**
  * KingBill-Menüführung: KEINE ständige Seitenleiste.
@@ -11,6 +12,9 @@ export function AppLayout() {
   return (
     <div className="kb-page min-h-screen">
       <Outlet />
+      {/* Seiten ohne Kopfleiste bekommen den Melde-Knopf schwebend; er
+          blendet sich selbst aus, sobald eine Toolbar vorhanden ist. */}
+      <AenderungswunschKnopf gestalt="schwebend" />
     </div>
   );
 }

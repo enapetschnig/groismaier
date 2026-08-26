@@ -25,6 +25,7 @@ import LeaveManagement from "@/components/LeaveManagement";
 import TimeAccountManagement from "@/components/TimeAccountManagement";
 import { EmployeeColorSettings } from "@/components/schedule/EmployeeColorSettings";
 import { InvoiceLayoutEditor } from "@/components/InvoiceLayoutEditor";
+import { AenderungswuenscheListe } from "@/components/aenderungswunsch/AenderungswuenscheListe";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
@@ -687,6 +688,7 @@ export default function Admin() {
             <TabsTrigger value="farben" className="h-11 flex-shrink-0">Farben &amp; Plantafel</TabsTrigger>
             <TabsTrigger value="konfiguration" className="h-11 flex-shrink-0">Konfiguration</TabsTrigger>
             <TabsTrigger value="berechtigungen" className="h-11 flex-shrink-0">Berechtigungen</TabsTrigger>
+            <TabsTrigger value="aenderungen" className="h-11 flex-shrink-0">Änderungswünsche</TabsTrigger>
           </TabsList>
 
           {/* ===== TAB 1: BENUTZER & MITARBEITER ===== */}
@@ -1325,6 +1327,11 @@ export default function Admin() {
           <TabsContent value="rechnung" className="space-y-6">
             <DocumentTextsEditor />
             <InvoiceLayoutEditor />
+          </TabsContent>
+
+          {/* ===== Änderungswünsche aus der App (Kundenwunsch 26.08.2026) ===== */}
+          <TabsContent value="aenderungen" className="space-y-6">
+            <AenderungswuenscheListe />
           </TabsContent>
 
           {/* ===== TAB 4: FARBEN & PLANTAFEL ===== */}

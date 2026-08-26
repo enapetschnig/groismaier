@@ -31,6 +31,7 @@ import * as React from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowLeft, Home } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { AenderungswunschKnopf } from "@/components/aenderungswunsch/AenderungswunschKnopf";
 
 export interface KBToolbarProps {
   onBack?: () => void;
@@ -60,7 +61,7 @@ export function KBToolbar({
   // Startmaske entfernt sein — der Haus-Knopf ist der garantierte Heimweg.
   const homeSichtbar = showHome ?? sticky;
   return (
-    <div className={cn("kb-toolbar flex-wrap", sticky && "sticky top-0 z-40", className)}>
+    <div data-seitenkopf className={cn("kb-toolbar flex-wrap", sticky && "sticky top-0 z-40", className)}>
       {onBack && (
         <button
           type="button"
@@ -78,12 +79,15 @@ export function KBToolbar({
         </span>
       )}
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">{children}</div>
-      {(rightActions || homeSichtbar) && (
-        <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* Änderung melden — auf jeder Maske mit Toolbar erreichbar
+              (Kundenwunsch 26.08.2026, wie bei CS Powermetall). */}
+          <span data-bildschirmfoto="aus"><AenderungswunschKnopf gestalt="kopf" /></span>
           {rightActions}
           {homeSichtbar && (
             <button
               type="button"
+              data-bildschirmfoto="aus"
               onClick={onHome || (() => navigate("/"))}
               aria-label="Zum Hauptmenü"
               title="Zum Hauptmenü"
@@ -92,8 +96,7 @@ export function KBToolbar({
               <Home className="h-5 w-5 text-kb-blue-dark" strokeWidth={2.5} />
             </button>
           )}
-        </div>
-      )}
+      </div>
     </div>
   );
 }
