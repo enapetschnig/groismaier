@@ -1374,10 +1374,11 @@ export default function InvoiceDetail() {
       const neueListe = kalkEinfuegenPos === "anfang" ? [k.id, ...bisher] : [...bisher, k.id];
       setKalkulationIds(neueListe);
       if (!kalkulationId) setKalkulationId(k.id);
-      setKalkEinfuegenOpen(false);
+      // Dialog bleibt offen: So kann direkt die Reihenfolge gesetzt oder
+      // eine weitere Kalkulation angehängt werden (Kundenwunsch 26.08.2026).
       toast({
         title: "Kalkulation eingefügt",
-        description: `„${k.name}" steht jetzt ${kalkEinfuegenPos === "anfang" ? "am Anfang" : "am Ende"} des Belegs. Bitte speichern.`,
+        description: `„${k.name}" steht jetzt ${kalkEinfuegenPos === "anfang" ? "am Anfang" : "am Ende"}. Reihenfolge oben änderbar — danach speichern.`,
       });
     } finally {
       setKalkEinfuegenLaeuft(false);
@@ -8496,6 +8497,32 @@ export default function InvoiceDetail() {
                 >{label}</button>
               ))}
             </div>
+            {/* Reihenfolge der bereits enthaltenen Bereiche gleich hier
+                ändern (Kundenwunsch 26.08.2026) — sonst müsste man den
+                Dialog schließen und den Block darunter suchen. */}
+            {belegBereiche.length > 1 && (
+              <div className="rounded-md border bg-muted/20 p-2">
+                <div className="mb-1 text-xs font-semibold text-muted-foreground">
+                  Reihenfolge im Beleg
+                </div>
+                <div className="space-y-1">
+                  {belegBereiche.map((b, i) => (
+                    <div key={`${b.titel}-${i}`} className="flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm">
+                      <span className="w-5 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
+                      <span className="min-w-0 flex-1 truncate">{b.titel}</span>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0}
+                        title="Nach oben" onClick={() => verschiebeBereich(i, -1)}>
+                        <ChevronUp className="h-4 w-4" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === belegBereiche.length - 1}
+                        title="Nach unten" onClick={() => verschiebeBereich(i, 1)}>
+                        <ChevronDown className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
