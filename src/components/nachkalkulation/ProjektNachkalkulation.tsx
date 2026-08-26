@@ -10,13 +10,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { getDocConfig } from "@/lib/documentTypes";
 import { getStatusLabel } from "@/lib/statusColors";
 import { formatDateShort } from "@/lib/dateFormat";
 import { istArbeitszeitZeile } from "@/lib/stunden";
 import { cn } from "@/lib/utils";
-import { waehleSollBelege, istSollKandidat, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
+import { AUFTRAGS_STATUS, waehleSollBelege, istSollKandidat, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
 import {
   AMPEL,
   PAYABLE_INVOICE_TYPES,
@@ -236,6 +238,18 @@ export function ProjektNachkalkulation() {
   const [purchases, setPurchases] = useState<PurchaseRaw[]>([]);
   const [allocations, setAllocations] = useState<AllocationRaw[]>([]);
   const [lohnByUser, setLohnByUser] = useState<Record<string, number>>({});
+  /**
+   * Auftragsbeleg zuordnen (Kundenfrage 25.08.2026, BV Schindelböck:
+   * „Wie kann ich ein bestehendes Anbot einer Nachkalkulation zuführen?").
+   * Setzt Projekt UND Auftragsstatus in einem Schritt — die zwei
+   * Bedingungen, die das Soll überhaupt erst sichtbar machen.
+   */
+  const [zuordnenProjekt, setZuordnenProjekt] = useState<{ id: string; name: string } | null>(null);
+  const [zuordnenKandidaten, setZuordnenKandidaten] = useState<
+    { id: string; typ: string; nummer: string | null; datum: string | null; netto_summe: number | null; status: string; kunde_name: string | null; project_id: string | null }[]
+  >([]);
+  const [zuordnenLaedt, setZuordnenLaedt] = useState(false);
+  const [zuordnenSuche, setZuordnenSuche] = useState("");
   // Anzeigenamen je user_id (employees) für die Mitarbeiter-Aufschlüsselung
   const [nameByUser, setNameByUser] = useState<Record<string, string>>({});
   // Lohnnebenkosten-Faktor (app_settings, Admin → Einstellungen), Default 1,8
@@ -556,6 +570,41 @@ export function ProjektNachkalkulation() {
     return result;
   }, [projects, invoices, sollStundenByInvoice, timeEntries, materialEntries, purchases, allocations, lohnByUser, nameByUser, faktor, statusFilter, zeitraum]);
 
+  /** Angebote/ABs anbieten, die noch keinem oder genau diesem Projekt gehören. */
+  const oeffneZuordnen = async (proj: { id: string; name: string }) => {
+    setZuordnenProjekt(proj);
+    setZuordnenSuche("");
+    setZuordnenLaedt(true);
+    const { data } = await supabase
+      .from("invoices")
+      .select("id, typ, nummer, datum, netto_summe, status, kunde_name, project_id")
+      .in("typ", ["angebot", "auftragsbestaetigung"])
+      .not("status", "in", "(storniert,abgelehnt)")
+      .or(`project_id.is.null,project_id.eq.${proj.id}`)
+      .order("datum", { ascending: false })
+      .limit(200);
+    setZuordnenKandidaten((data as any[]) || []);
+    setZuordnenLaedt(false);
+  };
+
+  const belegZuordnen = async (beleg: { id: string; nummer: string | null; status: string }) => {
+    if (!zuordnenProjekt) return;
+    // Status nur anheben, wenn er noch KEIN Auftragsstatus ist — ein bereits
+    // verrechnetes oder bezahltes Angebot darf nicht zurückgestuft werden.
+    const patch: Record<string, unknown> = { project_id: zuordnenProjekt.id };
+    if (!AUFTRAGS_STATUS.has(beleg.status)) patch.status = "angenommen";
+    const { error } = await supabase.from("invoices").update(patch).eq("id", beleg.id);
+    if (error) {
+      toast.error("Zuordnung fehlgeschlagen", { description: error.message });
+      return;
+    }
+    toast.success("Auftragsbeleg zugeordnet", {
+      description: `${beleg.nummer || "Beleg"} zählt jetzt als Auftragswert für „${zuordnenProjekt.name}".`,
+    });
+    setZuordnenProjekt(null);
+    void loadData();
+  };
+
   const sortedRows = useMemo(() => {
     const dir = sortDir === "asc" ? 1 : -1;
     return [...rows].sort((a, b) => {
@@ -711,6 +760,7 @@ export function ProjektNachkalkulation() {
                     row={r}
                     expanded={expanded.has(r.id)}
                     onToggle={() => toggleExpand(r.id)}
+                    onZuordnen={oeffneZuordnen}
                   />
                 ))}
               </TableBody>
@@ -748,6 +798,65 @@ export function ProjektNachkalkulation() {
         <span className="inline-block h-2 w-2 rounded-full bg-[#d03b3b]" /> &lt; 5 %. „Soll-Basis":
         Es wurde noch nichts verrechnet, Deckungsbeitrag und Marge beziehen sich auf die Auftragssumme.
       </p>
+
+      {/* Auftragsbeleg zuordnen (Kundenfrage 25.08.2026) */}
+      <Dialog open={!!zuordnenProjekt} onOpenChange={(o) => { if (!o) setZuordnenProjekt(null); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Auftragsbeleg zuordnen — {zuordnenProjekt?.name}</DialogTitle>
+            <DialogDescription>
+              Wähle das Angebot bzw. die Auftragsbestätigung, die den
+              Auftragswert dieses Projekts trägt. Der Beleg wird dem Projekt
+              zugeordnet und — falls nötig — auf „angenommen" gesetzt. Danach
+              zeigt die Nachkalkulation Soll gegen Ist.
+            </DialogDescription>
+          </DialogHeader>
+          <Input
+            autoFocus
+            placeholder="Beleg suchen (Nummer, Kunde) …"
+            value={zuordnenSuche}
+            onChange={(e) => setZuordnenSuche(e.target.value)}
+          />
+          <div className="max-h-80 divide-y overflow-y-auto rounded-md border">
+            {zuordnenLaedt ? (
+              <p className="p-4 text-center text-sm text-muted-foreground">Lädt …</p>
+            ) : (() => {
+              const q = zuordnenSuche.trim().toLowerCase();
+              const liste = zuordnenKandidaten.filter((k) =>
+                !q || `${k.nummer || ""} ${k.kunde_name || ""}`.toLowerCase().includes(q));
+              if (liste.length === 0) {
+                return <p className="p-4 text-center text-sm text-muted-foreground">
+                  Keine passenden Angebote gefunden. Nur Angebote und Auftragsbestätigungen
+                  ohne Projekt (oder bereits diesem Projekt zugeordnet) erscheinen hier.
+                </p>;
+              }
+              return liste.map((k) => (
+                <button
+                  key={k.id}
+                  type="button"
+                  onClick={() => void belegZuordnen(k)}
+                  className="flex w-full items-center justify-between gap-3 px-3 py-2.5 text-left hover:bg-accent"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium">
+                      {k.nummer || "ohne Nummer"} · {k.kunde_name || "ohne Kunde"}
+                    </span>
+                    <span className="block text-xs text-muted-foreground">
+                      {k.typ === "auftragsbestaetigung" ? "Auftragsbestätigung" : "Angebot"}
+                      {k.datum ? ` · ${format(new Date(k.datum), "dd.MM.yyyy")}` : ""}
+                      {` · Status ${k.status}`}
+                      {k.project_id ? " · bereits diesem Projekt zugeordnet" : ""}
+                    </span>
+                  </span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums">
+                    {formatEUR(Number(k.netto_summe) || 0)}
+                  </span>
+                </button>
+              ));
+            })()}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -760,10 +869,12 @@ function ProjectTableRow({
   row,
   expanded,
   onToggle,
+  onZuordnen,
 }: {
   row: ProjectRow;
   expanded: boolean;
   onToggle: () => void;
+  onZuordnen: (proj: { id: string; name: string }) => void | Promise<void>;
 }) {
   return (
     <>
@@ -790,7 +901,20 @@ function ProjectTableRow({
           {row.status ? <Badge variant="outline" className="whitespace-nowrap">{getStatusLabel(row.status)}</Badge> : "—"}
         </TableCell>
         <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">
-          {row.sollNetto !== 0 ? formatEUR(row.sollNetto) : "—"}
+          {row.sollNetto !== 0 ? formatEUR(row.sollNetto) : (
+            /* Kein Auftragswert, aber Ist-Kosten? Dann fehlt die Zuordnung
+               (Kundenfrage 25.08.2026) — Weg direkt anbieten statt "—". */
+            (row.istStunden > 0 || row.materialkosten !== 0 || row.fremdkosten !== 0 || row.verrechnetNetto !== 0) ? (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); void onZuordnen({ id: row.id, name: row.name }); }}
+                className="rounded border border-amber-300 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-800 hover:bg-amber-100"
+                title="Diesem Projekt ist kein Angebot / keine Auftragsbestätigung zugeordnet — jetzt zuordnen"
+              >
+                Angebot zuordnen
+              </button>
+            ) : "—"
+          )}
         </TableCell>
         <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">
           {row.rechnungDocs.length > 0 ? formatEUR(row.verrechnetNetto) : "—"}
