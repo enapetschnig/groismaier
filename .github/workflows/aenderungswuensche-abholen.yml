@@ -1,0 +1,80 @@
+# Änderungswünsche samt Bildschirmfotos abholen.
+#
+# Warum als Workflow: Der Zugang zur Datenbank liegt als Repo-Secret hier —
+# so lassen sich die Meldungen (und die Bilder aus der Ablage) einsammeln,
+# ohne Zugangsdaten weiterzugeben. Ergebnis landet als Artefakt am Lauf.
+name: Änderungswünsche abholen
+
+on:
+  workflow_dispatch:
+    inputs:
+      project_ref:
+        description: Supabase-Projekt
+        required: false
+        default: tdehljzmqwmfgfoyyoee
+
+jobs:
+  abholen:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Meldungen + Dateien einsammeln
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ inputs.project_ref || 'tdehljzmqwmfgfoyyoee' }}
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN}" || { echo "::error::Secret fehlt."; exit 1; }
+          mkdir -p abholung/dateien
+
+          # 1) Meldungen als JSON (Management-API führt das SQL aus)
+          python3 - <<'PY' > /tmp/q.json
+          import json
+          json.dump({"query": """
+            SELECT w.id, w.created_at, w.art, w.status, w.seite, w.text,
+                   w.bild_pfad, w.audio_pfad, w.abschrift, w.abschrift_fehler,
+                   COALESCE(p.vorname || ' ' || p.nachname, '') AS melder
+              FROM aenderungswuensche w
+              LEFT JOIN profiles p ON p.id = w.erstellt_von
+             ORDER BY w.created_at
+          """}, open("/tmp/q.json", "w"))
+          PY
+          curl -sS -X POST "https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            -H "Content-Type: application/json" -d @/tmp/q.json > abholung/meldungen.json
+          python3 -c "import json;d=json.load(open('abholung/meldungen.json'));print(f'{len(d)} Meldung(en)')"
+
+          # 2) Service-Schlüssel für die Datei-Ablage holen (wird NICHT geloggt)
+          KEY=$(curl -sS "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys?reveal=true" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+            | python3 -c "import json,sys; d=json.load(sys.stdin); print(next((k['api_key'] for k in d if k.get('name')=='service_role'), ''))")
+          test -n "$KEY" || { echo "::error::Service-Schlüssel nicht erhalten."; exit 1; }
+
+          # 3) Bilder und Sprachnachrichten herunterladen
+          python3 - "$KEY" "${PROJECT_REF}" <<'PY'
+          import json, os, sys, urllib.request
+          key, ref = sys.argv[1], sys.argv[2]
+          basis = f"https://{ref}.supabase.co/storage/v1/object/aenderungswuensche/"
+          daten = json.load(open("abholung/meldungen.json"))
+          geholt = 0
+          for w in daten:
+              for feld in ("bild_pfad", "audio_pfad"):
+                  pfad = w.get(feld)
+                  if not pfad:
+                      continue
+                  ziel = os.path.join("abholung/dateien", f"{w['id'][:8]}_{os.path.basename(pfad)}")
+                  req = urllib.request.Request(basis + pfad, headers={"Authorization": f"Bearer {key}", "apikey": key})
+                  try:
+                      with urllib.request.urlopen(req) as r, open(ziel, "wb") as f:
+                          f.write(r.read())
+                      geholt += 1
+                  except Exception as e:
+                      print(f"  ! {pfad}: {e}")
+          print(f"{geholt} Datei(en) geholt")
+          PY
+
+      - name: Als Artefakt anhängen
+        uses: actions/upload-artifact@v4
+        with:
+          name: aenderungswuensche
+          path: abholung
+          retention-days: 3
