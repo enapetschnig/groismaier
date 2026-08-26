@@ -130,6 +130,21 @@ export function AufbauKarte({
                 <Feld label="Fläche in qm">
                   <NumInput min={0} value={m.area} onCommit={(n) => onPatch({ area: n ?? 0 })} className={FELD_H} />
                 </Feld>
+                {/* Wie geht der Aufbau ins Angebot? (Kundenwunsch 26.08.2026:
+                    „Turmdrehkran … und zum Schluss noch ein Quadratmeter") */}
+                <Feld label="Im Angebot als">
+                  <select className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`}
+                    value={m.angebotEinheit || "auto"}
+                    onChange={(e) => onPatch({ angebotEinheit: e.target.value as KalkModule["angebotEinheit"] })}
+                    title="Pauschale = ein Betrag ohne Menge. Sonst wird die Fläche als Menge übergeben.">
+                    <option value="auto">automatisch (m² × Fläche)</option>
+                    <option value="pauschal">Pauschale</option>
+                    <option value="m²">m²</option>
+                    <option value="lfm">Laufmeter</option>
+                    <option value="m³">m³</option>
+                    <option value="Stk.">Stück</option>
+                  </select>
+                </Feld>
                 <Feld label="Dämmstärke in cm">
                   <select className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`} value={String(m.insulationThickness)}
                     onChange={(e) => onPatch({ insulationThickness: num(e.target.value) })}>

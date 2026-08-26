@@ -312,3 +312,52 @@ describe("Vortext je Aufbau (Kundenwunsch 25.08.2026)", () => {
     expect(items[iNach].auf_pdf).toBe(true);
   });
 });
+
+describe("Angebots-Einheit je Aufbau (Kundenwunsch 26.08.2026)", () => {
+  const bauAufbau = (patch: Partial<ReturnType<typeof newModule>>) => {
+    const m = newModule(1);
+    return {
+      ...m, name: "Turmdrehkran", area: 1,
+      materialRows: [{ ...newMaterialRow(), category: "ÖKran", product: "Montage + Demontage", ekPrice: 2600, vkPrice: 2600, vkManuell: true }],
+      ...patch,
+    };
+  };
+  const items = (m: ReturnType<typeof newModule>) => {
+    const st = newEmptyState();
+    st.modules = [m];
+    return buildAngebotItems(calcProjekt(st, DEFAULT_BETRIEBSDATEN)).items;
+  };
+
+  it("Pauschale: keine Menge, keine Flaeche im Text", () => {
+    // Genau Christians Fall: Fläche 1 ergab bisher "Turmdrehkran (1,00 m²)"
+    const summe = items(bauAufbau({ angebotEinheit: "pauschal" })).find((i) => i.ist_gruppensumme)!;
+    expect(summe.einheit).toBe("Pauschale");
+    expect(summe.menge).toBe(1);
+    expect(summe.beschreibung).toBe("Turmdrehkran");   // ohne "(1,00 m²)"
+    expect(summe.gesamtpreis).toBeCloseTo(2600, 2);
+  });
+
+  it("BESTANDSSCHUTZ: ohne Angabe rechnet alles exakt wie bisher", () => {
+    const alt = items(bauAufbau({}));                       // angebotEinheit fehlt
+    const auto = items(bauAufbau({ angebotEinheit: "auto" }));
+    expect(alt.map((i) => [i.beschreibung, i.menge, i.einheit, i.gesamtpreis]))
+      .toEqual(auto.map((i) => [i.beschreibung, i.menge, i.einheit, i.gesamtpreis]));
+    const summe = alt.find((i) => i.ist_gruppensumme)!;
+    expect(summe.einheit).toBe("m²");                        // wie gehabt
+    expect(summe.gesamtpreis).toBeCloseTo(2600, 2);
+  });
+
+  it("eigene Einheit: Flaeche bleibt die Menge, Betrag unveraendert", () => {
+    const m = bauAufbau({ angebotEinheit: "lfm", area: 40 });
+    const summe = items(m).find((i) => i.ist_gruppensumme)!;
+    expect(summe.einheit).toBe("lfm");
+    expect(summe.menge).toBe(40);
+    expect(round2(summe.menge * summe.einzelpreis)).toBeCloseTo(summe.gesamtpreis, 2);
+  });
+
+  it("Summe des Angebots bleibt in jeder Variante gleich", () => {
+    const gesamt = (e: any) => items(bauAufbau({ angebotEinheit: e })).reduce((s, i) => s + i.gesamtpreis, 0);
+    const werte = [gesamt(undefined), gesamt("auto"), gesamt("pauschal"), gesamt("m²"), gesamt("Stk.")];
+    for (const w of werte) expect(round2(w)).toBeCloseTo(round2(werte[0]), 2);
+  });
+});

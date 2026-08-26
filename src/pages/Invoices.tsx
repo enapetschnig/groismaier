@@ -1384,18 +1384,22 @@ export default function Invoices() {
                     <TableRow>
                       <TableHead className="w-10">Status</TableHead>
                       <TableHead>Datum</TableHead>
-                      <TableHead className="min-w-[12rem]">Betreff</TableHead>
-                      <TableHead>Kundennumm</TableHead>
+                      {/* Betreff breit und vollstaendig lesbar, Summen gleich
+                          dahinter (Kundenwunsch 26.08.2026: die Summe soll im
+                          Blick sein, ohne nach rechts zu scrollen). Die
+                          Kunden-Stammdaten ruecken nach hinten. */}
+                      <TableHead className="min-w-[20rem]">Betreff</TableHead>
                       <TableHead>Kunde</TableHead>
+                      {filterTyp !== "lieferschein" && <TableHead className="text-right whitespace-nowrap">Summe Netto</TableHead>}
+                      {filterTyp !== "lieferschein" && <TableHead className="text-right whitespace-nowrap">Summe Brutto</TableHead>}
+                      <TableHead className="hidden xl:table-cell">Kundennumm</TableHead>
                       <TableHead className="hidden xl:table-cell">Adresse</TableHead>
                       <TableHead className="hidden xl:table-cell">Plz</TableHead>
                       <TableHead className="hidden xl:table-cell">Ort</TableHead>
                       <TableHead className="hidden 2xl:table-cell">Leistungszeitraum</TableHead>
                       <TableHead className="hidden 2xl:table-cell">Lieferadresse</TableHead>
                       <TableHead className="hidden xl:table-cell">Projekt</TableHead>
-                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Summe Netto</TableHead>}
-                      {filterTyp !== "lieferschein" && <TableHead className="text-right">Summe Brutto</TableHead>}
-                      <TableHead className="hidden xl:table-cell">Kommentare</TableHead>
+                      <TableHead className="hidden 2xl:table-cell">Kommentare</TableHead>
                       <TableHead className="w-12 print:hidden"></TableHead>
                     </TableRow>
                   </TableHeader>
@@ -1421,16 +1425,29 @@ export default function Invoices() {
                             />
                           </TableCell>
                           <TableCell className="whitespace-nowrap">{formatDateShort(inv.datum)}</TableCell>
-                          <TableCell className="max-w-[18rem]">
-                            <div className="flex items-center gap-2">
+                          <TableCell className="min-w-[20rem] max-w-[30rem]">
+                            <div className="flex items-start gap-2">
                               <TypBadge typ={inv.typ} />
-                              <span className="truncate font-medium">
+                              {/* Kein truncate: Belegnummer UND Projektname
+                                  sollen vollstaendig lesbar sein. */}
+                              <span className="min-w-0 font-medium leading-snug">
                                 {(() => { const b = betreffAnzeige(inv); return b.zusatz ? `${b.kopf} · ${b.zusatz}` : b.kopf; })()}
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="font-mono text-xs text-muted-foreground">{(inv as any).kundennummer || "—"}</TableCell>
                           <TableCell className="max-w-[12rem] truncate">{inv.kunde_name}</TableCell>
+                          {filterTyp !== "lieferschein" && (
+                            <TableCell className="text-right tabular-nums whitespace-nowrap">{Number(inv.netto_summe || 0).toFixed(2)}</TableCell>
+                          )}
+                          {filterTyp !== "lieferschein" && (
+                            <TableCell className="text-right font-semibold tabular-nums whitespace-nowrap">
+                              {brutto.toFixed(2)}
+                              {PAYABLE_INVOICE_TYPES.has(inv.typ) && bezahlt > 0 && inv.status !== "bezahlt" && (
+                                <div className="text-[10px] font-normal text-muted-foreground">offen: € {offen.toFixed(2)}</div>
+                              )}
+                            </TableCell>
+                          )}
+                          <TableCell className="hidden font-mono text-xs text-muted-foreground xl:table-cell">{(inv as any).kundennummer || "—"}</TableCell>
                           <TableCell className="hidden max-w-[10rem] truncate text-muted-foreground xl:table-cell">{(inv as any).kunde_adresse || ""}</TableCell>
                           <TableCell className="hidden text-muted-foreground xl:table-cell">{(inv as any).kunde_plz || ""}</TableCell>
                           <TableCell className="hidden max-w-[8rem] truncate text-muted-foreground xl:table-cell">{(inv as any).kunde_ort || ""}</TableCell>
@@ -1450,18 +1467,7 @@ export default function Invoices() {
                           <TableCell className="hidden max-w-[9rem] truncate text-muted-foreground xl:table-cell">
                             {inv.project_id ? (projectNames[inv.project_id] || "") : ""}
                           </TableCell>
-                          {filterTyp !== "lieferschein" && (
-                            <TableCell className="text-right tabular-nums">{Number(inv.netto_summe || 0).toFixed(2)}</TableCell>
-                          )}
-                          {filterTyp !== "lieferschein" && (
-                            <TableCell className="text-right font-medium tabular-nums">
-                              {brutto.toFixed(2)}
-                              {PAYABLE_INVOICE_TYPES.has(inv.typ) && bezahlt > 0 && inv.status !== "bezahlt" && (
-                                <div className="text-[10px] font-normal text-muted-foreground">offen: € {offen.toFixed(2)}</div>
-                              )}
-                            </TableCell>
-                          )}
-                          <TableCell className="hidden max-w-[10rem] truncate text-xs text-muted-foreground xl:table-cell">
+                          <TableCell className="hidden max-w-[10rem] truncate text-xs text-muted-foreground 2xl:table-cell">
                             {(((inv as any).notizen as string) || "").split("\n")[0]}
                           </TableCell>
                           <TableCell className="print:hidden" onClick={(e) => e.stopPropagation()}>

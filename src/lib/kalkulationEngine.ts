@@ -121,6 +121,18 @@ export interface KalkModule {
   vortext?: string;
   /** Textbaustein UNTER der Artikel-Aufzählung (Kundenwunsch 25.08.2026). */
   nachtext?: string;
+  /**
+   * Wie geht dieser Aufbau ins Angebot? (Kundenwunsch 26.08.2026:
+   * „dass ich in der Kalkulation schon definieren kann, ob das als
+   * Pauschalbetrag übergeben werden soll, als Quadratmeter, Laufmeter …")
+   *
+   *   "auto"     wie bisher: m² × Fläche, wenn das centgenau aufgeht,
+   *              sonst Pauschale
+   *   "pauschal" immer als eine Pauschale — richtig für Dinge ohne Fläche
+   *              (Turmdrehkran, Baustelleneinrichtung)
+   *   sonst      die gewählte Einheit mit der Fläche als Menge
+   */
+  angebotEinheit?: "auto" | "pauschal" | "m²" | "lfm" | "m³" | "Stk.";
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1164,10 +1176,13 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     const mitNotiz = (titel: string) => (m.note ? `${titel}\n${m.note}` : titel);
 
     // --- a) Sammelzeile (Betrag unverändert wie bisher) ---------------------
-    const aufteilung = preisAufteilung(gesamt, num(m.area));
+    // Einheit wie in der Kalkulation festgelegt (Kundenwunsch 26.08.2026).
+    const wahl = m.angebotEinheit || "auto";
+    const aufteilung = wahl === "pauschal" ? null : preisAufteilung(gesamt, num(m.area));
     if (aufteilung) {
+      const einheit = wahl === "auto" ? "m²" : wahl;
       items.push({
-        beschreibung: mitNotiz(name), menge: aufteilung.menge, einheit: "m²",
+        beschreibung: mitNotiz(name), menge: aufteilung.menge, einheit,
         einzelpreis: aufteilung.einzelpreis, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
       });
@@ -1175,8 +1190,11 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
       // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
       // stehen, damit im Angebot nichts an Information verlorengeht.
       const flaeche = round2(num(m.area));
+      // Bei bewusster Pauschale steht die Fläche NICHT im Text — sie ist
+      // dort meist nur ein Hilfswert (z.B. 1), der niemanden interessiert.
+      const zeigeFlaeche = flaeche > 0 && wahl !== "pauschal";
       items.push({
-        beschreibung: mitNotiz(flaeche > 0 ? `${name} (${fmt(flaeche)} m²)` : name),
+        beschreibung: mitNotiz(zeigeFlaeche ? `${name} (${fmt(flaeche)} m²)` : name),
         menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
       });
@@ -1317,7 +1335,8 @@ export function newMaterialRow(): MaterialRow {
 
 export function newModule(id: number): KalkModule {
   return {
-    id, name: "", aufbauKategorie: "", note: "", vortext: "", nachtext: "", area: 0, wallHeight: 0,
+    id, name: "", aufbauKategorie: "", note: "", vortext: "", nachtext: "", angebotEinheit: "auto",
+    area: 0, wallHeight: 0,
     insulationThickness: 20, isOptional: false, collapsed: false,
     materialRows: Array.from({ length: INITIAL_MATERIAL_ROWS }, newMaterialRow),
     workers: 0, days: 0, distanceKM: 0, busTrips: 0, lkwTrips: 0,
@@ -1420,6 +1439,8 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         note: typeof m.note === "string" ? m.note : "",
         vortext: typeof m.vortext === "string" ? m.vortext : "",
         nachtext: typeof m.nachtext === "string" ? m.nachtext : "",
+        angebotEinheit: ["auto", "pauschal", "m²", "lfm", "m³", "Stk."].includes(m.angebotEinheit)
+          ? m.angebotEinheit : "auto",
         area: num(m.area),
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,
