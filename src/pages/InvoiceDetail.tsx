@@ -751,6 +751,8 @@ export default function InvoiceDetail() {
    */
   const [kalkulationIds, setKalkulationIds] = useState<string[] | null>(null);
   const [kalkulationName, setKalkulationName] = useState<string>("");
+  /** id → Name der Quell-Kalkulationen (Bereichs-Titel = Kalkulationsname). */
+  const [kalkNamen, setKalkNamen] = useState<Record<string, string>>({});
   /** Warnschwelle Marge aus app_settings.kalk_warn_marge_prozent (Default 35 %). */
   const [warnMargeProzent, setWarnMargeProzent] = useState<number>(35);
   /** Roh-Eingabe des Warnschwellen-Feldes (österreichisches Komma tippbar). */
@@ -1013,6 +1015,7 @@ export default function InvoiceDetail() {
           .select("id, name").in("id", kalkulationIds);
         if (cancelled) return;
         const byId = new Map(((data as any[]) || []).map((k) => [String(k.id), String(k.name || "")]));
+        setKalkNamen(Object.fromEntries(byId));
         setKalkulationName(kalkulationIds.map((id) => byId.get(id)).filter(Boolean).join(" + "));
         return;
       }
@@ -1417,6 +1420,62 @@ export default function InvoiceDetail() {
       return [...vorspann, ...teile.flat()].map((it, i) => ({ ...it, position: i + 1 }));
     });
   };
+
+  /**
+   * Einen Bereich (= eine Kalkulation) wieder aus dem Beleg nehmen
+   * (Kundenwunsch 26.08.2026). Entfernt die Überschrift samt allen
+   * Aufbauten dieses Bereichs und streicht die Kalkulation aus der
+   * Herkunft, damit „Positionen neu übernehmen" sie nicht zurückholt.
+   */
+  const entferneBereich = (index: number) => {
+    const b = belegBereiche[index];
+    if (!b) return;
+    if (!window.confirm(`Bereich „${b.titel}" mit allen Positionen aus diesem Beleg entfernen?\n\nDie Kalkulation selbst bleibt erhalten.`)) return;
+    setItemsDirty((prev) => {
+      const bloecke = bereichsBloecke(prev);
+      const treffer = bloecke[index];
+      if (!treffer) return prev;
+      return prev
+        .filter((_, i) => i < treffer.von || i > treffer.bis)
+        .map((it, i) => ({ ...it, position: i + 1 }));
+    });
+    // Herkunft: die passende Kalkulations-ID über den Namen finden.
+    const norm = (t: string) => t.trim().toLowerCase();
+    const raus = Object.entries(kalkNamen).find(([, name]) => norm(name) === norm(b.titel))?.[0];
+    if (raus) {
+      const rest = (kalkulationIds || []).filter((id) => id !== raus);
+      setKalkulationIds(rest.length > 1 ? rest : null);
+      if (kalkulationId === raus) setKalkulationId(rest[0] || null);
+    }
+    toast({ title: "Bereich entfernt", description: `„${b.titel}" ist nicht mehr Teil des Belegs. Bitte speichern.` });
+  };
+
+  /**
+   * Bereichs-Liste mit Pfeilen und Entfernen — identisch im Kalkulations-
+   * Block des Belegs und im Einfügen-Dialog (eine Quelle, keine Doppelpflege).
+   */
+  const bereichsListe = () => (
+    <div className="space-y-1">
+      {belegBereiche.map((b, i) => (
+        <div key={`${b.titel}-${i}`} className="flex items-center gap-2 rounded border bg-background px-2 py-1.5 text-sm">
+          <span className="w-5 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
+          <span className="min-w-0 flex-1 truncate">{b.titel}</span>
+          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0}
+            title="Bereich nach oben" onClick={() => verschiebeBereich(i, -1)}>
+            <ChevronUp className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === belegBereiche.length - 1}
+            title="Bereich nach unten" onClick={() => verschiebeBereich(i, 1)}>
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive hover:bg-destructive/10"
+            title="Diesen Bereich aus dem Beleg entfernen" onClick={() => entferneBereich(i)}>
+            <Trash2 className="h-4 w-4" />
+          </Button>
+        </div>
+      ))}
+    </div>
+  );
 
   const positionenNeuUebernehmen = async () => {
     if (!kalkulationId) return;
@@ -5141,22 +5200,7 @@ export default function InvoiceDetail() {
                   <div className="mb-1.5 text-xs font-semibold text-blue-900">
                     Bereiche in diesem Beleg — Reihenfolge
                   </div>
-                  <div className="space-y-1">
-                    {belegBereiche.map((b, i) => (
-                      <div key={`${b.titel}-${i}`} className="flex items-center gap-2 rounded border bg-white px-2 py-1.5 text-sm">
-                        <span className="w-5 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
-                        <span className="min-w-0 flex-1 truncate">{b.titel}</span>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0}
-                          title="Bereich nach oben" onClick={() => verschiebeBereich(i, -1)}>
-                          <ChevronUp className="h-4 w-4" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === belegBereiche.length - 1}
-                          title="Bereich nach unten" onClick={() => verschiebeBereich(i, 1)}>
-                          <ChevronDown className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
+                  {bereichsListe()}
                 </CardContent>
               )}
             </Card>
@@ -8505,22 +8549,7 @@ export default function InvoiceDetail() {
                 <div className="mb-1 text-xs font-semibold text-muted-foreground">
                   Reihenfolge im Beleg
                 </div>
-                <div className="space-y-1">
-                  {belegBereiche.map((b, i) => (
-                    <div key={`${b.titel}-${i}`} className="flex items-center gap-2 rounded border bg-background px-2 py-1 text-sm">
-                      <span className="w-5 shrink-0 text-xs text-muted-foreground">{i + 1}.</span>
-                      <span className="min-w-0 flex-1 truncate">{b.titel}</span>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === 0}
-                        title="Nach oben" onClick={() => verschiebeBereich(i, -1)}>
-                        <ChevronUp className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8" disabled={i === belegBereiche.length - 1}
-                        title="Nach unten" onClick={() => verschiebeBereich(i, 1)}>
-                        <ChevronDown className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
+                {bereichsListe()}
               </div>
             )}
             <div className="relative">
