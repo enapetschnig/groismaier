@@ -27,6 +27,7 @@ import { QuickFotoDialog } from "@/components/QuickFotoDialog";
 import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { AufgabenWidget } from "@/components/aufgaben/AufgabenWidget";
+import { AenderungswunschKnopf } from "@/components/aenderungswunsch/AenderungswunschKnopf";
 import { KBButton, KBSectionHeader } from "@/components/kingbill";
 import { ListTodo } from "lucide-react";
 
@@ -281,7 +282,7 @@ export default function Index() {
       <QuickFotoDialog open={fotoDialogOffen} onOpenChange={setFotoDialogOffen} />
 
       {/* Header — blaue KingBill-Titelleiste mit Systemleisten-Buttons wie im Original */}
-      <header className="kb-toolbar sticky top-0 z-50">
+      <header data-seitenkopf className="kb-toolbar sticky top-0 z-50">
         {/* Am Handy ausgeblendet (Kundenwunsch) — Abmelden steht im Menü
             rechts; links oben braucht es den Knopf nur am Desktop. */}
         <button type="button" className="kb-btn hidden shrink-0 sm:inline-flex" onClick={handleLogout} title="Abmelden">
@@ -294,6 +295,12 @@ export default function Index() {
             <span className="hidden md:inline">Einstellungen ändern</span>
           </button>
         )}
+        {/* Änderung melden — auch auf der Startmaske (Kundenmeldung 26.08.2026:
+            „im Hauptmenü geht es schon mal nicht"). Die Startmaske baut ihre
+            Kopfleiste selbst und bekommt den Knopf daher nicht über KBToolbar. */}
+        <span className="shrink-0" data-bildschirmfoto="aus">
+          <AenderungswunschKnopf gestalt="kopf" />
+        </span>
         <div className="flex items-center gap-2 sm:gap-3 min-w-0 sm:mx-auto">
           <div className="shrink-0 rounded bg-white/95 px-1.5 py-1 shadow-sm">
             <img
