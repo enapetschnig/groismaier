@@ -28,6 +28,7 @@ import { usePermissions } from "@/hooks/usePermissions";
 import { MeineEinteilung } from "@/components/MeineEinteilung";
 import { AufgabenWidget } from "@/components/aufgaben/AufgabenWidget";
 import { AenderungswunschKnopf } from "@/components/aenderungswunsch/AenderungswunschKnopf";
+import { NeuerungenBanner } from "@/components/neuerungen/NeuerungenBanner";
 import { KBButton, KBSectionHeader } from "@/components/kingbill";
 import { ListTodo } from "lucide-react";
 
@@ -429,6 +430,11 @@ export default function Index() {
             <MeineEinteilung userId={user.id} />
           </div>
         )}
+
+        {/* „Das ist neu" — was zuletzt umgesetzt wurde (Kundenwunsch
+            26.08.2026). Steht ganz oben und verschwindet nach dem
+            Bestätigen; der Vermerk liegt beim Benutzer, nicht im Browser. */}
+        {user && <NeuerungenBanner userId={user.id} />}
 
         {/* Aufgaben (Kundenwunsch 19.08.2026): Status-Übersicht für den Admin,
             „Meine Aufgaben" als Nachricht an die zugewiesene Person. */}

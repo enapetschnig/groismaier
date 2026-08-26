@@ -26,6 +26,7 @@ import TimeAccountManagement from "@/components/TimeAccountManagement";
 import { EmployeeColorSettings } from "@/components/schedule/EmployeeColorSettings";
 import { InvoiceLayoutEditor } from "@/components/InvoiceLayoutEditor";
 import { AenderungswuenscheListe } from "@/components/aenderungswunsch/AenderungswuenscheListe";
+import { NeuerungenPflege } from "@/components/neuerungen/NeuerungenPflege";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
@@ -1331,6 +1332,7 @@ export default function Admin() {
 
           {/* ===== Änderungswünsche aus der App (Kundenwunsch 26.08.2026) ===== */}
           <TabsContent value="aenderungen" className="space-y-6">
+            <NeuerungenPflege />
             <AenderungswuenscheListe />
           </TabsContent>
 

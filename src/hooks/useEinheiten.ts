@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 
-const DEFAULT_EINHEITEN = ["Stk.", "m²", "m³", "lfm", "Std.", "Pauschal", "kg", "Liter", "Tube", "Sack", "Karton", "Palette", "Rolle", "Dose", "Eimer"];
+const DEFAULT_EINHEITEN = ["Stk.", "m²", "m³", "lfm", "Std.", "Pauschale", "Pauschal", "kg", "Liter", "Tube", "Sack", "Karton", "Palette", "Rolle", "Dose", "Eimer"];
 
 export function useEinheiten() {
   const [einheiten, setEinheiten] = useState<string[]>(DEFAULT_EINHEITEN);
