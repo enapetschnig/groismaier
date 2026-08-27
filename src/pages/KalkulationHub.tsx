@@ -113,6 +113,13 @@ export default function KalkulationHub() {
   const [fromVorlageCustomerId, setFromVorlageCustomerId] = useState<string | null>(null);
   const [creatingFromVorlage, setCreatingFromVorlage] = useState(false);
 
+  // Bauvorhaben wechseln (Kundenwunsch 26.08.2026: "den Ordner vom
+  // Bauvorhaben Knapp ins Bauvorhaben Knapp uebersiedeln") — die
+  // Ordner richten sich nach dem Kunden der Kalkulation.
+  const [bvWechselRow, setBvWechselRow] = useState<KalkRow | null>(null);
+  const [bvWechselKunde, setBvWechselKunde] = useState<string | null>(null);
+  const [bvWechselLaeuft, setBvWechselLaeuft] = useState(false);
+
   // Umbenennen (Vorlage)
   const [renameRow, setRenameRow] = useState<KalkRow | null>(null);
   const [renameName, setRenameName] = useState("");
@@ -395,6 +402,27 @@ export default function KalkulationHub() {
     load();
   };
 
+  const bauvorhabenWechseln = async () => {
+    if (!bvWechselRow) return;
+    setBvWechselLaeuft(true);
+    const { error } = await kalkTable()
+      .update({ customer_id: bvWechselKunde })
+      .eq("id", bvWechselRow.id);
+    setBvWechselLaeuft(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: error.message });
+      return;
+    }
+    toast({
+      title: "Verschoben",
+      description: bvWechselKunde
+        ? `„${bvWechselRow.name}" liegt jetzt im Bauvorhaben des gewählten Kunden.`
+        : `„${bvWechselRow.name}" liegt jetzt unter „Ohne Kunde".`,
+    });
+    setBvWechselRow(null);
+    load();
+  };
+
   const renderCard = (r: KalkRow) => (
     <Card
       key={r.id}
@@ -454,6 +482,9 @@ export default function KalkulationHub() {
                 </>
               ) : (
                 <>
+                  <DropdownMenuItem onClick={() => { setBvWechselRow(r); setBvWechselKunde(r.customer_id); }}>
+                    <FolderOpen className="h-4 w-4 mr-2" /> Bauvorhaben ändern
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleDuplicate(r)}>
                     <Copy className="h-4 w-4 mr-2" /> Duplizieren
                   </DropdownMenuItem>
@@ -620,6 +651,32 @@ export default function KalkulationHub() {
           </>
         )}
       </div>
+
+      {/* Bauvorhaben (= Kunde) einer Kalkulation ändern */}
+      <Dialog open={!!bvWechselRow} onOpenChange={(o) => { if (!o) setBvWechselRow(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Bauvorhaben ändern</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              „{bvWechselRow?.name}" in das Bauvorhaben eines anderen Kunden
+              verschieben. Die Ordner in der Übersicht richten sich nach dem
+              Kunden der Kalkulation.
+            </p>
+            <div className="space-y-1.5">
+              <Label>Kunde / Bauvorhaben</Label>
+              <CustomerSelect value={bvWechselKunde} onChange={(id) => setBvWechselKunde(id)} />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setBvWechselRow(null)}>Abbrechen</Button>
+              <Button onClick={() => void bauvorhabenWechseln()} disabled={bvWechselLaeuft}>
+                {bvWechselLaeuft ? "Wird verschoben …" : "Verschieben"}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Gemeinsames Angebot aus mehreren Kalkulationen */}
       <Dialog open={sammelOpen} onOpenChange={setSammelOpen}>
