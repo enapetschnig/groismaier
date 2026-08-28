@@ -31,6 +31,7 @@ import Disturbances from "./pages/Disturbances";
 import DisturbanceDetail from "./pages/DisturbanceDetail";
 import Invoices from "./pages/Invoices";
 import OffenePosten from "./pages/OffenePosten";
+import Sendeprotokoll from "./pages/Sendeprotokoll";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
 import InvoiceTemplates from "./pages/InvoiceTemplates";
@@ -118,6 +119,7 @@ function AppContent() {
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />
           <Route path="/offene-posten" element={<ProtectedRoute feature="rechnungen"><OffenePosten /></ProtectedRoute>} />
+          <Route path="/sendeprotokoll" element={<ProtectedRoute feature="rechnungen"><Sendeprotokoll /></ProtectedRoute>} />
           <Route path="/invoices/templates" element={<ProtectedRoute feature="rechnungen"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/invoices/packages" element={<ProtectedRoute feature="rechnungen"><OfferPackages /></ProtectedRoute>} />
           <Route path="/invoices/new" element={<ProtectedRoute feature="rechnungen"><InvoiceDetailKeyed /></ProtectedRoute>} />

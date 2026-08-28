@@ -498,6 +498,30 @@ export function buildInvoiceHtml(
         ? `<div class="closing-text">${escapeHtml(renderGutschriftClosing())}</div>`
         : `<div class="closing-text">${escapeHtml(renderRechnungClosing())}</div>`;
 
+  // Skonto-Kasten — Parität zum PDF (pdfGenerator): Die Vorschau zeigte den
+  // Skonto bisher NIE, der Ausdruck schon — „der Eintrag bei Skonto wird
+  // nicht übernommen" (Meldung 27.08.) kam genau aus diesem Widerspruch.
+  const skontoProzent = Number(invoice.skonto_prozent) || 0;
+  const skontoTage = Number(invoice.skonto_tage) || 0;
+  const skontoBlock = (() => {
+    if (hidePrices || skontoProzent <= 0 || skontoTage <= 0) return "";
+    const brutto = Number(invoice.brutto_summe) || 0;
+    const abzug = Math.round(brutto * (skontoProzent / 100) * 100) / 100;
+    const betrag = Math.round((brutto - abzug) * 100) / 100;
+    const skontoDatum = new Date(invoice.datum + "T12:00:00");
+    skontoDatum.setDate(skontoDatum.getDate() + skontoTage);
+    // Angebote/ABs haben kein Belegdatum-basiertes Zahlungsziel — dort zählt
+    // die Frist ab Rechnungslegung (gleiche Logik wie im PDF).
+    const zeile1 = faelligFmt
+      ? `Bei Zahlung bis ${skontoDatum.toLocaleDateString("de-AT")}:`
+      : `Bei Zahlung innerhalb von ${skontoTage} Tagen:`;
+    return `<div style="border:1px solid #c8c8c8;border-radius:3px;padding:8px 12px;margin-bottom:12px;font-size:8pt;page-break-inside:avoid;">
+  <div style="font-weight:700;margin-bottom:3px;">Zahlungsbedingungen:</div>
+  <div>${zeile1} <strong>${fmtCurrency(betrag)}</strong> <span style="color:#555;">(${skontoProzent}% Skonto = ${fmtCurrency(abzug)} Abzug)</span></div>
+  ${faelligFmt ? `<div>Zahlbar bis ${faelligFmt}: <strong>${fmtCurrency(brutto)}</strong> <span style="color:#555;">(ohne Abzug)</span></div>` : ""}
+</div>`;
+  })();
+
   // Anzahlungs-Hinweis aus document_texts — nur bei Anzahlungsrechnung gerendert.
   const anzahlungHinweis = (invoice as any).custom_anzahlung_hinweis as string | undefined;
   const anzahlungHinweisBlock =
@@ -753,6 +777,7 @@ ${invoice.notizen ? `<div class="notes"><strong>Anmerkung:</strong> ${invoice.no
 
 ${closingText}
 ${anzahlungHinweisBlock}
+${skontoBlock}
 
 ${
   showBank

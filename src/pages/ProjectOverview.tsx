@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen } from "lucide-react";
+import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen, Send } from "lucide-react";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -69,6 +69,9 @@ const ProjectOverview = () => {
   const [materialCount, setMaterialCount] = useState(0);
   const [materialWert, setMaterialWert] = useState(0);
   const [regieCount, setRegieCount] = useState(0);
+  // Sendebestätigungen des Projekts (Kundenwunsch 27.08.2026): eigene
+  // Kategorie mit Absprung ins gesammelte Sendeprotokoll.
+  const [sendeCount, setSendeCount] = useState(0);
   // Regiestunden = EIGENER Topf (aus den Regieberichten) — zählt NICHT zu
   // den Projektstunden aus der Zeiterfassung.
   const [regieStunden, setRegieStunden] = useState(0);
@@ -443,6 +446,13 @@ const ProjectOverview = () => {
         setRegieCount(rows.length);
         setRegieStunden(Math.round(rows.reduce((s: number, d: any) => s + (Number(d.stunden) || 0), 0) * 10) / 10);
       });
+
+    // Sendebestätigungen zählen — Tabelle kann in frischen Umgebungen noch
+    // fehlen (Migration 20260828100000), dann bleibt die Zahl einfach 0.
+    (supabase.from("beleg_sendeprotokoll" as never) as any)
+      .select("id", { count: "exact", head: true })
+      .eq("project_id", projectId)
+      .then(({ count }: any) => setSendeCount(count || 0));
 
     // Fetch Regiebericht PDFs for this project
     (supabase.from("disturbances" as never) as any)
@@ -951,6 +961,20 @@ const ProjectOverview = () => {
               </CardContent>
             </Card>
           )}
+
+          {/* Sendeprotokoll — eigene Kategorie (Kundenwunsch 27.08.2026):
+              welche Belege wann und an wen aus dem Programm versendet wurden. */}
+          <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/sendeprotokoll?project=${projectId}`)}>
+            <CardContent className="flex items-center gap-3 p-4">
+              <Send className="h-5 w-5 text-emerald-600" />
+              <div className="flex-1">
+                <p className="font-medium">Sendeprotokoll</p>
+                <p className="text-xs text-muted-foreground">
+                  {sendeCount} Sendebestätigung{sendeCount === 1 ? "" : "en"} — versendete Belege mit Datum & Uhrzeit
+                </p>
+              </div>
+            </CardContent>
+          </Card>
 
           {/* Regieberichte */}
           <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/disturbances?project=${projectId}`)}>

@@ -42,11 +42,22 @@ interface Props {
   belegNummer: string;
   kundeAnrede?: string;
   kundeName?: string;
+  /**
+   * Bezüge für das Sendeprotokoll (Kundenwunsch 27.08.2026): Nach jedem
+   * erfolgreichen Versand wird eine Sendebestätigung mit Datum und Uhrzeit
+   * gespeichert — im Projekt auffindbar und gesammelt unter /sendeprotokoll.
+   */
+  protokoll?: {
+    invoiceId?: string | null;
+    projectId?: string | null;
+    customerId?: string | null;
+    belegTyp?: string;
+  };
 }
 
 export function BelegMailDialog({
   open, onOpenChange, pdfBlob, dateiname, xmlBlob, xmlDateiname, xmlFehler,
-  empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName,
+  empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll,
 }: Props) {
   const { toast } = useToast();
   const [von, setVon] = useState(POSTFAECHER[0].adresse);
@@ -134,6 +145,35 @@ export function BelegMailDialog({
       });
       if (error) throw new Error(error.message);
       if (data?.error) throw new Error(data.error);
+
+      // Sendebestätigung festhalten (Kundenwunsch 27.08.2026) — der Versand
+      // ist geglückt, das Protokoll darf ihn nachträglich nicht "zurückholen":
+      // Fehler hier nur melden, nicht den Erfolg verwerfen.
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        const { error: protokollFehler } = await (supabase.from("beleg_sendeprotokoll" as never) as any).insert({
+          gesendet_von: user?.id,
+          invoice_id: protokoll?.invoiceId || null,
+          project_id: protokoll?.projectId || null,
+          customer_id: protokoll?.customerId || null,
+          beleg_typ: protokoll?.belegTyp || null,
+          beleg_nummer: belegNummer || null,
+          beleg_bezeichnung: belegBezeichnung || null,
+          kunde_name: kundeName || null,
+          von_adresse: von,
+          an_adressen: empfaengerListe,
+          cc_adressen: cc.split(/[;,]/).map((x) => x.trim()).filter(Boolean),
+          betreff,
+          anhaenge: anhaenge.map((a) => a.name),
+        });
+        if (protokollFehler) throw protokollFehler;
+      } catch (pe) {
+        console.error("Sendeprotokoll konnte nicht gespeichert werden:", pe);
+        toast({
+          title: "Hinweis",
+          description: "Die Mail ging raus, aber die Sendebestätigung konnte nicht gespeichert werden.",
+        });
+      }
 
       toast({
         title: "Beleg versendet",

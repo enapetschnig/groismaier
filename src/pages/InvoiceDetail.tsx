@@ -6149,6 +6149,10 @@ export default function InvoiceDetail() {
                                 const n = clamp(toNumber(rohTexte["form:skonto_prozent"], 0), 0, 100);
                                 updateField("skonto_prozent", n);
                                 clearRoh("form:skonto_prozent");
+                                // Ohne Tage stünde der Skonto nie am Beleg (Meldung
+                                // 27.08.): sinnvollen Vorschlag eintragen, sichtbar
+                                // und jederzeit änderbar.
+                                if (n > 0 && !(form.skonto_tage > 0)) updateField("skonto_tage", 10);
                               }}
                               placeholder="z.B. 2"
                             />
@@ -6176,6 +6180,11 @@ export default function InvoiceDetail() {
                             <p className="col-span-2 text-xs text-muted-foreground">
                               Bei Zahlung bis {form.datum ? format(new Date(new Date(form.datum).getTime() + form.skonto_tage * 86400000), "dd.MM.yyyy") : "–"}:
                               {" "}€ {eur((bruttoSumme * (1 - form.skonto_prozent / 100)))} ({form.skonto_prozent}% Skonto)
+                            </p>
+                          )}
+                          {form.skonto_prozent > 0 && !(form.skonto_tage > 0) && (
+                            <p className="col-span-2 text-xs font-medium text-amber-700">
+                              Skonto-Tage fehlen — ohne Tage erscheint der Skonto nicht am Beleg.
                             </p>
                           )}
                         </div>
@@ -8420,6 +8429,14 @@ export default function InvoiceDetail() {
           belegNummer={form.nummer || ""}
           kundeAnrede={(form as any).kunde_anrede || ""}
           kundeName={form.kunde_name || ""}
+          /* Sendeprotokoll (Kundenwunsch 27.08.2026): jeder Versand landet als
+             Sendebestätigung im Projekt bzw. gesammelt unter /sendeprotokoll. */
+          protokoll={{
+            invoiceId: istNeueRoute ? null : id || null,
+            projectId: form.project_id || null,
+            customerId: form.customer_id || null,
+            belegTyp: form.typ,
+          }}
         />
 
         {/* KingBill: „Änderungen speichern?" beim Verlassen mit ungespeicherten

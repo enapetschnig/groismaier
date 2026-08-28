@@ -6,7 +6,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot, CheckCircle2 } from "lucide-react";
+import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Trash2, FileDown, Printer, Settings, MoreHorizontal, ChevronDown, ChevronUp, Undo2, Truck, Plus, Filter, Pencil, Copy as CopyIcon, CircleDot, CheckCircle2, Send } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { istEntwurfBeleg, hatPlatzhalterNummer, nummerFuerAnzeige } from "@/lib/belegEntwurf";
@@ -767,6 +767,11 @@ export default function Invoices() {
                 <DropdownMenuItem onClick={() => setShowArchive(!showArchive)}>
                   <Archive className="h-4 w-4 mr-2" />
                   {showArchive ? "Archiv ausblenden" : "Archiv anzeigen"}
+                </DropdownMenuItem>
+                {/* Sendeprotokoll (Kundenwunsch 27.08.2026): alle Sende-
+                    bestätigungen gesammelt — auch für Belege ohne Projekt. */}
+                <DropdownMenuItem onClick={() => navigate("/sendeprotokoll")}>
+                  <Send className="h-4 w-4 mr-2" /> Sendeprotokoll
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate("/admin?tab=einstellungen#nummernkreise")}>
                   <Settings className="h-4 w-4 mr-2" /> Nummernkreise
