@@ -434,7 +434,9 @@ export default function Index() {
         {/* „Das ist neu" — was zuletzt umgesetzt wurde (Kundenwunsch
             26.08.2026). Steht ganz oben und verschwindet nach dem
             Bestätigen; der Vermerk liegt beim Benutzer, nicht im Browser. */}
-        {user && <NeuerungenBanner userId={user.id} />}
+        {/* Nur Administratoren (Kundenentscheid 28.08.2026: die
+            Umgesetzt-Meldungen sollen immer nur die Admins bekommen). */}
+        {user && isAdmin && <NeuerungenBanner userId={user.id} />}
 
         {/* Aufgaben (Kundenwunsch 19.08.2026): Status-Übersicht für den Admin,
             „Meine Aufgaben" als Nachricht an die zugewiesene Person. */}
