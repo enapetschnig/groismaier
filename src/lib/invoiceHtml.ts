@@ -141,6 +141,8 @@ export interface InvoiceHtmlItem {
   auf_pdf?: boolean;
   /** Preistragende Sammelzeile der Gruppe — sie zeigt den Betrag des Kapitels. */
   ist_gruppensumme?: boolean;
+  /** INFOPOSITION: Betrag steht am Beleg (in Klammern), zählt nicht zur Summe. */
+  ist_info?: boolean;
 }
 
 /** Kapitelname einer Position (getrimmt); "" = ungruppiert. */
@@ -757,7 +759,14 @@ ${(() => {
           ? `<td></td><td></td><td></td><td></td>`
           : e.detail
             ? `<td></td><td></td><td style="text-align:right;color:#555;">${mengeText}</td><td></td>`
-            : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
+            : (item as any).ist_info
+              /* INFOPOSITION (Kundenwunsch 28.08.2026): Betrag in Klammern —
+                 steht am Beleg, zählt aber nicht in die Belegsumme. */
+              ? `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
+      <td style="text-align:right;color:#bbb;">—</td>
+      <td style="text-align:right;">${mengeText}</td>
+      <td style="text-align:right;font-weight:600;">(${fmtCurrency(Number(item.gesamtpreis))})</td>`
+              : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
       <td style="text-align:right;">${mengeText}</td>
       <td style="text-align:right;font-weight:600;">${fmtCurrency(Number(item.gesamtpreis))}</td>`}

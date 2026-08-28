@@ -332,6 +332,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
           einheit: it.einheit || "Stk.",
           gesamtpreis: Number(it.gesamtpreis) || 0,
           mwst_exempt: !!it.mwst_exempt,
+          ist_info: !!it.ist_info,
           produktnummer: it.produktnummer || "",
         })),
         {

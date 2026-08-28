@@ -30,6 +30,12 @@ export interface BelegPosition {
   mwst_exempt?: boolean | null;
   gruppe?: string | null;
   ist_gruppensumme?: boolean | null;
+  /**
+   * INFOPOSITION (Kundenwunsch 28.08.2026): Die Zeile zeigt ihren Betrag am
+   * Beleg, zählt aber NICHT in die Belegsumme — z.B. ein optionaler Aufbau
+   * aus der Kalkulation, den der Kunde dazunehmen kann.
+   */
+  ist_info?: boolean | null;
 }
 
 export interface BelegKopf {
@@ -94,6 +100,9 @@ export const berechneZeilenpreis = (
  * er fehlt, wird nachgerechnet.
  */
 export const zeilenBetrag = (p: BelegPosition): number => {
+  // INFOPOSITION: Betrag steht sichtbar an der Zeile (gesamtpreis), geht aber
+  // bewusst NICHT in die Belegsumme ein.
+  if (p.ist_info) return 0;
   if (istDetailzeile(p)) return 0;
   if (p.gesamtpreis !== null && p.gesamtpreis !== undefined) return round2(Number(p.gesamtpreis));
   return berechneZeilenpreis(p.menge, p.einzelpreis, p.rabatt_prozent);

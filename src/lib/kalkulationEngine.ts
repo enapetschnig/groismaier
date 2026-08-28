@@ -1135,6 +1135,11 @@ export interface AngebotItem {
   /** Preistragende Sammelzeile der Gruppe (invoice_items.ist_gruppensumme). */
   ist_gruppensumme?: boolean;
   /**
+   * INFOPOSITION (Kundenwunsch 28.08.2026): optionaler Aufbau — Betrag steht
+   * am Beleg, zählt aber nicht in die Belegsumme (invoice_items.ist_info).
+   */
+  ist_info?: boolean;
+  /**
    * Interner €-Betrag einer Detailzeile (invoice_items.ek_preis). Detailzeilen
    * tragen gesamtpreis 0, damit die Belegsumme nicht doppelt zählt; ihr Wert
    * steht hier.
@@ -1191,9 +1196,10 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     if (gesamt <= 0) return;
     const m = z.module;
     const erg = z.ergebnis;
-    // Optionale Aufbauten sind im Angebot als solche zu erkennen (sie stecken
-    // — wie in der Projektsumme — mit vollem Betrag drin).
-    const name = (m.name || `Aufbau ${i + 1}`) + (m.isOptional ? " (optional)" : "");
+    // Optionale Aufbauten (Kundenwunsch 28.08.2026): Im Angebot steht vorne
+    // "INFOPOSITION", und die Sammelzeile zählt NICHT in die Belegsumme
+    // (ist_info — der Betrag bleibt an der Zeile sichtbar).
+    const name = (m.isOptional ? "INFOPOSITION: " : "") + (m.name || `Aufbau ${i + 1}`);
     // Zwei gleichnamige Aufbauten dürfen nicht in EINER Gruppe landen (dort
     // gäbe es sonst zwei Sammelzeilen). Der Gruppenname wird eindeutig gemacht.
     let gruppe = name;
@@ -1211,6 +1217,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         beschreibung: mitNotiz(name), menge: aufteilung.menge, einheit,
         einzelpreis: aufteilung.einzelpreis, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
+        ist_info: m.isOptional || undefined,
       });
     } else {
       // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
@@ -1223,6 +1230,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         beschreibung: mitNotiz(zeigeFlaeche ? `${name} (${fmt(flaeche)} m²)` : name),
         menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
+        ist_info: m.isOptional || undefined,
       });
     }
 
@@ -1353,7 +1361,10 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
 export const DAEMMSTAERKEN = [8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50];
 export const AUFSCHLAG_OPTIONEN = [2, 3, 4, 5];
 export const SKONTO_OPTIONEN = [2, 3];
-export const MAX_MODULE = 20;
+// Kundenwunsch 28.08.2026: "Ich kann nach dem 20. keinen weiteren Aufbau mehr
+// dazu geben — bitte ändern auf unbegrenzt." 999 ist praktisch unbegrenzt und
+// bleibt trotzdem ein Sicherheitsnetz gegen Endlosschleifen/Datenfehler.
+export const MAX_MODULE = 999;
 export const MAX_PAINT_MODULE = 20;
 export const INITIAL_MATERIAL_ROWS = 10;
 

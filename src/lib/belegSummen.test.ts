@@ -71,6 +71,19 @@ describe("Aufbau-Gruppen", () => {
   });
 });
 
+describe("INFOPOSITION (Kundenwunsch 28.08.2026)", () => {
+  it("zählt nicht in die Belegsumme, obwohl sie einen Betrag trägt", () => {
+    const info = pos({
+      beschreibung: "INFOPOSITION: Carport", gruppe: "INFOPOSITION: Carport",
+      ist_gruppensumme: true, ist_info: true, menge: 1, einzelpreis: 5000, gesamtpreis: 5000,
+    });
+    expect(zeilenBetrag(info)).toBe(0);
+    const s = belegSummen([pos({ menge: 1, einzelpreis: 10000, gesamtpreis: 10000 }), info], { mwst_satz: 20 });
+    expect(s.nettoSumme).toBeCloseTo(10000, 2);
+    expect(s.bruttoSumme).toBeCloseTo(12000, 2);
+  });
+});
+
 describe("Kopfrabatt", () => {
   const items = [pos({ menge: 1, einzelpreis: 100000, gesamtpreis: 100000 })];
 

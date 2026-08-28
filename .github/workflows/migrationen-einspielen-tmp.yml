@@ -56,61 +56,36 @@ jobs:
                   print(f"== {name}: FEHLER {e.code}: {body}")
                   raise
 
-          # 0) Wie wurden Migrationen bisher verbucht? (nur Info)
-          try:
-              hist = query("""
-                SELECT version, name FROM supabase_migrations.schema_migrations
-                 ORDER BY version DESC LIMIT 8
-              """, "Migrations-Historie")
-              print(json.dumps(hist, ensure_ascii=False, indent=1))
-          except Exception:
-              print("(keine supabase_migrations-Tabelle — Historie übersprungen)")
-
-          # 1) Stand der Wünsche VOR dem Einspielen (inkl. eventuell NEUER Meldungen)
-          vorher = query("""
-            SELECT w.id, w.created_at, w.art, w.status, w.seite, w.abschrift,
-                   w.text,
-                   COALESCE(p.vorname || ' ' || p.nachname, '') AS melder
-              FROM aenderungswuensche w
-              LEFT JOIN profiles p ON p.id = w.erstellt_von
-             ORDER BY w.created_at
-          """, "Wünsche vorher")
-          print("WUENSCHE_VORHER_JSON " + json.dumps(vorher, ensure_ascii=False))
-
-          # 2) Die zwei neuen Migrationen der Reihe nach ausführen
+          # 1) NUR die neue Migration ausführen — 20260828100000/110000 sind
+          #    bereits eingespielt (Lauf #2); die Neuerungen-Inserts dort
+          #    dürfen nicht doppelt laufen.
           for datei in (
-              "supabase/migrations/20260828100000_beleg_sendeprotokoll.sql",
-              "supabase/migrations/20260828110000_wuensche_2708_2808_abschliessen.sql",
+              "supabase/migrations/20260828130000_infoposition_und_wuensche_2808.sql",
           ):
               sql = open(datei, encoding="utf-8").read()
               query(sql, f"Migration {os.path.basename(datei)}")
 
-          # 3) In der Migrations-Historie verbuchen (falls es sie gibt), damit
-          #    ein späteres `supabase db push` die Dateien nicht doppelt fährt.
+          # 2) In der Migrations-Historie verbuchen (falls es sie gibt), damit
+          #    ein späteres `supabase db push` die Datei nicht doppelt fährt.
           query("""
             DO $$ BEGIN
               INSERT INTO supabase_migrations.schema_migrations(version, name)
-              VALUES ('20260828100000','beleg_sendeprotokoll') ON CONFLICT DO NOTHING;
-              INSERT INTO supabase_migrations.schema_migrations(version, name)
-              VALUES ('20260828110000','wuensche_2708_2808_abschliessen') ON CONFLICT DO NOTHING;
+              VALUES ('20260828130000','infoposition_und_wuensche_2808') ON CONFLICT DO NOTHING;
             EXCEPTION WHEN undefined_table OR insufficient_privilege OR undefined_column THEN NULL;
             END $$;
           """, "Historie verbuchen")
 
-          # 4) Kontrolle: Tabelle da? Wünsche geschlossen? Neuerungen drin?
+          # 3) Kontrolle: Spalte da? Marge gesetzt? Alle Wünsche beantwortet?
           tab = query("""
-            SELECT COUNT(*) AS spalten FROM information_schema.columns
-             WHERE table_schema='public' AND table_name='beleg_sendeprotokoll'
-          """, "Tabelle beleg_sendeprotokoll")
+            SELECT COUNT(*) AS ist_info_spalte FROM information_schema.columns
+             WHERE table_schema='public' AND table_name='invoice_items' AND column_name='ist_info'
+          """, "Spalte invoice_items.ist_info")
           print(json.dumps(tab))
+          marge = query("SELECT value FROM app_settings WHERE key='kalk_warn_marge_prozent'", "Margengrenze")
+          print(json.dumps(marge))
           nachher = query("""
             SELECT id, art, status, LEFT(COALESCE(antwort,''), 70) AS antwort
               FROM aenderungswuensche ORDER BY created_at
           """, "Wünsche nachher")
           print("WUENSCHE_NACHHER_JSON " + json.dumps(nachher, ensure_ascii=False))
-          neu = query("""
-            SELECT titel, aenderungswunsch_id IS NOT NULL AS verknuepft
-              FROM neuerungen ORDER BY created_at DESC LIMIT 10
-          """, "Neuerungen")
-          print("NEUERUNGEN_JSON " + json.dumps(neu, ensure_ascii=False))
           PY

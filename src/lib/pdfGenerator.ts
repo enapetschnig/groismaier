@@ -558,7 +558,19 @@ export async function generateInvoicePdf(
     // einfließen, sonst wäre der Aufbau doppelt verrechnet (und die Summe im
     // PDF wiche von der im Beleg-Editor / in der DB ab).
     if (istDetailOhneBetrag(item)) {
-      return { menge, einzelpreis: 0, rabattProz: 0, listenwert: 0, gesamt: 0, exempt: false };
+      return { menge, einzelpreis: 0, rabattProz: 0, listenwert: 0, gesamt: 0, exempt: false, infoWert: 0 };
+    }
+    // INFOPOSITION (Kundenwunsch 28.08.2026): Betrag sichtbar in Klammern,
+    // aber gesamt=0 — so bleibt er aus Netto/USt/Brutto und Übertrag draußen
+    // (zeilenBetrag liefert für ist_info ohnehin 0; listenwert 0 hält auch
+    // die Rabatt-Aufschlüsselung im Summenblock sauber).
+    if ((item as any).ist_info) {
+      const einzelpreisInfo = r2(Number(item.einzelpreis) || 0);
+      return {
+        menge, einzelpreis: einzelpreisInfo, rabattProz: 0, listenwert: 0,
+        gesamt: 0, exempt: false,
+        infoWert: r2(Number(item.gesamtpreis) || menge * einzelpreisInfo),
+      };
     }
     const einzelpreis = r2(Number(item.einzelpreis) || 0);
     const listenwert = r2(menge * einzelpreis);
@@ -576,6 +588,7 @@ export async function generateInvoicePdf(
       listenwert,
       gesamt,
       exempt: !!(item as any).mwst_exempt,
+      infoWert: 0,
     };
   });
 
@@ -684,6 +697,11 @@ export async function generateInvoicePdf(
       row.push("");
       if (hatRabattSpalte) row.push("");
       row.push(mengeText, "");
+    } else if ((item as any).ist_info) {
+      // INFOPOSITION: Betrag in Klammern — steht am Beleg, zählt nicht mit.
+      row.push(fmtCurrency(p.einzelpreis));
+      if (hatRabattSpalte) row.push("—");
+      row.push(mengeText, `(${fmtCurrency(p.infoWert)})`);
     } else {
       row.push(fmtCurrency(p.einzelpreis));
       if (hatRabattSpalte) row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");

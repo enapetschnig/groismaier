@@ -165,6 +165,12 @@ interface InvoiceItem {
   auf_pdf?: boolean;
   ist_gruppensumme?: boolean;
   /**
+   * INFOPOSITION (Kundenwunsch 28.08.2026): optionaler Aufbau aus der
+   * Kalkulation — der Betrag steht sichtbar an der Zeile, zählt aber nicht
+   * in die Belegsumme (siehe zeilenBetrag in belegSummen.ts).
+   */
+  ist_info?: boolean;
+  /**
    * Projektbereich (Sammelangebot aus mehreren Kalkulationen, 24.08.2026):
    * Name der Quell-Kalkulation. Das PDF gruppiert danach — fette Bereichs-
    * Überschrift, Zwischensumme je Bereich, neue Seite je Bereich.
@@ -216,6 +222,9 @@ const istDetailzeile = (it: Pick<InvoiceItem, "gruppe" | "ist_gruppensumme">): b
 const selbstkostenVon = (it: InvoiceItem): number => {
   const ek = Number(it.ek_preis) || 0;
   if (ek <= 0) return 0;
+  // INFOPOSITION: zählt nicht in die Belegsumme — ihre Kosten fallen erst an,
+  // wenn der Kunde die Option nimmt. Sonst drückte die Zeile die Marge.
+  if (it.ist_info) return 0;
   if (it.ist_gruppensumme) return round2(ek);
   if (istDetailzeile(it)) return 0;
   if (it.ist_kalkuliert) {
@@ -252,7 +261,7 @@ const mitSelbstkosten = (angebotItems: AngebotItem[], projekt: ProjektErgebnis):
   });
 };
 
-const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme", "bereich"] as const;
+const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme", "bereich", "ist_info"] as const;
 /** Insert scheiterte NUR an den (noch) fehlenden Gruppen-Spalten? */
 const isGruppenSpaltenFehlen = (err: any): boolean =>
   typeof err?.message === "string" &&
@@ -1780,6 +1789,7 @@ export default function InvoiceDetail() {
         gruppe: (it as any).gruppe || null,
         auf_pdf: (it as any).auf_pdf !== false,
         ist_gruppensumme: !!(it as any).ist_gruppensumme,
+        ist_info: !!(it as any).ist_info,
         bereich: (it as any).bereich || null,
       }));
 
@@ -1979,6 +1989,7 @@ export default function InvoiceDetail() {
               gruppe: it.gruppe ? String(it.gruppe) : null,
               auf_pdf: it.auf_pdf !== false,
               ist_gruppensumme: !!it.ist_gruppensumme,
+              ist_info: !!(it as any).ist_info,
               // Interner Wert der Detailzeilen (Material-EK, Lohn, Fahrt …) —
               // steht in ek_preis, damit die Belegsumme unberührt bleibt.
               ek_preis: Number(it.ek_preis) || 0,
@@ -2320,6 +2331,7 @@ export default function InvoiceDetail() {
         gruppe: (it as any).gruppe || null,
         auf_pdf: (it as any).auf_pdf !== false,
         ist_gruppensumme: !!(it as any).ist_gruppensumme,
+        ist_info: !!(it as any).ist_info,
         bereich: (it as any).bereich || null,
       })));
     }
@@ -3699,6 +3711,7 @@ export default function InvoiceDetail() {
         gruppe: gruppeVon(item) || null,
         auf_pdf: istSichtbar(item),
         ist_gruppensumme: !!item.ist_gruppensumme,
+        ist_info: !!item.ist_info,
         bereich: item.bereich || null,
       }));
 
@@ -4344,6 +4357,7 @@ export default function InvoiceDetail() {
         gruppe: gruppeVon(item) || null,
         auf_pdf: istSichtbar(item),
         ist_gruppensumme: !!(item as any).ist_gruppensumme,
+        ist_info: !!(item as any).ist_info,
         bereich: item.bereich || null,
       }));
 
@@ -4849,6 +4863,7 @@ export default function InvoiceDetail() {
     gruppe: gruppeVon(item) || null,
     auf_pdf: istSichtbar(item),
     ist_gruppensumme: !!item.ist_gruppensumme,
+    ist_info: !!item.ist_info,
     bereich: item.bereich || null,
   }));
 
@@ -7546,6 +7561,11 @@ export default function InvoiceDetail() {
                               Sammelzeile
                             </Badge>
                           )}
+                          {!!r.item.ist_info && (
+                            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-amber-400 text-amber-700 bg-white" title="Der Betrag steht am Beleg, zählt aber nicht zur Belegsumme">
+                              INFOPOSITION — zählt nicht zur Summe
+                            </Badge>
+                          )}
                           {r.istDetail && (
                             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 text-muted-foreground bg-white">
                               {r.sichtbar ? "Kunde sieht das" : "nur intern"}
@@ -7735,6 +7755,11 @@ export default function InvoiceDetail() {
                         {r.istSumme && (
                           <span className="mb-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-primary">
                             Sammelzeile — Betrag des Aufbaus
+                          </span>
+                        )}
+                        {!!r.item.ist_info && (
+                          <span className="mb-1 ml-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-amber-700" title="Der Betrag steht am Beleg, zählt aber nicht zur Belegsumme">
+                            Infoposition — zählt nicht zur Summe
                           </span>
                         )}
                         {r.istDetail && (
@@ -9036,6 +9061,7 @@ export default function InvoiceDetail() {
               // Aufbau-Zugehörigkeit erhalten — siehe Kommentar im Dialog.
               gruppe: item.gruppe ?? null,
               ist_gruppensumme: !!item.ist_gruppensumme,
+              ist_info: !!(item as any).ist_info,
               auf_pdf: item.auf_pdf !== false,
             }));
             setItemsDirty(prev => mergeItems(prev, newItems));

@@ -97,6 +97,8 @@ export interface ERechnungItem {
   gesamtpreis: number;
   /** true = Anzahlungs-Abzugszeile (brutto, MwSt-frei) — wird zu PrepaidAmount. */
   mwst_exempt?: boolean;
+  /** INFOPOSITION: zählt nicht in die Belegsumme — kommt nicht in die E-Rechnung. */
+  ist_info?: boolean;
   produktnummer?: string;
 }
 
@@ -147,7 +149,9 @@ export function buildEbInterfaceXml(
   if (!biller.uid?.trim()) throw new Error("Eigene Firmen-UID fehlt — bitte im Admin-Bereich → Rechnungslayout hinterlegen.");
 
   // Nur echte Leistungs-Zeilen; Anzahlungs-Abzüge separat als PrepaidAmount.
-  const zeilen = items.filter((it) => !it.mwst_exempt && Math.abs(Number(it.gesamtpreis) || 0) > 0.004);
+  // INFOPOSITIONEN (zählen nicht zur Belegsumme) bleiben komplett draußen —
+  // eine E-Rechnung mit unverbindlichen Optionszeilen ginge nicht auf.
+  const zeilen = items.filter((it) => !it.mwst_exempt && !it.ist_info && Math.abs(Number(it.gesamtpreis) || 0) > 0.004);
   if (zeilen.length === 0) throw new Error("Keine betragstragenden Positionen vorhanden.");
   const prepaid = round2(Math.abs(items
     .filter((it) => it.mwst_exempt)

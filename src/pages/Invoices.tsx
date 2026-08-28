@@ -463,6 +463,7 @@ export default function Invoices() {
           gruppe: it.gruppe || null,
           auf_pdf: it.auf_pdf !== false,
           ist_gruppensumme: !!it.ist_gruppensumme,
+          ist_info: !!(it as any).ist_info,
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout
@@ -543,6 +544,7 @@ export default function Invoices() {
           gruppe: it.gruppe || null,
           auf_pdf: it.auf_pdf !== false,
           ist_gruppensumme: !!it.ist_gruppensumme,
+          ist_info: !!(it as any).ist_info,
           mwst_exempt: !!(it as any).mwst_exempt,
         })),
         bank, logoUri, qrUri, firmenUid, invoiceLayout

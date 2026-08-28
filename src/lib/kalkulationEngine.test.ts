@@ -391,4 +391,19 @@ describe("Angebots-Einheit je Aufbau (Kundenwunsch 26.08.2026)", () => {
     const werte = [gesamt(undefined), gesamt("auto"), gesamt("pauschal"), gesamt("m²"), gesamt("Stk.")];
     for (const w of werte) expect(round2(w)).toBeCloseTo(round2(werte[0]), 2);
   });
+
+  it("optionaler Aufbau wird zur INFOPOSITION (Kundenwunsch 28.08.2026)", () => {
+    const summe = items(bauAufbau({ isOptional: true })).find((i) => i.ist_gruppensumme)!;
+    expect(summe.beschreibung.startsWith("INFOPOSITION: ")).toBe(true);
+    expect(summe.ist_info).toBe(true);
+    // Der Betrag bleibt an der Zeile stehen — nur die Belegsumme (belegSummen)
+    // lässt ihn aus.
+    expect(summe.gesamtpreis).toBeCloseTo(2600, 2);
+  });
+
+  it("nicht-optionale Aufbauten bleiben ohne ist_info", () => {
+    const summe = items(bauAufbau({})).find((i) => i.ist_gruppensumme)!;
+    expect(summe.ist_info).toBeFalsy();
+    expect(summe.beschreibung.includes("INFOPOSITION")).toBe(false);
+  });
 });
