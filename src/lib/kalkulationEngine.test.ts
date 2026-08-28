@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   calcMaterialRow, calcLohnkosten, calcLohnSelbstkosten, calcArbeitsstunden,
+  calcFahrtkosten, calcTransport,
   istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
   zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
   buildAngebotItems, calcProjekt, newEmptyState, newMaterialRow, newModule,
@@ -187,6 +188,36 @@ describe("Lohn", () => {
     const verdienst = calcLohnkosten(2, 5, bd) - calcLohnSelbstkosten(2, 5, bd);
     expect(verdienst).toBeGreaterThan(0);
     expect(verdienst).toBeCloseTo(2 * 5 * bd.stundenProTag * (bd.mittellohn - bd.selbstkostenLohn), 2);
+  });
+});
+
+describe("Fahrten (Kundenwunsch 27.08.2026: Festbetrag / Mindestbetrag)", () => {
+  it("km-Staffel wie bisher: (frei × Satz + Maut-km × Mautsatz) × 2 × Anzahl", () => {
+    // 60 km bei 55 mautfreien: (55 × 0,8 + 5 × 1,25) × 2 × 2 Fahrten
+    expect(calcFahrtkosten(60, 2, bd.busKm, bd.busKmMaut, bd.mautFreiKm))
+      .toBeCloseTo((55 * 0.8 + 5 * 1.25) * 2 * 2, 2);
+  });
+
+  it("Mindestbetrag je Fahrt greift bei kurzen Strecken", () => {
+    // 6 km Bus: 6 × 0,8 × 2 = 9,60 € je Fahrt → Mindestbetrag 30 € gewinnt.
+    expect(calcFahrtkosten(6, 2, bd.busKm, bd.busKmMaut, bd.mautFreiKm, 30)).toBeCloseTo(60, 2);
+    // Lange Strecke bleibt unberührt vom Mindestbetrag.
+    expect(calcFahrtkosten(100, 1, bd.busKm, bd.busKmMaut, bd.mautFreiKm, 30))
+      .toBeCloseTo(calcFahrtkosten(100, 1, bd.busKm, bd.busKmMaut, bd.mautFreiKm), 2);
+  });
+
+  it("Festbetrag des Aufbaus ersetzt die km-Rechnung komplett", () => {
+    const t = calcTransport({ distanceKM: 6, busTrips: 2, lkwTrips: 1, fahrtenFest: 150 }, bd);
+    expect(t.total).toBe(150);
+    expect(t.pauschal).toBe(true);
+    expect(t.bus).toBe(0);
+    expect(t.lkw).toBe(0);
+  });
+
+  it("ohne Festbetrag rechnet der Aufbau wie bisher", () => {
+    const t = calcTransport({ distanceKM: 6, busTrips: 2, lkwTrips: 0, fahrtenFest: 0 }, bd);
+    expect(t.pauschal).toBeFalsy();
+    expect(t.total).toBeCloseTo(6 * bd.busKm * 2 * 2, 2);
   });
 });
 

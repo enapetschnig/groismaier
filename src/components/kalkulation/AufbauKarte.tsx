@@ -217,6 +217,19 @@ export function AufbauKarte({
                     <NumInput min={0} value={m.lkwTrips} onCommit={(n) => onPatch({ lkwTrips: n ?? 0 })} className={FELD_H} />
                   </Feld>
                 </div>
+                {/* Festbetrag (Kundenwunsch 27.08.2026): Bei kurzen Strecken
+                    kommt mit der km-Staffel zu wenig raus — ein eingetragener
+                    Betrag ersetzt die km-Rechnung dieses Aufbaus komplett. */}
+                <div className="mt-2">
+                  <Feld label="Festbetrag Fahrten € (statt km-Rechnung, leer = aus)">
+                    <NumInput min={0} value={m.fahrtenFest} onCommit={(n) => onPatch({ fahrtenFest: n ?? 0 })} className={FELD_H} />
+                  </Feld>
+                  {erg.transport.pauschal && (
+                    <div className="mt-0.5 text-[10px] font-medium text-amber-700">
+                      Festbetrag aktiv — km, Bus- und LKW-Fahrten werden nicht gerechnet.
+                    </div>
+                  )}
+                </div>
                 <div className="mt-1 text-right text-[11px]">Summe Fahrten: <b className="tabular-nums">{fmtEuro(erg.transport.total)}</b></div>
               </div>
 

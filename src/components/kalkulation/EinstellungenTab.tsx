@@ -40,6 +40,11 @@ const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_fahrt_lkw", label: "LKW-Kosten pro km (€)" },
   { key: "kalk_fahrt_lkw_maut", label: "LKW-Kosten pro km, Maut (€)" },
   {
+    key: "kalk_fahrt_mindest",
+    label: "Mindestbetrag je Fahrt (€)",
+    hinweis: "Bei kurzen Strecken ergibt die km-Rechnung zu wenig — jede Hin- und Rückfahrt (Bus oder LKW) zählt mindestens mit diesem Betrag. Leer/0 = aus.",
+  },
+  {
     key: "kalk_riegel_lfm_pro_m2",
     label: "Riegel: Laufmeter je m² Wand (lfm)",
     hinweis: "KVH-Preis je m² = lfm × Brettdicke × Wanddicke (Dämmstärke) × m³-Preis × Aufschlag. 3,5 lfm inkl. Verschnitt und Querhölzern.",

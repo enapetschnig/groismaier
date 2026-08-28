@@ -346,6 +346,15 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       {row.manual && (
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-amber-700">
           <span>✏️ Pauschale: EK/VK gelten GESAMT — ohne × Fläche ({fmt(num(m.area))} m²).</span>
+          {/* Meldung 28.08.: KVH mit 485 €/m³ stand als Pauschale in der Zeile —
+              der m³-Preis zählte still nur EINMAL. Deutlich machen, dass der
+              Katalogpreis je m³ gilt, die Pauschale aber keine Menge kennt. */}
+          {istVolumenEinheit(row.einheit) && (
+            <span className="font-semibold">
+              Achtung: Katalogpreis gilt je {row.einheit} — als Pauschale zählt der Betrag nur einmal,
+              nicht × Menge. Für Holz nach Volumen besser „Holz berechnen" verwenden.
+            </span>
+          )}
           <button
             type="button"
             className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold hover:bg-amber-200"

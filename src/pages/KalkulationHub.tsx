@@ -120,6 +120,16 @@ export default function KalkulationHub() {
   const [bvWechselKunde, setBvWechselKunde] = useState<string | null>(null);
   const [bvWechselLaeuft, setBvWechselLaeuft] = useState(false);
 
+  // Ordner-Aktionen (Kundenwunsch 27.08.2026: "Ich kann hier nichts
+  // verändern, z.B. einen Ordner löschen oder umbenennen"). Der Ordnername
+  // IST der Kundenname — Umbenennen ändert den Kunden, Löschen entfernt die
+  // Kalkulationen im Ordner (der Kunde bleibt bestehen).
+  const [bvRename, setBvRename] = useState<{ customerId: string; titel: string } | null>(null);
+  const [bvRenameName, setBvRenameName] = useState("");
+  const [bvRenaming, setBvRenaming] = useState(false);
+  const [bvDelete, setBvDelete] = useState<{ key: string; titel: string; rows: KalkRow[] } | null>(null);
+  const [bvDeleting, setBvDeleting] = useState(false);
+
   // Umbenennen (Vorlage)
   const [renameRow, setRenameRow] = useState<KalkRow | null>(null);
   const [renameName, setRenameName] = useState("");
@@ -423,6 +433,39 @@ export default function KalkulationHub() {
     load();
   };
 
+  const ordnerUmbenennen = async () => {
+    if (!bvRename) return;
+    const neu = bvRenameName.trim();
+    if (!neu) {
+      toast({ variant: "destructive", title: "Name fehlt", description: "Bitte einen Namen angeben." });
+      return;
+    }
+    setBvRenaming(true);
+    const { error } = await supabase.from("customers").update({ name: neu }).eq("id", bvRename.customerId);
+    setBvRenaming(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: `Umbenennen fehlgeschlagen: ${error.message}` });
+      return;
+    }
+    toast({ title: "Umbenannt", description: `Der Kunde heißt jetzt „${neu}" — der Ordner und alle Stellen mit diesem Kunden zeigen den neuen Namen.` });
+    setBvRename(null);
+    load();
+  };
+
+  const ordnerLoeschen = async () => {
+    if (!bvDelete) return;
+    setBvDeleting(true);
+    const { error } = await kalkTable().delete().in("id", bvDelete.rows.map((r) => r.id));
+    setBvDeleting(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: `Löschen fehlgeschlagen: ${error.message}` });
+      return;
+    }
+    toast({ title: "Ordner geleert", description: `${bvDelete.rows.length} Kalkulation${bvDelete.rows.length === 1 ? "" : "en"} gelöscht. Der Kunde selbst bleibt bestehen.` });
+    setBvDelete(null);
+    load();
+  };
+
   const renderCard = (r: KalkRow) => (
     <Card
       key={r.id}
@@ -482,6 +525,9 @@ export default function KalkulationHub() {
                 </>
               ) : (
                 <>
+                  <DropdownMenuItem onClick={() => { setRenameRow(r); setRenameName(r.name); }}>
+                    <Pencil className="h-4 w-4 mr-2" /> Umbenennen
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => { setBvWechselRow(r); setBvWechselKunde(r.customer_id); }}>
                     <FolderOpen className="h-4 w-4 mr-2" /> Bauvorhaben ändern
                   </DropdownMenuItem>
@@ -621,6 +667,32 @@ export default function KalkulationHub() {
                         {bv.rows.length} Kalkulation{bv.rows.length === 1 ? "" : "en"} · zuletzt {fmtDate(bv.letzte)}
                       </CardDescription>
                     </div>
+                    {/* Ordner-Aktionen (Kundenwunsch 27.08.2026) */}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost" size="icon"
+                          className="h-11 w-11 shrink-0 text-muted-foreground sm:h-8 sm:w-8"
+                          onClick={(e) => e.stopPropagation()}
+                          title="Ordner-Aktionen"
+                        >
+                          <MoreVertical className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                        {bv.key !== OHNE_KUNDE && (
+                          <DropdownMenuItem onClick={() => { setBvRename({ customerId: bv.key, titel: bv.titel }); setBvRenameName(bv.titel); }}>
+                            <Pencil className="h-4 w-4 mr-2" /> Ordner umbenennen
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuItem
+                          className="text-destructive focus:text-destructive"
+                          onClick={() => setBvDelete({ key: bv.key, titel: bv.titel, rows: bv.rows })}
+                        >
+                          <Trash2 className="h-4 w-4 mr-2" /> Ordner löschen
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </CardHeader>
                 <CardContent className="mt-auto">
@@ -835,7 +907,7 @@ export default function KalkulationHub() {
       {/* Umbenennen Dialog */}
       <Dialog open={!!renameRow} onOpenChange={(o) => !o && setRenameRow(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Vorlage umbenennen</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{renameRow?.ist_vorlage ? "Vorlage umbenennen" : "Kalkulation umbenennen"}</DialogTitle></DialogHeader>
           <div className="space-y-1.5 py-2">
             <Label htmlFor="rename-name">Name *</Label>
             <Input
@@ -866,6 +938,54 @@ export default function KalkulationHub() {
           <AlertDialogFooter>
             <AlertDialogCancel>Abbrechen</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Löschen</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Ordner umbenennen (Kundenwunsch 27.08.2026) */}
+      <Dialog open={!!bvRename} onOpenChange={(o) => !o && setBvRename(null)}>
+        <DialogContent>
+          <DialogHeader><DialogTitle>Ordner umbenennen</DialogTitle></DialogHeader>
+          <div className="space-y-1.5 py-2">
+            <Label htmlFor="bv-rename-name">Name *</Label>
+            <Input
+              id="bv-rename-name" autoFocus value={bvRenameName} onChange={(e) => setBvRenameName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") ordnerUmbenennen(); }}
+            />
+            <p className="text-xs text-muted-foreground">
+              Der Ordnername ist der Kundenname — Umbenennen ändert den Kunden überall
+              (auch auf Belegen, die den Kunden neu laden).
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBvRename(null)}>Abbrechen</Button>
+            <Button onClick={ordnerUmbenennen} disabled={bvRenaming}>
+              {bvRenaming ? "Wird gespeichert …" : "Speichern"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ordner löschen (Kundenwunsch 27.08.2026) */}
+      <AlertDialog open={!!bvDelete} onOpenChange={(o) => !o && setBvDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ordner „{bvDelete?.titel}" löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {bvDelete && (
+                <>
+                  Dabei {bvDelete.rows.length === 1 ? "wird die enthaltene Kalkulation" : `werden alle ${bvDelete.rows.length} enthaltenen Kalkulationen`} dauerhaft
+                  gelöscht: {bvDelete.rows.map((r) => `„${r.name}"`).join(", ")}. Der Kunde selbst bleibt bestehen.
+                  Das kann nicht rückgängig gemacht werden.
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction onClick={ordnerLoeschen} disabled={bvDeleting} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {bvDeleting ? "Löscht …" : "Ordner löschen"}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

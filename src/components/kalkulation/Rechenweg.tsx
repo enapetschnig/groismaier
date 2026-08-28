@@ -78,6 +78,11 @@ export function Rechenweg({ m, erg, bd, faktor }: Props) {
     const teil = maut > 0
       ? `(${fmt(frei)} km × ${fmt(satz)} € + ${fmt(maut)} km × ${fmt(satzMaut)} € Maut)`
       : `${fmt(km)} km × ${fmt(satz)} €`;
+    // Greift der Mindestbetrag je Fahrt, zählt er statt der km-Staffel.
+    const jeFahrt = (frei * satz + maut * satzMaut) * 2;
+    if (bd.fahrtMindest > 0 && jeFahrt < bd.fahrtMindest) {
+      return `${teil} × 2 (hin+retour) < Mindestbetrag → ${fmt(bd.fahrtMindest)} € je Fahrt × ${fmt(anzahl)} Fahrten`;
+    }
     return `${teil} × 2 (hin+retour) × ${fmt(anzahl)} Fahrten`;
   };
 
@@ -106,6 +111,9 @@ export function Rechenweg({ m, erg, bd, faktor }: Props) {
               formel={`${fmt(num(m.days))} Tage × ${fmt(bd.stundenProTag)} h × ${fmt(num(m.workers))} Arbeiter × ${fmt(bd.mittellohn)} €/h`}
               betrag={erg.laborCosts}
             />
+          )}
+          {erg.transport.pauschal && (
+            <Schritt titel="Fahrten" formel="Festbetrag (ersetzt die km-Rechnung)" betrag={erg.transport.total} />
           )}
           {erg.transport.bus > 0 && (
             <Schritt titel="Busfahrten" formel={fahrtFormel(num(m.busTrips), bd.busKm, bd.busKmMaut)} betrag={erg.transport.bus} />

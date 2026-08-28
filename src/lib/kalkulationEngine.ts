@@ -145,6 +145,13 @@ export interface KalkModule {
   distanceKM: number;
   busTrips: number;
   lkwTrips: number;
+  /**
+   * Fahrten-Festbetrag € (Kundenwunsch 27.08.2026): > 0 ersetzt die
+   * km-Rechnung des Aufbaus komplett — für kurze Strecken, wo die
+   * km-Staffel zu wenig ergibt. 0/fehlend = km-Rechnung wie bisher
+   * (optional, damit alte Blobs und Tests ohne das Feld gültig bleiben).
+   */
+  fahrtenFest?: number;
   craneHours: number;
   shippingCosts: number;      // Speditionskosten €
   paintCosts: number;         // "Lohnabdunst Kosten" € (Label wörtlich aus Excel/HTML)
@@ -201,6 +208,8 @@ export interface Betriebsdaten {
   busKmMaut: number;
   lkwKm: number;
   lkwKmMaut: number;
+  /** Mindestbetrag je Fahrt (hin & retour) in € — 0 = aus. */
+  fahrtMindest: number;
   kranSatz: number;          // € / h
   riegelLfmProM2: number;    // Riegel-Laufmeter je m² Wand (inkl. Verschnitt/Querhölzer)
   riegelBrettDicke: number;  // Dicke der Riegelbretter in cm
@@ -224,6 +233,7 @@ export const DEFAULT_BETRIEBSDATEN: Betriebsdaten = {
   busKmMaut: 1.25,
   lkwKm: 1.2,
   lkwKmMaut: 1.85,
+  fahrtMindest: 0,
   kranSatz: 180,
   riegelLfmProM2: 3.5,
   riegelBrettDicke: 6,
@@ -259,6 +269,7 @@ const SETTINGS_KEY_MAP: Record<string, keyof Betriebsdaten> = {
   kalk_fahrt_bus_maut: "busKmMaut",
   kalk_fahrt_lkw: "lkwKm",
   kalk_fahrt_lkw_maut: "lkwKmMaut",
+  kalk_fahrt_mindest: "fahrtMindest",
   kalk_kran_stundensatz: "kranSatz",
   kalk_riegel_lfm_pro_m2: "riegelLfmProM2",
   kalk_riegel_brett_dicke: "riegelBrettDicke",
@@ -285,6 +296,7 @@ const BUSINESS_DATA_KEYS: Record<keyof Betriebsdaten, string> = {
   busKmMaut: "Bus-Kosten pro km (Maut)",
   lkwKm: "LKW-Kosten pro km",
   lkwKmMaut: "LKW-Kosten pro km (Maut)",
+  fahrtMindest: "Mindestbetrag je Fahrt",
   kranSatz: "Krankosten pro Stunde",
   riegelLfmProM2: "Riegel-Laufmeter je m²",
   riegelBrettDicke: "Dicke der Riegelbretter",
@@ -353,22 +365,36 @@ export function resolveLackSaetze(appSettings: Record<string, string> | undefine
  * Fahrtkosten-Staffel (Excel calcTransportCosts / HTML j):
  *   ((min(km,mautfrei) × satz) + ((km − min(km,mautfrei)) × satzMaut)) × 2 × anzahl
  * ×2 = Hin- und Rückfahrt.
+ * mindestJeFahrt (Kundenwunsch 27.08.2026): Bei kurzen Strecken kommt mit der
+ * km-Staffel zu wenig heraus — jede Hin- und Rückfahrt zählt mindestens mit
+ * diesem Betrag. 0 = aus.
  */
 export function calcFahrtkosten(
   km: number, anzahl: number, satz: number, satzMaut: number, mautFreiKm: number,
+  mindestJeFahrt = 0,
 ): number {
   const k = num(km); const n = num(anzahl);
   if (k <= 0 || n <= 0) return 0;
   const frei = Math.min(k, num(mautFreiKm));
   const maut = k - frei;
-  return (frei * satz + maut * satzMaut) * 2 * n;
+  const jeFahrt = Math.max((frei * satz + maut * satzMaut) * 2, num(mindestJeFahrt));
+  return jeFahrt * n;
 }
 
-export interface TransportErgebnis { bus: number; lkw: number; total: number }
+export interface TransportErgebnis {
+  bus: number;
+  lkw: number;
+  total: number;
+  /** true: der Festbetrag des Aufbaus ersetzt die km-Rechnung. */
+  pauschal?: boolean;
+}
 
-export function calcTransport(m: Pick<KalkModule, "distanceKM" | "busTrips" | "lkwTrips">, bd: Betriebsdaten): TransportErgebnis {
-  const bus = calcFahrtkosten(m.distanceKM, m.busTrips, bd.busKm, bd.busKmMaut, bd.mautFreiKm);
-  const lkw = calcFahrtkosten(m.distanceKM, m.lkwTrips, bd.lkwKm, bd.lkwKmMaut, bd.mautFreiKm);
+export function calcTransport(m: Pick<KalkModule, "distanceKM" | "busTrips" | "lkwTrips" | "fahrtenFest">, bd: Betriebsdaten): TransportErgebnis {
+  // Festbetrag (Kundenwunsch 27.08.2026): ersetzt die km-Rechnung komplett.
+  const fest = num(m.fahrtenFest);
+  if (fest > 0) return { bus: 0, lkw: 0, total: fest, pauschal: true };
+  const bus = calcFahrtkosten(m.distanceKM, m.busTrips, bd.busKm, bd.busKmMaut, bd.mautFreiKm, bd.fahrtMindest);
+  const lkw = calcFahrtkosten(m.distanceKM, m.lkwTrips, bd.lkwKm, bd.lkwKmMaut, bd.mautFreiKm, bd.fahrtMindest);
   return { bus, lkw, total: bus + lkw };
 }
 
@@ -1291,8 +1317,13 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     const km = num(m.distanceKM);
     const busTrips = num(m.busTrips);
     const lkwTrips = num(m.lkwTrips);
-    detail(`Anfahrt Bus (${kurzZahl(busTrips)} × ${kurzZahl(km)} km)`, erg.transport.bus * faktor, busTrips, "Fahrt");
-    detail(`Anfahrt LKW (${kurzZahl(lkwTrips)} × ${kurzZahl(km)} km)`, erg.transport.lkw * faktor, lkwTrips, "Fahrt");
+    if (erg.transport.pauschal) {
+      // Festbetrag ersetzt die km-Rechnung (Kundenwunsch 27.08.2026).
+      detail("Anfahrt (Pauschale)", erg.transport.total * faktor);
+    } else {
+      detail(`Anfahrt Bus (${kurzZahl(busTrips)} × ${kurzZahl(km)} km)`, erg.transport.bus * faktor, busTrips, "Fahrt");
+      detail(`Anfahrt LKW (${kurzZahl(lkwTrips)} × ${kurzZahl(km)} km)`, erg.transport.lkw * faktor, lkwTrips, "Fahrt");
+    }
 
     // Eingekaufte Dienstleistungen
     const kranStunden = num(m.craneHours);
@@ -1339,7 +1370,7 @@ export function newModule(id: number): KalkModule {
     area: 0, wallHeight: 0,
     insulationThickness: 20, isOptional: false, collapsed: false,
     materialRows: Array.from({ length: INITIAL_MATERIAL_ROWS }, newMaterialRow),
-    workers: 0, days: 0, distanceKM: 0, busTrips: 0, lkwTrips: 0,
+    workers: 0, days: 0, distanceKM: 0, busTrips: 0, lkwTrips: 0, fahrtenFest: 0,
     craneHours: 0, shippingCosts: 0, paintCosts: 0, miscCosts: 0,
     nachkalk: { actualDays: null },
   };
@@ -1452,6 +1483,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         distanceKM: num(m.distanceKM),
         busTrips: num(m.busTrips),
         lkwTrips: num(m.lkwTrips),
+        fahrtenFest: num(m.fahrtenFest),
         craneHours: num(m.craneHours),
         shippingCosts: num(m.shippingCosts),
         paintCosts: num(m.paintCosts),
