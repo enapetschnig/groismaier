@@ -106,17 +106,28 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
     const newItems: ImportItem[] = [];
     const geladene: Disturbance[] = [];
     const kundenNamen = new Set<string>();
+    // Zeit-Zeilen, deren Beschreibung nach dem Namens-Nachladen noch die
+    // beteiligten Mitarbeiter bekommt: Item-Index -> user_ids.
+    const zeitZeilenMitarbeiter = new Map<number, string[]>();
 
     // Reihenfolge beibehalten: nacheinander laden (max. ~50 Berichte in der Liste).
     for (const id of ids) {
-      const [{ data: dist }, { data: materials }, { data: maschinen }] = await Promise.all([
+      const [{ data: dist }, { data: materials }, { data: maschinen }, { data: workers }] = await Promise.all([
         supabase.from("disturbances").select("id, datum, kunde_name, kunde_email, kunde_adresse, kunde_plz, kunde_ort, kunde_telefon, stunden, beschreibung, is_verrechnet, start_time, end_time").eq("id", id).single(),
         supabase.from("disturbance_materials").select("material, menge, einheit, einzelpreis").eq("disturbance_id", id),
         (supabase.from("disturbance_maschinen" as never) as any).select("maschine, menge, einheit, einzelpreis").eq("disturbance_id", id),
+        supabase.from("disturbance_workers").select("user_id").eq("disturbance_id", id),
       ]);
       if (!dist) continue;
       geladene.push(dist as any);
       if (dist.kunde_name) kundenNamen.add(dist.kunde_name.trim());
+
+      // Jeder beteiligte Mitarbeiter hat die Berichtsstunden selbst geleistet
+      // (die Zeiterfassung bucht sie pro Kopf) — die Rechnung muss also
+      // Stunden × Mitarbeiter ausweisen, nicht nur die Stunden des Erstellers.
+      // Alte Berichte ohne Mitarbeiter-Zeilen zählen wie bisher einfach.
+      const workerIds = (workers || []).map((w) => w.user_id);
+      const anzahl = Math.max(1, workerIds.length);
 
       // Bei einer Sammelrechnung bekommt jeder Bericht eine Titelzeile,
       // damit am Beleg erkennbar bleibt, was zu welchem Einsatz gehört.
@@ -131,14 +142,18 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
         });
       }
 
+      const zeitBeschreibung =
+        `Arbeitszeit Regiebericht ${format(new Date(dist.datum), "dd.MM.yyyy")} (${dist.start_time?.slice(0, 5)} - ${dist.end_time?.slice(0, 5)})` +
+        (anzahl > 1 ? `, ${anzahl} Mitarbeiter à ${Number(dist.stunden)} Std.` : "");
       newItems.push({
-        beschreibung: `Arbeitszeit Regiebericht ${format(new Date(dist.datum), "dd.MM.yyyy")} (${dist.start_time?.slice(0, 5)} - ${dist.end_time?.slice(0, 5)})`,
-        menge: Number(dist.stunden),
+        beschreibung: zeitBeschreibung,
+        menge: Number(dist.stunden) * anzahl,
         einheit: "Std.",
         einzelpreis: satz,
         selected: true,
         source: "zeit",
       });
+      if (anzahl > 1) zeitZeilenMitarbeiter.set(newItems.length - 1, workerIds);
 
       (materials || []).forEach(m => {
         newItems.push({
@@ -166,6 +181,19 @@ export function ImportDisturbanceToInvoiceDialog({ open, onClose, onImport, pres
           source: "maschine",
         });
       });
+    }
+
+    // Namen der beteiligten Mitarbeiter in die Zeit-Zeilen schreiben, damit
+    // am Beleg nachvollziehbar bleibt, wessen Stunden verrechnet werden.
+    // Scheitert das Nachladen, bleibt die Anzahl trotzdem korrekt.
+    if (zeitZeilenMitarbeiter.size > 0) {
+      const alleIds = [...new Set([...zeitZeilenMitarbeiter.values()].flat())];
+      const { data: profile } = await supabase.from("profiles").select("id, vorname, nachname").in("id", alleIds);
+      const nameVon = new Map((profile || []).map((p) => [p.id, `${p.vorname || ""} ${p.nachname || ""}`.trim()]));
+      for (const [idx, userIds] of zeitZeilenMitarbeiter) {
+        const namen = userIds.map((u) => nameVon.get(u)).filter(Boolean).join(", ");
+        if (namen) newItems[idx] = { ...newItems[idx], beschreibung: `${newItems[idx].beschreibung} (${namen})` };
+      }
     }
 
     // Berichte, die (noch) nicht in der Liste stehen (z.B. per URL

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt } from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt, Folder, FolderOpen, ChevronDown, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -62,6 +62,9 @@ const Disturbances = () => {
   // Material + Maschinen — für die Übersicht "offene Summe je Projekt".
   const [regieSatz, setRegieSatz] = useState(70);
   const [nebenSummen, setNebenSummen] = useState<Map<string, number>>(new Map());
+  // Beteiligte Mitarbeiter je Bericht — jeder hat die Stunden selbst geleistet,
+  // die offene Summe ist also Stunden × Mitarbeiter (wie beim Rechnungs-Import).
+  const [mitarbeiterAnzahl, setMitarbeiterAnzahl] = useState<Map<string, number>>(new Map());
   // Der Satz ist direkt hier editierbar (Kundenwunsch 18.08.: "68 Euro
   // hinterlegen" kam per Mail — das soll künftig ohne Entwickler gehen).
   const [satzText, setSatzText] = useState("");
@@ -156,6 +159,7 @@ const Disturbances = () => {
       } else {
         setDisturbances([]);
         setNebenSummen(new Map());
+        setMitarbeiterAnzahl(new Map());
       }
     }
     setLoading(false);
@@ -173,13 +177,22 @@ const Disturbances = () => {
       // sonst die URL-Länge und die Summenkarte bliebe stumm unvollständig.
       const bloecke: string[][] = [];
       for (let i = 0; i < ids.length; i += 100) bloecke.push(ids.slice(i, i + 100));
-      const [satzRes, ...blockRes] = await Promise.all([
+      const [satzRes, workerRes, ...blockRes] = await Promise.all([
         supabase.from("app_settings").select("value").eq("key", "regie_stundensatz").maybeSingle(),
+        Promise.all(bloecke.map((block) =>
+          supabase.from("disturbance_workers").select("disturbance_id, user_id").in("disturbance_id", block))),
         ...bloecke.map((block) =>
           supabase.from("disturbance_materials").select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
         ...bloecke.map((block) =>
           (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, menge, einzelpreis").in("disturbance_id", block)),
       ]);
+      const anzahlen = new Map<string, number>();
+      for (const res of workerRes) {
+        for (const w of ((res.data as any[]) || [])) {
+          anzahlen.set(w.disturbance_id, (anzahlen.get(w.disturbance_id) || 0) + 1);
+        }
+      }
+      setMitarbeiterAnzahl(anzahlen);
       const satz = parseDecimal(String(satzRes.data?.value ?? ""));
       if (satz !== null && satz > 0) {
         setRegieSatz(satz);
@@ -201,7 +214,10 @@ const Disturbances = () => {
 
   /** Offener (nicht verrechneter) Betrag eines Berichts. */
   const offenBetrag = (d: Disturbance): number =>
-    d.is_verrechnet ? 0 : (Number(d.stunden) || 0) * regieSatz + (nebenSummen.get(d.id) || 0);
+    d.is_verrechnet
+      ? 0
+      : (Number(d.stunden) || 0) * Math.max(1, mitarbeiterAnzahl.get(d.id) || 0) * regieSatz
+        + (nebenSummen.get(d.id) || 0);
 
   const toggleSelected = (id: string) => {
     setSelectedIds(prev => {
@@ -296,6 +312,34 @@ const Disturbances = () => {
   });
 
   const offeneAnzahl = disturbances.filter((d) => d.status !== "abgeschlossen").length;
+
+  // Kundenwunsch 28.08.2026: „abgeschlossene bzw. bereits verrechnete
+  // Regieberichte in einen gesammelten Projektordner zusammensammeln … dass
+  // man nur die offenen in der ersten Ansicht hat". Verrechnete Berichte
+  // wandern in zugeklappte Projektordner unter der Liste; wer sucht oder
+  // gezielt filtert, sieht weiterhin die flache Liste.
+  const ordnerAnsicht = statusFilter === "alle" && !searchQuery;
+  const aktuelleBerichte = ordnerAnsicht
+    ? filteredDisturbances.filter((d) => !d.is_verrechnet)
+    : filteredDisturbances;
+  const erledigteOrdner: [string, Disturbance[]][] = ordnerAnsicht
+    ? [...filteredDisturbances
+        .filter((d) => d.is_verrechnet)
+        .reduce((m, d) => {
+          const name = d.project_name || d.kunde_name || "Ohne Projekt";
+          m.set(name, [...(m.get(name) || []), d]);
+          return m;
+        }, new Map<string, Disturbance[]>())
+        .entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], "de"))
+    : [];
+  const [offeneOrdner, setOffeneOrdner] = useState<Set<string>>(new Set());
+  const toggleOrdner = (name: string) =>
+    setOffeneOrdner((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
 
   // Offene (nicht verrechnete) Summen — gesamt und je Projekt (Kundenwunsch
   // 08/2026: "Übersicht oben, wo die gesamt zu verrechnende offene Summe je
@@ -468,7 +512,7 @@ const Disturbances = () => {
           </Card>
         ) : (
           <div className="space-y-3">
-            {filteredDisturbances.map((disturbance) => (
+            {aktuelleBerichte.map((disturbance) => (
               <Card
                 key={disturbance.id}
                 className="kb-panel cursor-pointer hover:shadow-md transition-shadow"
@@ -552,6 +596,63 @@ const Disturbances = () => {
                 </CardContent>
               </Card>
             ))}
+
+            {/* Erledigt & verrechnet — zugeklappte Projektordner (Kundenwunsch
+                28.08.2026: „dann ist die Maske nicht zu voll"). */}
+            {ordnerAnsicht && aktuelleBerichte.length === 0 && (
+              <Card className="kb-panel">
+                <CardContent className="py-8 text-center text-sm text-muted-foreground">
+                  Keine offenen Regieberichte — alles Verrechnete liegt in den Ordnern unten.
+                </CardContent>
+              </Card>
+            )}
+            {erledigteOrdner.length > 0 && (
+              <div className="pt-3 space-y-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Verrechnete Berichte — nach Projekt gesammelt
+                </p>
+                {erledigteOrdner.map(([name, berichte]) => (
+                  <Card key={name} className="kb-panel">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 p-3 text-left hover:bg-muted/40"
+                      onClick={() => toggleOrdner(name)}
+                      aria-expanded={offeneOrdner.has(name)}
+                    >
+                      {offeneOrdner.has(name)
+                        ? <FolderOpen className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        : <Folder className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{name}</span>
+                      <Badge variant="secondary" className="shrink-0 text-xs">
+                        {berichte.length} Bericht{berichte.length === 1 ? "" : "e"}
+                      </Badge>
+                      {offeneOrdner.has(name)
+                        ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                        : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                    </button>
+                    {offeneOrdner.has(name) && (
+                      <div className="divide-y border-t">
+                        {berichte.map((d) => (
+                          <button
+                            key={d.id}
+                            type="button"
+                            className="flex w-full flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-2.5 text-left text-sm hover:bg-muted/40"
+                            onClick={() => navigate(`/disturbances/${d.id}`)}
+                          >
+                            <span className="tabular-nums text-muted-foreground">
+                              {format(new Date(d.datum), "dd.MM.yyyy", { locale: de })}
+                            </span>
+                            <span className="tabular-nums text-muted-foreground">{d.stunden.toFixed(1)}h</span>
+                            <span className="min-w-0 flex-1 truncate">{d.beschreibung || d.kunde_name}</span>
+                            <Badge className="shrink-0 bg-emerald-600 text-white">Verrechnet</Badge>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </main>
