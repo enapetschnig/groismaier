@@ -24,9 +24,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
-  ArrowLeft, Download, FileText, Forward, Loader2, Mail, MailOpen, Paperclip, PenLine,
+  ArrowLeft, Download, FileText, FolderPlus, Forward, Loader2, Mail, MailOpen, Paperclip, PenLine,
   ReceiptText, RefreshCw, Reply, ReplyAll, Search, Send, Trash2, X,
 } from "lucide-react";
+import { buildProjectFilePath, safeStorageName } from "@/lib/projectFiles";
 
 const POSTFAECHER = [
   { adresse: "christian.groismaier@cg-holzbau.at", kurz: "Christian" },
@@ -95,6 +96,16 @@ export default function Email() {
 
   // ER-Übernahme
   const [erDialogOffen, setErDialogOffen] = useState(false);
+  // Mail einem Projekt zuordnen (Kundenwunsch 28.08.2026)
+  const [projektDialogOffen, setProjektDialogOffen] = useState(false);
+  const [projekte, setProjekte] = useState<{ id: string; name: string }[]>([]);
+  const [projektZielId, setProjektZielId] = useState<string>("");
+  const [projektSuche, setProjektSuche] = useState("");
+  const [projektLaeuft, setProjektLaeuft] = useState(false);
+  const ladeProjekte = async () => {
+    const { data } = await supabase.from("projects").select("id, name").order("created_at", { ascending: false }).limit(300);
+    setProjekte(((data as any[]) || []).map((r) => ({ id: r.id, name: r.name })));
+  };
   const [erDateien, setErDateien] = useState<File[]>([]);
   const [erNotiz, setErNotiz] = useState("");
   // Mail, deren Anhänge gerade im ER-Dialog stecken — nach dem Anlegen wird
@@ -209,6 +220,69 @@ export default function Email() {
       toast({ title: "Übernahme fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
     } finally {
       setUebernehmeLaeuft(false);
+    }
+  };
+
+  /**
+   * Mail samt Anhängen einem Projekt zuordnen (Kundenwunsch 28.08.2026:
+   * „eine Mail samt Anhang auswählen und dann einem Projekt zuordnen —
+   * für die Doku"). Landet im Projekt unter Dokumente im Unterordner
+   * „E-Mails": die Mail selbst als HTML-Datei (offline lesbar), jeder
+   * Anhang als eigene Datei daneben.
+   */
+  const zuProjekt = async () => {
+    if (!detail || !projektZielId) return;
+    setProjektLaeuft(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const datum = new Date(detail.empfangen);
+      const stempel = datum.toISOString().slice(0, 10);
+      const basisName = `${stempel} ${detail.betreff || "ohne Betreff"}`.slice(0, 90);
+
+      // 1) Die Mail selbst als eigenständig lesbare HTML-Datei.
+      const kopf = `<div style="font-family:sans-serif;border-bottom:1px solid #ccc;padding-bottom:8px;margin-bottom:12px">
+        <div><b>Von:</b> ${detail.von} &lt;${detail.vonAdresse}&gt;</div>
+        <div><b>An:</b> ${(detail.an || []).join(", ")}</div>
+        <div><b>Datum:</b> ${datum.toLocaleString("de-AT")}</div>
+        <div><b>Betreff:</b> ${detail.betreff || ""}</div>
+      </div>`;
+      const inhalt = detail.bodyHtml || `<pre style="white-space:pre-wrap;font-family:sans-serif">${detail.bodyText || ""}</pre>`;
+      const dateien: File[] = [new File(
+        [new Blob([`<!doctype html><meta charset="utf-8">${kopf}${inhalt}`], { type: "text/html" })],
+        `${basisName}.html`, { type: "text/html" },
+      )];
+
+      // 2) Alle Anhänge dazu.
+      for (const a of detail.anhaenge) {
+        const f = await anhangHolen(a.id);
+        if (f) dateien.push(f);
+      }
+
+      // 3) In den Dokumente-Sammelordner des Projekts, Unterordner "E-Mails"
+      //    (gleiches Muster wie der Upload in ProjectDetail).
+      let ok = 0;
+      for (const file of dateien) {
+        const basis = buildProjectFilePath(projektZielId, file.name);
+        const pfad = `${projektZielId}/${safeStorageName("E-Mails")}/${basis.slice(projektZielId.length + 1)}`;
+        const { error } = await supabase.storage.from("project-reports").upload(pfad, file);
+        if (error) continue;
+        ok++;
+        if (user) {
+          const { data: urlData } = supabase.storage.from("project-reports").getPublicUrl(pfad);
+          await supabase.from("documents").insert({
+            project_id: projektZielId, user_id: user.id, typ: "reports",
+            name: file.name, file_url: urlData.publicUrl,
+          } as any);
+        }
+      }
+      if (ok === 0) throw new Error("Keine Datei konnte abgelegt werden.");
+      const projektName = projekte.find((pr) => pr.id === projektZielId)?.name || "Projekt";
+      toast({ title: "Im Projekt abgelegt", description: `${ok} Datei(en) unter „${projektName}" → Dokumente → E-Mails.` });
+      setProjektDialogOffen(false);
+    } catch (e) {
+      toast({ title: "Zuordnen fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setProjektLaeuft(false);
     }
   };
 
@@ -412,6 +486,16 @@ export default function Email() {
                         {uebernehmeLaeuft ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <ReceiptText className="mr-1.5 h-4 w-4" />}
                         Als Eingangsrechnung
                       </Button>
+                      <Button
+                        className="shrink-0"
+                        size="sm"
+                        variant="outline"
+                        title="Mail samt Anhängen in die Dokumentation eines Projekts ablegen"
+                        onClick={() => { setProjektZielId(""); setProjektSuche(""); void ladeProjekte(); setProjektDialogOffen(true); }}
+                      >
+                        <FolderPlus className="mr-1.5 h-4 w-4" />
+                        Zu Projekt
+                      </Button>
                     </div>
                     {detail.anhaenge.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -522,6 +606,46 @@ export default function Email() {
       </Dialog>
 
       {/* Der bewährte ER-Scan-Dialog, gefüttert mit den Mail-Anhängen. */}
+      {/* Mail einem Projekt zuordnen (Kundenwunsch 28.08.2026) */}
+      <Dialog open={projektDialogOffen} onOpenChange={setProjektDialogOffen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Mail einem Projekt zuordnen</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Die Mail wird als lesbare Datei samt allen Anhängen im Projekt
+            unter Dokumente → „E-Mails" abgelegt.
+          </p>
+          <Input
+            autoFocus
+            placeholder="Projekt suchen …"
+            value={projektSuche}
+            onChange={(e) => setProjektSuche(e.target.value)}
+          />
+          <div className="max-h-64 divide-y overflow-y-auto rounded-md border">
+            {(() => {
+              const q = projektSuche.trim().toLowerCase();
+              const liste = projekte.filter((pr) => !q || pr.name.toLowerCase().includes(q));
+              if (liste.length === 0) return <p className="p-3 text-center text-sm text-muted-foreground">Keine Treffer.</p>;
+              return liste.slice(0, 50).map((pr) => (
+                <button
+                  key={pr.id}
+                  type="button"
+                  onClick={() => setProjektZielId(pr.id)}
+                  className={`block w-full px-3 py-2 text-left text-sm hover:bg-accent ${projektZielId === pr.id ? "bg-primary/10 font-semibold" : ""}`}
+                >
+                  {pr.name}
+                </button>
+              ));
+            })()}
+          </div>
+          <Button disabled={!projektZielId || projektLaeuft} onClick={() => void zuProjekt()}>
+            {projektLaeuft ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <FolderPlus className="mr-1.5 h-4 w-4" />}
+            {projektLaeuft ? "Wird abgelegt …" : "Im Projekt ablegen"}
+          </Button>
+        </DialogContent>
+      </Dialog>
+
       <PurchaseInvoiceUploadDialog
         open={erDialogOffen}
         onOpenChange={(o) => { setErDialogOffen(o); if (!o) { setErDateien([]); erMail.current = null; } }}
