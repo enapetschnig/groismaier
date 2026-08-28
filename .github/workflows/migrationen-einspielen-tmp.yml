@@ -36,7 +36,14 @@ jobs:
               req = urllib.request.Request(
                   f"https://api.supabase.com/v1/projects/{ref}/database/query",
                   data=json.dumps({"query": sql}).encode(),
-                  headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+                  # Cloudflare blockt den Standard-User-Agent von urllib
+                  # (Fehler 1010) — curl-Kennung durchlassen wie im
+                  # Abhol-Workflow, der mit curl funktioniert hat.
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Content-Type": "application/json",
+                      "User-Agent": "curl/8.5.0",
+                  },
                   method="POST",
               )
               try:
