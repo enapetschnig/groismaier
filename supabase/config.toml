@@ -23,3 +23,10 @@ verify_jwt = false
 
 [functions.parse-invoice-document]
 verify_jwt = false
+
+# wunsch-datei wird vom epower-cockpit OHNE Supabase-Login aufgerufen —
+# sie schützt sich selbst über das gemeinsame Geheimnis (COCKPIT_SECRET).
+# Ohne diesen Schalter blockt das Gateway mit UNAUTHORIZED_NO_AUTH_HEADER,
+# bevor die Funktion überhaupt läuft.
+[functions.wunsch-datei]
+verify_jwt = false

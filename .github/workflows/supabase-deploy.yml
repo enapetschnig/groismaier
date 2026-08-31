@@ -134,6 +134,6 @@ jobs:
           PROJECT_REF: ${{ inputs.project_ref || 'tdehljzmqwmfgfoyyoee' }}
         run: |
           set -euo pipefail
-          npx --yes supabase@2 functions deploy wunsch-datei --project-ref "${PROJECT_REF}" --use-api \
-            || npx --yes supabase@2 functions deploy wunsch-datei --project-ref "${PROJECT_REF}"
-          echo "✓ wunsch-datei deployt."
+          npx --yes supabase@2 functions deploy wunsch-datei --no-verify-jwt --project-ref "${PROJECT_REF}" --use-api \
+            || npx --yes supabase@2 functions deploy wunsch-datei --no-verify-jwt --project-ref "${PROJECT_REF}"
+          echo "✓ wunsch-datei deployt (ohne Gateway-JWT-Pruefung)."
