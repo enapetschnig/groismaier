@@ -63,7 +63,7 @@ export default function Aufgaben() {
     setAufgaben(rows);
 
     // Namen der Ersteller/Zugewiesenen + Teamnamen + Fotos nachladen
-    const userIds = [...new Set(rows.flatMap((a) => [a.erstellt_von, a.zugewiesen_an]).filter(Boolean))] as string[];
+    const userIds = [...new Set(rows.flatMap((a) => [a.erstellt_von, a.zugewiesen_an, ...(a.weitere_zugewiesene || [])]).filter(Boolean))] as string[];
     const teamIdsGenutzt = [...new Set(rows.map((a) => a.team_id).filter(Boolean))] as string[];
     const aufgabenIds = rows.map((a) => a.id);
     const [profRes, teamRes, fotoRes] = await Promise.all([
@@ -118,10 +118,14 @@ export default function Aufgaben() {
     laden();
   };
 
-  const zuweisungsText = (a: Aufgabe): string =>
-    a.zugewiesen_an ? (namen[a.zugewiesen_an] || "Mitarbeiter")
-      : a.team_id ? `Team ${teamNamen[a.team_id] || ""}`.trim()
-        : "niemandem zugewiesen";
+  const zuweisungsText = (a: Aufgabe): string => {
+    if (a.zugewiesen_an) {
+      const haupt = namen[a.zugewiesen_an] || "Mitarbeiter";
+      const rest = (a.weitere_zugewiesene || []).map((id) => namen[id]).filter(Boolean);
+      return rest.length ? `${haupt}, ${rest.join(", ")}` : haupt;
+    }
+    return a.team_id ? `Team ${teamNamen[a.team_id] || ""}`.trim() : "niemandem zugewiesen";
+  };
 
   // Sortierung: Freigaben zuerst, Erledigtes zuletzt; innerhalb nach
   // Priorität (hoch zuerst, Kundenwunsch 24.08.2026), dann Frist

@@ -38,6 +38,7 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
   const [beschreibung, setBeschreibung] = useState("");
   /** "" = niemand, "u:<id>" = Person, "t:<id>" = Team. */
   const [zuweisung, setZuweisung] = useState("");
+  const [weitere, setWeitere] = useState<string[]>([]);
   const [faelligAm, setFaelligAm] = useState("");
   const [prio, setPrio] = useState<AufgabePrio>("normal");
   const [personen, setPersonen] = useState<PersonOption[]>([]);
@@ -56,6 +57,7 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
     setTitel(aufgabe?.titel || "");
     setBeschreibung(aufgabe?.beschreibung || "");
     setZuweisung(aufgabe?.zugewiesen_an ? `u:${aufgabe.zugewiesen_an}` : aufgabe?.team_id ? `t:${aufgabe.team_id}` : "");
+    setWeitere(aufgabe?.weitere_zugewiesene || []);
     setFaelligAm(aufgabe?.faellig_am || "");
     setPrio(aufgabe ? prioVon(aufgabe) : "normal");
     setNeueFotos((alt) => { alt.forEach((f) => URL.revokeObjectURL(f.url)); return []; });
@@ -123,6 +125,9 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
       titel: t,
       beschreibung: beschreibung.trim() || null,
       zugewiesen_an: zugewiesenAn,
+      // Weitere Personen nur bei Personen-Zuweisung; die Hauptperson steht
+      // nie doppelt in der Liste.
+      weitere_zugewiesene: zugewiesenAn ? weitere.filter((id) => id !== zugewiesenAn) : [],
       team_id: teamId,
       faellig_am: faelligAm || null,
       prioritaet: prio,
@@ -224,6 +229,28 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
                 )}
               </select>
             </div>
+            {/* Weitere Personen (Mitarbeiterwunsch 31.08.2026) — nur bei
+                Personen-Zuweisung sinnvoll, Teams decken Gruppen ohnehin ab. */}
+            {zuweisung.startsWith("u:") && personen.length > 1 && (
+              <div className="space-y-1 sm:col-span-2">
+                <Label>Weitere Personen (optional)</Label>
+                <div className="grid max-h-40 grid-cols-1 gap-1 overflow-y-auto rounded-md border p-2 sm:grid-cols-2">
+                  {personen.filter((p) => `u:${p.id}` !== zuweisung).map((p) => (
+                    <label key={p.id} className="flex min-h-[32px] cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={weitere.includes(p.id)}
+                        onChange={(e) =>
+                          setWeitere((alt) => e.target.checked ? [...alt, p.id] : alt.filter((x) => x !== p.id))
+                        }
+                      />
+                      {p.name}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="space-y-1">
               <Label>Zu erledigen bis</Label>
               <Input type="date" value={faelligAm} onChange={(e) => setFaelligAm(e.target.value)} />

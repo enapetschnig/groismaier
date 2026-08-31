@@ -18,6 +18,8 @@ export interface Aufgabe {
   titel: string;
   beschreibung: string | null;
   zugewiesen_an: string | null;
+  /** Weitere Personen auf der Aufgabe (Mitarbeiterwunsch 31.08.2026). */
+  weitere_zugewiesene?: string[] | null;
   team_id: string | null;
   faellig_am: string | null; // yyyy-mm-dd
   status: AufgabeStatus;
@@ -104,4 +106,6 @@ export async function ladeMeineTeamIds(userId: string): Promise<string[]> {
 
 /** Ist die Aufgabe dieser Person (direkt oder über ihr Team) zugewiesen? */
 export const istMirZugewiesen = (a: Aufgabe, userId: string, meineTeamIds: string[]): boolean =>
-  a.zugewiesen_an === userId || (!!a.team_id && meineTeamIds.includes(a.team_id));
+  a.zugewiesen_an === userId ||
+  (a.weitere_zugewiesene || []).includes(userId) ||
+  (!!a.team_id && meineTeamIds.includes(a.team_id));
