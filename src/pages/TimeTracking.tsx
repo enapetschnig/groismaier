@@ -638,7 +638,9 @@ const TimeTracking = () => {
       });
       fetchExistingDayEntries(selectedDate);
     } else {
-      toast({ variant: "destructive", title: "Fehler", description: "Konnte nicht gespeichert werden" });
+      // Die echte Ursache anzeigen — "Konnte nicht gespeichert werden" allein
+      // hat die Fehlersuche beim ZA-Vorfall (31.08.2026) unnötig verlängert.
+      toast({ variant: "destructive", title: "Fehler", description: `Konnte nicht gespeichert werden${error.message ? `: ${error.message}` : ""}` });
     }
     setSubmittingAbsence(false);
   };
