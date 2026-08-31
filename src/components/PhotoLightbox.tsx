@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogClose } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, X } from "lucide-react";
 
 export interface LightboxPhoto {
   url: string;
@@ -37,12 +37,45 @@ export function PhotoLightbox({ photos, initialIndex, open, onClose }: Props) {
   if (!photos.length) return null;
   const current = photos[index] || photos[0];
 
+  /**
+   * Foto herunterladen (Mitarbeiterwunsch 28.08.2026). Über fetch+Blob,
+   * damit der Browser wirklich SPEICHERT statt das Bild nur zu öffnen —
+   * ein <a download> auf eine fremde URL wird sonst ignoriert.
+   */
+  const herunterladen = async () => {
+    try {
+      const antwort = await fetch(current.url);
+      const blob = await antwort.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const roh = current.url.split("?")[0].split("/").pop() || "foto.jpg";
+      a.href = url;
+      a.download = decodeURIComponent(roh);
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      // Rückfall: wenigstens in neuem Tab öffnen (dort kann man speichern).
+      window.open(current.url, "_blank");
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-w-[95vw] max-h-[95vh] p-0 overflow-hidden sm:rounded-lg bg-black">
         <DialogClose className="absolute right-4 top-4 z-10 rounded-sm bg-black/50 p-2 opacity-80 hover:opacity-100">
           <X className="h-5 w-5 text-white" />
         </DialogClose>
+
+        {/* Herunterladen (Mitarbeiterwunsch 28.08.2026) */}
+        <button
+          type="button"
+          onClick={() => void herunterladen()}
+          title="Foto herunterladen"
+          aria-label="Foto herunterladen"
+          className="absolute right-16 top-4 z-10 rounded-sm bg-black/50 p-2 opacity-80 hover:opacity-100"
+        >
+          <Download className="h-5 w-5 text-white" />
+        </button>
 
         {photos.length > 1 && (
           <div className="absolute top-4 left-4 z-10 rounded-md bg-black/50 px-2.5 py-1 text-xs text-white">
