@@ -42,6 +42,8 @@ interface KalkRow {
   summe: number | null;
   updated_at: string;
   customer_id: string | null;
+  /** Freier Ordnername, solange kein Kunde zugeordnet ist (31.08.2026). */
+  bauvorhaben?: string | null;
   ist_vorlage: boolean;
   customers?: { name: string } | null;
 }
@@ -96,6 +98,7 @@ export default function KalkulationHub() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [name, setName] = useState("");
   const [customerId, setCustomerId] = useState<string | null>(null);
+  const [neuBauvorhaben, setNeuBauvorhaben] = useState("");
   const [templateId, setTemplateId] = useState<string>(NO_TEMPLATE);
   const [creating, setCreating] = useState(false);
 
@@ -118,6 +121,7 @@ export default function KalkulationHub() {
   // Ordner richten sich nach dem Kunden der Kalkulation.
   const [bvWechselRow, setBvWechselRow] = useState<KalkRow | null>(null);
   const [bvWechselKunde, setBvWechselKunde] = useState<string | null>(null);
+  const [bvWechselFrei, setBvWechselFrei] = useState("");
   const [bvWechselLaeuft, setBvWechselLaeuft] = useState(false);
 
   // Ordner-Aktionen (Kundenwunsch 27.08.2026: "Ich kann hier nichts
@@ -220,12 +224,12 @@ export default function KalkulationHub() {
   const load = useCallback(async () => {
     setLoading(true);
     const { data, error } = await kalkTable()
-      .select("id, name, summe, updated_at, customer_id, ist_vorlage, customers(name)")
+      .select("id, name, summe, updated_at, customer_id, bauvorhaben, ist_vorlage, customers(name)")
       .order("updated_at", { ascending: false });
     if (error) {
       // Fallback, solange die Migration (ist_vorlage) noch nicht eingespielt ist.
       const { data: fallback } = await kalkTable()
-        .select("id, name, summe, updated_at, customer_id, customers(name)")
+        .select("id, name, summe, updated_at, customer_id, bauvorhaben, customers(name)")
         .order("updated_at", { ascending: false });
       setRows(((fallback as KalkRow[]) || []).map((r) => ({ ...r, ist_vorlage: false })));
     } else {
@@ -258,8 +262,11 @@ export default function KalkulationHub() {
   const bauvorhaben = useMemo(() => {
     const map = new Map<string, { key: string; titel: string; rows: KalkRow[]; summe: number; letzte: string }>();
     for (const r of kalkulationen) {
-      const key = r.customer_id || OHNE_KUNDE;
-      const titel = r.customers?.name || "Ohne Kunde";
+      // Kunde gewinnt; sonst benennt das freie Bauvorhaben-Feld den Ordner
+      // (Kundenwunsch 31.08.2026: Kunde wird erst nach Auftrag angelegt).
+      const frei = (r.bauvorhaben || "").trim();
+      const key = r.customer_id || (frei ? `bv:${frei.toLowerCase()}` : OHNE_KUNDE);
+      const titel = r.customers?.name || frei || "Ohne Kunde";
       const e = map.get(key) || { key, titel, rows: [], summe: 0, letzte: r.updated_at };
       e.rows.push(r);
       e.summe += Number(r.summe) || 0;
@@ -314,12 +321,13 @@ export default function KalkulationHub() {
     // ist_vorlage wird nicht mitgeschickt: DB-Default false (funktioniert so
     // auch, bevor die Migration 20260716090200 eingespielt ist).
     const id = await insertCopy({
-      name: name.trim(), customer_id: customerId, data, summe,
+      name: name.trim(), customer_id: customerId,
+      bauvorhaben: customerId ? null : (neuBauvorhaben.trim() || null), data, summe,
     });
     setCreating(false);
     if (!id) return;
     setDialogOpen(false);
-    setName(""); setCustomerId(null); setTemplateId(NO_TEMPLATE);
+    setName(""); setCustomerId(null); setNeuBauvorhaben(""); setTemplateId(NO_TEMPLATE);
     navigate(`/auftragskalkulation/${id}`);
   };
 
@@ -416,7 +424,7 @@ export default function KalkulationHub() {
     if (!bvWechselRow) return;
     setBvWechselLaeuft(true);
     const { error } = await kalkTable()
-      .update({ customer_id: bvWechselKunde })
+      .update({ customer_id: bvWechselKunde, bauvorhaben: bvWechselFrei.trim() || null })
       .eq("id", bvWechselRow.id);
     setBvWechselLaeuft(false);
     if (error) {
@@ -528,7 +536,7 @@ export default function KalkulationHub() {
                   <DropdownMenuItem onClick={() => { setRenameRow(r); setRenameName(r.name); }}>
                     <Pencil className="h-4 w-4 mr-2" /> Umbenennen
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => { setBvWechselRow(r); setBvWechselKunde(r.customer_id); }}>
+                  <DropdownMenuItem onClick={() => { setBvWechselRow(r); setBvWechselKunde(r.customer_id); setBvWechselFrei(r.bauvorhaben || ""); }}>
                     <FolderOpen className="h-4 w-4 mr-2" /> Bauvorhaben ändern
                   </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => handleDuplicate(r)}>
@@ -740,6 +748,21 @@ export default function KalkulationHub() {
               <Label>Kunde / Bauvorhaben</Label>
               <CustomerSelect value={bvWechselKunde} onChange={(id) => setBvWechselKunde(id)} />
             </div>
+            {/* Kunde noch nicht angelegt? Freier Ordnername (31.08.2026). */}
+            {!bvWechselKunde && (
+              <div className="space-y-1.5">
+                <Label>Oder Bauvorhaben frei benennen</Label>
+                <Input
+                  value={bvWechselFrei}
+                  onChange={(e) => setBvWechselFrei(e.target.value)}
+                  placeholder="z. B. BV Müller – Neubau"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Für Kunden, die du erst nach der Auftragserteilung anlegst.
+                  Sobald ein Kunde zugeordnet ist, gewinnt dessen Name.
+                </p>
+              </div>
+            )}
             <div className="flex justify-end gap-2">
               <Button variant="outline" onClick={() => setBvWechselRow(null)}>Abbrechen</Button>
               <Button onClick={() => void bauvorhabenWechseln()} disabled={bvWechselLaeuft}>
@@ -821,6 +844,22 @@ export default function KalkulationHub() {
               <Label>Kunde (optional)</Label>
               <CustomerSelect value={customerId} onChange={(id) => setCustomerId(id)} />
             </div>
+            {/* Kunde kommt oft erst nach Auftragserteilung in die Datenbank
+                (Kundenwunsch 31.08.2026) — freier Ordnername als Ersatz. */}
+            {!customerId && (
+              <div className="space-y-1.5">
+                <Label>Bauvorhaben (falls Kunde noch nicht angelegt)</Label>
+                <Input
+                  value={neuBauvorhaben}
+                  onChange={(e) => setNeuBauvorhaben(e.target.value)}
+                  placeholder="z. B. BV Müller – Neubau"
+                />
+                <p className="text-xs text-muted-foreground">
+                  Benennt den Ordner in der Übersicht. Später über „Bauvorhaben
+                  ändern" durch den echten Kunden ersetzbar.
+                </p>
+              </div>
+            )}
             {vorlagen.length > 0 && (
               <div className="space-y-1.5">
                 <Label>Aus Vorlage (optional)</Label>
