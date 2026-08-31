@@ -80,6 +80,7 @@ export function CustomerEditDialog({ open, onClose, customerId, onSaved }: Custo
             email: c.email || "",
             telefon: c.telefon || "",
             telefon2: c.telefon2 || "",
+            weitere_kontakte: Array.isArray((c as any).weitere_kontakte) ? (c as any).weitere_kontakte : [],
             notizen: c.notizen || "",
             zahlungsbedingungen: c.zahlungsbedingungen || "",
             skonto_prozent: Number(c.skonto_prozent) || 0,
@@ -166,6 +167,8 @@ export function CustomerEditDialog({ open, onClose, customerId, onSaved }: Custo
       email: form.email || null,
       telefon: form.telefon || null,
       telefon2: form.telefon2 || null,
+      // Nur ausgefüllte Zeilen speichern — leere "+"-Zeilen fallen weg.
+      weitere_kontakte: (form.weitere_kontakte || []).filter((k) => k.bezeichnung.trim() || k.telefon.trim()),
       notizen: form.notizen || null,
       zahlungsbedingungen: form.zahlungsbedingungen || null,
       skonto_prozent: form.skonto_prozent || 0,

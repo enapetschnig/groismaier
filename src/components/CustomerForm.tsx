@@ -5,7 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { AddressAutocomplete } from "@/components/AddressAutocomplete";
-import { Building, User, CalendarPlus, Trash2 } from "lucide-react";
+import { Building, User, CalendarPlus, Plus, Trash2, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 
@@ -70,6 +70,8 @@ export interface CustomerFormData {
   rechnungs_land: string;
   herkunft: string;
   wichtige_daten: WichtigesDatum[];
+  /** Weitere Nummern mit Bezeichnung („Mutter vor Ort", „Vorarbeiter"). */
+  weitere_kontakte: { bezeichnung: string; telefon: string }[];
 }
 
 export const EMPTY_CUSTOMER_FORM: CustomerFormData = {
@@ -103,6 +105,7 @@ export const EMPTY_CUSTOMER_FORM: CustomerFormData = {
   rechnungs_land: "",
   herkunft: "",
   wichtige_daten: [],
+  weitere_kontakte: [],
 };
 
 /**
@@ -607,6 +610,53 @@ export function CustomerForm({
               <Label>Telefon (zusätzlich)</Label>
               <Input value={form.telefon2} onChange={(e) => update("telefon2", e.target.value)} />
             </div>
+          </div>
+          {/* Weitere Nummern mit Bezeichnung (Kundenwunsch 31.08.2026:
+              „Mutter vor Ort", „Vorarbeiter" …) — beliebig viele Zeilen. */}
+          <div className="space-y-2">
+            {(form.weitere_kontakte || []).map((k, idx) => (
+              <div key={idx} className="grid grid-cols-[1fr_1fr_28px] items-end gap-2">
+                <div>
+                  <Label className="text-[10px]">Bezeichnung</Label>
+                  <Input
+                    className="h-9"
+                    value={k.bezeichnung}
+                    placeholder="z. B. Mutter vor Ort, Vorarbeiter"
+                    onChange={(e) => {
+                      const next = [...form.weitere_kontakte];
+                      next[idx] = { ...k, bezeichnung: e.target.value };
+                      update("weitere_kontakte", next);
+                    }}
+                  />
+                </div>
+                <div>
+                  <Label className="text-[10px]">Telefon</Label>
+                  <Input
+                    className="h-9"
+                    value={k.telefon}
+                    onChange={(e) => {
+                      const next = [...form.weitere_kontakte];
+                      next[idx] = { ...k, telefon: e.target.value };
+                      update("weitere_kontakte", next);
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button" variant="ghost" size="icon" className="h-9 w-7 text-destructive"
+                  title="Nummer entfernen"
+                  onClick={() => update("weitere_kontakte", form.weitere_kontakte.filter((_, i) => i !== idx))}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
+            <Button
+              type="button" variant="outline" size="sm" className="gap-1.5"
+              onClick={() => update("weitere_kontakte", [...(form.weitere_kontakte || []), { bezeichnung: "", telefon: "" }])}
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Weitere Nummer
+            </Button>
           </div>
           <div>
             <Label>E-Mail</Label>

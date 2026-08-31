@@ -225,6 +225,7 @@ export default function Customers() {
       rechnungs_land: (c as any).rechnungs_land || "",
       herkunft: (c as any).herkunft || "",
       wichtige_daten: Array.isArray((c as any).wichtige_daten) ? (c as any).wichtige_daten : [],
+      weitere_kontakte: Array.isArray((c as any).weitere_kontakte) ? (c as any).weitere_kontakte : [],
     });
     setDialogOpen(true);
   };
@@ -321,6 +322,7 @@ export default function Customers() {
           rechnungs_land: form.rechnungs_land || null,
           herkunft: form.herkunft || null,
           wichtige_daten: form.wichtige_daten || [],
+          weitere_kontakte: (form.weitere_kontakte || []).filter((k) => k.bezeichnung.trim() || k.telefon.trim()),
       };
 
       if (editId) {
@@ -595,6 +597,11 @@ ${c.notizen ? `<h2>Notizen</h2><div class="notiz">${c.notizen.replace(/</g, "&lt
                 {selectedCustomer.ansprechpartner && <div><span className="text-muted-foreground">Kontaktperson:</span> {selectedCustomer.ansprechpartner}</div>}
                 {selectedCustomer.email && <div><span className="text-muted-foreground">E-Mail:</span> {selectedCustomer.email}</div>}
                 {selectedCustomer.telefon && <div><span className="text-muted-foreground">Telefon:</span> {selectedCustomer.telefon}</div>}
+                {(Array.isArray((selectedCustomer as any).weitere_kontakte) ? (selectedCustomer as any).weitere_kontakte : []).map(
+                  (k: { bezeichnung: string; telefon: string }, i: number) => (
+                    <div key={i}><span className="text-muted-foreground">{k.bezeichnung || "Weitere Nummer"}:</span> {k.telefon}</div>
+                  ),
+                )}
                 {(selectedCustomer as any).website && <div><span className="text-muted-foreground">Website:</span> {(selectedCustomer as any).website}</div>}
                 {selectedCustomer.adresse && <div><span className="text-muted-foreground">Adresse:</span> {selectedCustomer.adresse}</div>}
                 {(selectedCustomer.plz || selectedCustomer.ort) && (
