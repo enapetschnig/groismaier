@@ -576,14 +576,18 @@ const TimeTracking = () => {
       }
       const timeAccountRow = konto;
 
-      if (Number(timeAccountRow.balance_hours) < workingHours) {
-        toast({ variant: "destructive", title: "Nicht genügend ZA-Stunden", description: `Verfügbar: ${timeAccountRow.balance_hours} h, benötigt: ${workingHours} h. Guthaben entsteht aus Überstunden der Monatsauswertung.` });
-        setSubmittingAbsence(false);
-        return;
-      }
-
+      // Das ZA-Konto DARF ins Minus gehen (Kundenentscheid 31.08.2026) —
+      // der Mitarbeiter arbeitet die Stunden später ein, die Monats-
+      // auswertung gleicht das Konto ohnehin ab. Kein Abbruch mehr,
+      // nur ein ehrlicher Hinweis auf den neuen Stand.
       const balanceBefore = Number(timeAccountRow.balance_hours);
       const balanceAfter = balanceBefore - workingHours;
+      if (balanceAfter < 0) {
+        toast({
+          title: "ZA-Konto geht ins Minus",
+          description: `Neuer Stand: ${balanceAfter.toLocaleString("de-AT", { maximumFractionDigits: 2 })} h — wird mit künftigen Überstunden ausgeglichen.`,
+        });
+      }
 
       const { error: updateErr } = await supabase
         .from("time_accounts")
