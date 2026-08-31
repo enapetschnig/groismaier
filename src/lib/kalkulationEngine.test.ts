@@ -10,7 +10,7 @@ import {
   calcFahrtkosten, calcTransport,
   istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
   zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
-  buildAngebotItems, calcProjekt, newEmptyState, newMaterialRow, newModule,
+  buildAngebotItems, calcProjekt, materialBezeichnung, newEmptyState, newMaterialRow, newModule,
   type MaterialRow, type Betriebsdaten,
 } from "./kalkulationEngine";
 
@@ -405,5 +405,32 @@ describe("Angebots-Einheit je Aufbau (Kundenwunsch 26.08.2026)", () => {
     const summe = items(bauAufbau({})).find((i) => i.ist_gruppensumme)!;
     expect(summe.ist_info).toBeFalsy();
     expect(summe.beschreibung.includes("INFOPOSITION")).toBe(false);
+  });
+});
+
+describe("Dämmstärke im Schichtnamen (Kundenwunsch 31.08.2026)", () => {
+  const row = (product: string) => ({ ...newMaterialRow(), category: "KVH", product });
+
+  it("ersetzt den Platzhalter durch die gewählte Dämmstärke", () => {
+    expect(materialBezeichnung(row("Riegelkonstruktion 6/…"), 24)).toBe("Riegelkonstruktion 6/24");
+    expect(materialBezeichnung(row("Riegelkonstruktion 6/...."), 30)).toBe("Riegelkonstruktion 6/30");
+    expect(materialBezeichnung(row("Staffel 5/…"), 8.5)).toBe("Staffel 5/8,5");
+  });
+
+  it("BESTANDSSCHUTZ: ohne Dämmstärke und ohne Platzhalter ändert sich nichts", () => {
+    expect(materialBezeichnung(row("Riegelkonstruktion 6/…"))).toBe("Riegelkonstruktion 6/…");
+    expect(materialBezeichnung(row("Riegelkonstruktion 6/…"), 0)).toBe("Riegelkonstruktion 6/…");
+    expect(materialBezeichnung(row("Stroh"), 24)).toBe("Stroh");
+    expect(materialBezeichnung(row("OSB 3 - 18"), 24)).toBe("OSB 3 - 18");
+  });
+
+  it("wirkt bis in die Angebots-Positionen", () => {
+    const m = { ...newModule(1), name: "AW", area: 100, insulationThickness: 24,
+      materialRows: [{ ...newMaterialRow(), category: "KVH", product: "Riegelkonstruktion 6/…", ekPrice: 380 }] };
+    const st = newEmptyState();
+    st.modules = [m];
+    const { items } = buildAngebotItems(calcProjekt(st, DEFAULT_BETRIEBSDATEN));
+    const detail = items.find((i) => i.beschreibung.startsWith("Riegelkonstruktion"));
+    expect(detail?.beschreibung).toBe("Riegelkonstruktion 6/24");
   });
 });

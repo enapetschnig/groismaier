@@ -674,10 +674,26 @@ export interface MaterialSummen {
 }
 
 /** Anzeigename einer Materialzeile: Artikel, ersatzweise Kategorie, sonst "". */
-export function materialBezeichnung(row: MaterialRow): string {
+/**
+ * Anzeigename einer Materialzeile — optional mit eingesetzter Dämmstärke.
+ *
+ * Katalognamen wie „Riegelkonstruktion 6/…" lassen die zweite Zahl bewusst
+ * offen, weil sie von der je Aufbau gewählten Dämmstärke abhängt. Im Angebot
+ * (und im Rechenweg) wird der Platzhalter durch die echte Stärke ersetzt:
+ * „6/…" + 24 cm → „6/24" (Kundenwunsch 31.08.2026: „die 6 allein hilft dem
+ * Kunden nicht"). Ohne Dämmstärke (0/leer) bleibt der Name unverändert —
+ * und der Katalog selbst behält immer den Platzhalter.
+ */
+export function materialBezeichnung(row: MaterialRow, daemmstaerkeCm?: number): string {
   const produkt = String(row?.product ?? "").trim();
-  if (produkt) return produkt;
-  return String(row?.category ?? "").trim();
+  const name = produkt || String(row?.category ?? "").trim();
+  const daemm = num(daemmstaerkeCm);
+  if (daemm > 0) {
+    const zahl = String(Math.round(daemm * 10) / 10).replace(".", ",");
+    // „6/…", „6/...", auch mit Leerraum: Punkte/Ellipse hinter dem Schrägstrich
+    return name.replace(/(\d+(?:[.,]\d+)?)\s*\/\s*(?:\.{2,}|…)/, `$1/${zahl}`);
+  }
+  return name;
 }
 
 export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSummen {
@@ -695,7 +711,7 @@ export function calcMaterialSummen(m: KalkModule, bd: Betriebsdaten): MaterialSu
     const vkZeile = r.vkProM2 * area + r.vkAbsolut;
     zeilen.push({
       row, ergebnis: r,
-      bezeichnung: materialBezeichnung(row),
+      bezeichnung: materialBezeichnung(row, m.insulationThickness),
       vkBetrag: vkZeile, ekBetrag: ekZeile,
       pauschal: !!row.manual || !!row.calc,
     });
