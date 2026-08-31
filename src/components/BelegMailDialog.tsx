@@ -53,11 +53,13 @@ interface Props {
     customerId?: string | null;
     belegTyp?: string;
   };
+  /** Nach erfolgreichem Versand (z. B. Nachfrage-Termin anbieten). */
+  onGesendet?: () => void;
 }
 
 export function BelegMailDialog({
   open, onOpenChange, pdfBlob, dateiname, xmlBlob, xmlDateiname, xmlFehler,
-  empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll,
+  empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll, onGesendet,
 }: Props) {
   const { toast } = useToast();
   const [von, setVon] = useState(POSTFAECHER[0].adresse);
@@ -180,6 +182,7 @@ export function BelegMailDialog({
         description: `${belegBezeichnung} ${belegNummer} ging an ${empfaengerListe.join(", ")} — die Mail liegt in Outlook unter »Gesendete Elemente«.`,
       });
       onOpenChange(false);
+      onGesendet?.();
     } catch (e) {
       toast({ title: "Senden fehlgeschlagen", description: (e as Error).message, variant: "destructive" });
     } finally {

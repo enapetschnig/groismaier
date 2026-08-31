@@ -741,6 +741,48 @@ export default function InvoiceDetail() {
   const [chainChildren, setChainChildren] = useState<ChainDoc[]>([]);
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
   const [originalPdfPath, setOriginalPdfPath] = useState<string | null>(null);
+  /**
+   * Nachfrage-Termin nach dem Angebots-Versand (Kundenwunsch 30.08.2026:
+   * „beim Versenden eines Anbotes legt man einen Termin fest, wo dann eine
+   * Erinnerung aufpoppt"). Legt eine Aufgabe mit Fälligkeit an — die
+   * erscheint auf der Startseite unter „Meine Aufgaben", sobald sie ansteht.
+   */
+  const [nachfrageOffen, setNachfrageOffen] = useState(false);
+  const [nachfrageDatum, setNachfrageDatum] = useState("");
+  const [nachfrageLaeuft, setNachfrageLaeuft] = useState(false);
+  const nachfrageAnbieten = () => {
+    if (form.typ !== "angebot") return;
+    const inEinerWoche = new Date();
+    inEinerWoche.setDate(inEinerWoche.getDate() + 7);
+    setNachfrageDatum(inEinerWoche.toISOString().slice(0, 10));
+    setNachfrageOffen(true);
+  };
+  const nachfrageAnlegen = async () => {
+    if (!nachfrageDatum) return;
+    setNachfrageLaeuft(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { error } = await (supabase.from("aufgaben" as never) as any).insert({
+        erstellt_von: user.id,
+        zugewiesen_an: user.id,
+        titel: `Nachfragen: ${(form.dokument_bezeichnung || "").trim() || "Angebot"} ${form.nummer || ""} — ${form.kunde_name || ""}`.trim(),
+        beschreibung: `Beim Kunden nachfragen, ob das Angebot passt.
+Beleg: /invoices/${invoiceId || id || ""}`,
+        faellig_am: nachfrageDatum,
+        prioritaet: "normal",
+        status: isAdmin ? "offen" : "wartet_freigabe",
+      });
+      if (error) throw new Error(error.message);
+      toast({ title: "Nachfrage-Termin gesetzt", description: `Am ${new Date(nachfrageDatum).toLocaleDateString("de-AT")} erinnert dich die Startseite unter „Meine Aufgaben".` });
+      setNachfrageOffen(false);
+    } catch (e) {
+      toast({ variant: "destructive", title: "Fehler", description: (e as Error).message });
+    } finally {
+      setNachfrageLaeuft(false);
+    }
+  };
+
   // Beleg per Mail senden (PDF-Anhang über das Firmenpostfach).
   const [mailDialog, setMailDialog] = useState<{
     pdf: Blob; pdfDatei: string; xml?: Blob; xmlDatei?: string; xmlFehler?: string;
@@ -8462,7 +8504,29 @@ export default function InvoiceDetail() {
             customerId: form.customer_id || null,
             belegTyp: form.typ,
           }}
+          onGesendet={nachfrageAnbieten}
         />
+
+        {/* Nachfrage-Termin (Kundenwunsch 30.08.2026) */}
+        <Dialog open={nachfrageOffen} onOpenChange={setNachfrageOffen}>
+          <DialogContent className="sm:max-w-sm">
+            <DialogHeader>
+              <DialogTitle>Nachfrage-Termin setzen?</DialogTitle>
+              <DialogDescription>
+                Das Angebot ist versendet. Wann sollen wir dich ans Nachfragen
+                erinnern? Die Erinnerung erscheint auf der Startseite unter
+                „Meine Aufgaben".
+              </DialogDescription>
+            </DialogHeader>
+            <Input type="date" value={nachfrageDatum} onChange={(e) => setNachfrageDatum(e.target.value)} />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setNachfrageOffen(false)}>Nicht nötig</Button>
+              <Button onClick={() => void nachfrageAnlegen()} disabled={nachfrageLaeuft || !nachfrageDatum}>
+                {nachfrageLaeuft ? "Wird angelegt …" : "Erinnerung anlegen"}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* KingBill: „Änderungen speichern?" beim Verlassen mit ungespeicherten
             Änderungen — [Zurück]=abbrechen, [Nein]=verwerfen+navigieren,
