@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
-import { Plus, Pencil, Trash2, Save, Package, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Boxes, Printer, ChevronDown, ChevronUp } from "lucide-react";
+import { Plus, Pencil, Trash2, Save, Package, Filter, Upload, Star, TrendingUp, Percent, Euro, ImagePlus, X, Boxes, Printer, ChevronDown, ChevronUp, CopyPlus } from "lucide-react";
 import { MaterialFileImport } from "@/components/MaterialFileImport";
 import { Textarea } from "@/components/ui/textarea";
 import { useEinheiten } from "@/hooks/useEinheiten";
@@ -563,6 +563,46 @@ export default function InvoiceTemplates() {
     fetchTemplates();
   };
 
+  /**
+   * Artikel duplizieren (Kundenwunsch 01.09.2026). Kopiert die komplette
+   * Zeile (ohne id/created_at), haengt " (Kopie)" an und uebernimmt bei
+   * Sets auch die Komponenten. Danach direkt den Bearbeiten-Dialog oeffnen,
+   * damit Name und Preis gleich angepasst werden koennen.
+   */
+  const handleDuplicate = async (id: string) => {
+    const { data: voll, error: leseErr } = await supabase
+      .from("invoice_templates").select("*").eq("id", id).maybeSingle();
+    if (leseErr || !voll) {
+      toast({ variant: "destructive", title: "Fehler", description: leseErr?.message || "Artikel nicht gefunden." });
+      return;
+    }
+    const kopie: any = { ...voll };
+    delete kopie.id; delete kopie.created_at; delete kopie.updated_at;
+    kopie.name = `${kopie.name || ""} (Kopie)`.trim();
+    if (kopie.kurzbezeichnung) kopie.kurzbezeichnung = `${kopie.kurzbezeichnung} (Kopie)`;
+    kopie.ist_favorit = false;
+    const { data: neu, error } = await supabase
+      .from("invoice_templates").insert(kopie).select("id").single();
+    if (error || !neu) {
+      toast({ variant: "destructive", title: "Fehler", description: error?.message || "Kopieren fehlgeschlagen." });
+      return;
+    }
+    if ((voll as any).ist_set) {
+      const { data: teile } = await (supabase as any).from("invoice_template_components")
+        .select("*").eq("parent_template_id", id);
+      for (const teil of (teile as any[]) || []) {
+        const t: any = { ...teil, parent_template_id: (neu as any).id };
+        delete t.id; delete t.created_at;
+        await (supabase as any).from("invoice_template_components").insert(t);
+      }
+    }
+    toast({ title: "Artikel kopiert", description: "Die Kopie ist zum Anpassen geöffnet." });
+    await fetchTemplates();
+    const { data: frisch } = await supabase
+      .from("invoice_templates").select("*").eq("id", (neu as any).id).maybeSingle();
+    if (frisch) openEdit(frisch as any);
+  };
+
   // Toolbar-Aktionen wirken auf die markierte Zeile
   const editSelected = () => {
     if (selectedRow) openEdit(selectedRow);
@@ -826,6 +866,7 @@ export default function InvoiceTemplates() {
                         <TableHead>Nummer</TableHead>
                         <TableHead>Produkt</TableHead>
                         <TableHead className="text-right">Verkaufspreis</TableHead>
+                        <TableHead className="w-20 print:hidden"><span className="sr-only">Aktionen</span></TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -878,6 +919,22 @@ export default function InvoiceTemplates() {
                             </TableCell>
                             <TableCell className="text-right font-mono text-sm whitespace-nowrap">
                               {vk > 0 ? `€ ${vk.toFixed(2)}` : "–"}
+                            </TableCell>
+                            {/* Kopieren/Löschen direkt an der Zeile
+                                (Kundenwunsch 01.09.2026) */}
+                            <TableCell className="print:hidden" onClick={(e) => e.stopPropagation()}>
+                              <div className="flex justify-end gap-0.5">
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Artikel kopieren"
+                                  onClick={() => void handleDuplicate(t.id)}>
+                                  <CopyPlus className="w-4 h-4 text-muted-foreground" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-7 w-7" title="Artikel löschen"
+                                  onClick={() => {
+                                    if (confirm(`Artikel „${t.kurzbezeichnung || t.name}" wirklich löschen?`)) void handleDelete(t.id);
+                                  }}>
+                                  <Trash2 className="w-4 h-4 text-destructive" />
+                                </Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );
