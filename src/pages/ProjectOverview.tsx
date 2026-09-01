@@ -57,6 +57,9 @@ const ProjectOverview = () => {
     kunde_adresse: "", kunde_plz: "", kunde_ort: "", kunde_email: "", kunde_telefon: "", kunde_uid: "",
     // Projekt-/Leistungsort (gespeichert in projects)
     projekt_adresse: "", projekt_plz: "", projekt_ort: "",
+    // Anfahrt (Kundenvorgabe 02.09.2026): Reisezeit EINE Strecke laut Google
+    // Maps; ab 25 min wird sie als Lenkzeit vergütet.
+    fahrzeit_minuten: "", entfernung_km: "",
     projekt_kontakt_name: "",
   });
   const [customers, setCustomers] = useState<{ id: string; name: string; plz: string | null; ort: string | null }[]>([]);
@@ -288,6 +291,8 @@ const ProjectOverview = () => {
       kunde_telefon: kunde.telefon || "",
       kunde_uid: kunde.uid_nummer || "",
       // Leistungsort / Durchführungsort (aus projects-Tabelle)
+      fahrzeit_minuten: (proj as any).fahrzeit_minuten != null ? String((proj as any).fahrzeit_minuten) : "",
+      entfernung_km: (proj as any).entfernung_km != null ? String((proj as any).entfernung_km).replace(".", ",") : "",
       projekt_adresse: proj.adresse || parts[0] || "",
       projekt_plz: proj.plz || parts[1] || "",
       projekt_ort: (proj as any).ort || parts[2] || "",
@@ -318,6 +323,8 @@ const ProjectOverview = () => {
       plz: editForm.projekt_plz.trim() || null,
       ort: editForm.projekt_ort.trim() || null,
       projekt_kontakt_name: editForm.projekt_kontakt_name.trim() || null,
+      fahrzeit_minuten: editForm.fahrzeit_minuten.trim() ? Math.max(0, Math.round(Number(editForm.fahrzeit_minuten.replace(",", ".")) || 0)) : null,
+      entfernung_km: editForm.entfernung_km.trim() ? Math.max(0, Number(editForm.entfernung_km.replace(",", ".")) || 0) : null,
       customer_id: editForm.customer_id,
     } as any).eq("id", projectId).select("id");
     if (projektFehler || !geaendert?.length) {
@@ -1322,6 +1329,33 @@ const ProjectOverview = () => {
                       placeholder="z.B. Schrattenbach"
                     />
                   </div>
+                </div>
+                {/* Anfahrt für die Lenkzeitvergütung (Kundenvorgabe
+                    02.09.2026): Werte aus Google Maps, EINE Strecke. */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <div>
+                    <Label className="text-xs">Fahrzeit einfach (Minuten)</Label>
+                    <Input
+                      inputMode="numeric"
+                      value={editForm.fahrzeit_minuten}
+                      onChange={(e) => setEditForm(f => ({ ...f, fahrzeit_minuten: e.target.value }))}
+                      placeholder="z.B. 35"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs">Entfernung (km)</Label>
+                    <Input
+                      inputMode="decimal"
+                      value={editForm.entfernung_km}
+                      onChange={(e) => setEditForm(f => ({ ...f, entfernung_km: e.target.value }))}
+                      placeholder="z.B. 42,5"
+                    />
+                  </div>
+                  <p className="col-span-2 text-[11px] text-muted-foreground">
+                    Ab 25 Minuten je Strecke wird die Fahrzeit bei den Stundenbuchungen
+                    automatisch als Lenkzeit vergütet (hin und retour). Darunter zählt
+                    sie als normale Arbeitszeit — ohne Sonderbuchung.
+                  </p>
                 </div>
                 {/* Nur der Name — die Telefonnummer ist auf Kundenwunsch entfallen. */}
                 <div className="pt-1">

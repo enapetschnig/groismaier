@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { toast } from "@/hooks/use-toast";
-import { Download, FileSpreadsheet, Building2, Hammer, ChevronDown, ChevronRight, Pencil, Trash2, Save, Plus, UserCog, CalendarOff, Truck } from "lucide-react";
+import { Download, FileSpreadsheet, Building2, Hammer, ChevronDown, ChevronRight, Pencil, Trash2, Save, Plus, UserCog, CalendarOff, Truck , Car} from "lucide-react";
 import { KBToolbar } from "@/components/kingbill";
 import { toNumber, clamp } from "@/lib/num";
 import { AdminAbsenceDialog } from "@/components/AdminAbsenceDialog";
@@ -33,6 +33,7 @@ import {
 import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
 import { alsISO } from "@/lib/datum";
+import { lenkzeitJeMitarbeiter, lenkzeitText } from "@/lib/lenkzeit";
 
 interface TimeEntry {
   id: string;
@@ -154,6 +155,42 @@ export default function HoursReport() {
 
   // ---- Fahrzeug-Auswertung ------------------------------------------
   const [vehicleStats, setVehicleStats] = useState<VehicleStat[]>([]);
+  /** Lenkzeitvergütung je Mitarbeiter (Kundenvorgabe 02.09.2026) — Grundlage
+   *  für die Lohnverrechnung. */
+  const [lenkzeitRows, setLenkzeitRows] = useState<
+    { userId: string; minutenFahrer: number; minutenBeifahrer: number; betrag: number }[]
+  >([]);
+
+  const fetchLenkzeit = async () => {
+    const [{ data: buchungen }, { data: mitarbeiter }, { data: vorgaben }] = await Promise.all([
+      (supabase.from("time_entries" as never) as any)
+        .select("user_id, lenkzeit_minuten, ist_fahrer, ist_beifahrer")
+        .gte("datum", periodStart).lte("datum", periodEnd).gt("lenkzeit_minuten", 0),
+      supabase.from("employees").select("user_id, fahrer_verguetung, beifahrer_verguetung"),
+      supabase.from("app_settings").select("key, value").in("key", ["lenkzeit_satz_fahrer", "lenkzeit_satz_beifahrer"]),
+    ]);
+    const standard = { fahrer: 0, beifahrer: 0 };
+    for (const v of ((vorgaben as any[]) || [])) {
+      if (v.key === "lenkzeit_satz_fahrer") standard.fahrer = Number(v.value) || 0;
+      if (v.key === "lenkzeit_satz_beifahrer") standard.beifahrer = Number(v.value) || 0;
+    }
+    // Satz am Mitarbeiter gewinnt; sonst der betriebliche Vorgabewert.
+    const proMitarbeiter = new Map<string, { fahrer: number; beifahrer: number }>(
+      ((mitarbeiter as any[]) || []).filter((e) => e.user_id).map((e) => [e.user_id, {
+        fahrer: e.fahrer_verguetung != null ? Number(e.fahrer_verguetung) : standard.fahrer,
+        beifahrer: e.beifahrer_verguetung != null ? Number(e.beifahrer_verguetung) : standard.beifahrer,
+      }]),
+    );
+    setLenkzeitRows(lenkzeitJeMitarbeiter(
+      ((buchungen as any[]) || []).map((b) => ({
+        userId: b.user_id,
+        lenkzeitMinuten: Number(b.lenkzeit_minuten) || 0,
+        istFahrer: b.ist_fahrer,
+        istBeifahrer: b.ist_beifahrer,
+      })),
+      (uid) => proMitarbeiter.get(uid) || standard,
+    ));
+  };
   const [vehicleLoading, setVehicleLoading] = useState(false);
 
   const periodStart = format(new Date(year, month - 1, 1), "yyyy-MM-dd");
@@ -171,6 +208,7 @@ export default function HoursReport() {
   useEffect(() => {
     fetchKostenstellenRows();
     fetchVehicleStats();
+    void fetchLenkzeit();
   }, [month, year]);
 
   const fetchKostenstellenOptions = async () => {
@@ -1290,6 +1328,79 @@ export default function HoursReport() {
 
         {/* ---------------- Kostenstellen ---------------- */}
         <TabsContent value="kostenstellen" className="space-y-4">
+          {/* Lenkzeitvergütung — Grundlage für die Lohnverrechnung
+              (Kundenvorgabe 02.09.2026) */}
+          {lenkzeitRows.length > 0 && (
+            <Card className="kb-panel">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                  <Car className="w-5 h-5" />
+                  Lenkzeitvergütung
+                </CardTitle>
+                <CardDescription className="text-xs sm:text-sm">
+                  Vergütete Fahrzeit im gewählten Zeitraum — je Mitarbeiter getrennt
+                  nach Fahrer und Beifahrer. Sätze stehen unter Stammdaten/Personal.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {renderPeriodPicker()}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b text-left text-xs text-muted-foreground">
+                        <th className="py-2">Mitarbeiter</th>
+                        <th className="py-2 text-right">als Fahrer</th>
+                        <th className="py-2 text-right">als Beifahrer</th>
+                        <th className="py-2 text-right">Vergütung</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {lenkzeitRows
+                        .slice()
+                        .sort((a, b) => b.betrag - a.betrag)
+                        .map((r) => {
+                          const prof = profiles[r.userId];
+                          return (
+                            <tr key={r.userId} className="border-b last:border-0">
+                              <td className="py-2 font-medium">
+                                {prof ? `${prof.vorname} ${prof.nachname}` : "Mitarbeiter"}
+                              </td>
+                              <td className="py-2 text-right tabular-nums">{lenkzeitText(r.minutenFahrer)}</td>
+                              <td className="py-2 text-right tabular-nums">{lenkzeitText(r.minutenBeifahrer)}</td>
+                              <td className="py-2 text-right font-semibold tabular-nums">
+                                {new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(r.betrag)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t font-semibold">
+                        <td className="py-2">Summe</td>
+                        <td className="py-2 text-right tabular-nums">
+                          {lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenFahrer, 0))}
+                        </td>
+                        <td className="py-2 text-right tabular-nums">
+                          {lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenBeifahrer, 0))}
+                        </td>
+                        <td className="py-2 text-right tabular-nums">
+                          {new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" })
+                            .format(lenkzeitRows.reduce((s, r) => s + r.betrag, 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {lenkzeitRows.every((r) => r.betrag === 0) && (
+                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Es sind Lenkzeiten gebucht, aber noch keine Sätze hinterlegt —
+                    unter Stammdaten/Personal je Mitarbeiter „Lenkzeit Fahrer/Beifahrer" eintragen.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Card className="kb-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">

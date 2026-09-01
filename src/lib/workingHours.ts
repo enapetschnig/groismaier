@@ -76,15 +76,16 @@ export function getDefaultWorkTimes(date: Date): WorkTimePreset | null {
     };
   }
 
-  // Fr: 07:00 - 12:00, keine Pause = 5h
+  // Fr: 07:00 - 12:00, 15 min Pause = 4,75 h (Kundenvorgabe 02.09.2026).
+  // Die Pause bleibt wie an den anderen Tagen frei änderbar.
   if (dayOfWeek === 5) {
     return {
       startTime: "07:00",
       endTime: "12:00",
-      pauseStart: "12:00",
-      pauseEnd: "12:00",
-      pauseMinutes: 0,
-      totalHours: 5,
+      pauseStart: "09:00",
+      pauseEnd: "09:15",
+      pauseMinutes: 15,
+      totalHours: 4.75,
     };
   }
 

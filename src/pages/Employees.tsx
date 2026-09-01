@@ -42,6 +42,9 @@ interface Employee {
   position: string | null;
   beschaeftigung_art: string | null;
   stundenlohn: number | null;
+  /** Lenkzeitvergütung je Stunde (Kundenvorgabe 02.09.2026). */
+  fahrer_verguetung?: number | null;
+  beifahrer_verguetung?: number | null;
   iban: string | null;
   bic: string | null;
   bank_name: string | null;
@@ -92,6 +95,8 @@ export default function Employees() {
   const [deleting, setDeleting] = useState(false);
   /** Roh-Text des Stundenlohn-Feldes (damit „25,“ beim Tippen nicht zerfällt). */
   const [stundenlohnText, setStundenlohnText] = useState("");
+  const [fahrerText, setFahrerText] = useState("");
+  const [beifahrerText, setBeifahrerText] = useState("");
 
   useEffect(() => {
     checkAdminAccess();
@@ -335,6 +340,8 @@ export default function Employees() {
     if (selectedEmployee) {
       setFormData(selectedEmployee);
       setStundenlohnText(formatForInput(selectedEmployee.stundenlohn));
+    setFahrerText(formatForInput((selectedEmployee as any).fahrer_verguetung));
+    setBeifahrerText(formatForInput((selectedEmployee as any).beifahrer_verguetung));
       // Hersteller-Größen JE Mitarbeiter laden. Ohne das blieb der State des
       // vorherigen Mitarbeiters stehen — seine Größen „wanderten" scheinbar
       // zu allen anderen (Kundenmeldung 23.08.2026).
@@ -648,6 +655,39 @@ export default function Employees() {
                             setFormData({ ...formData, stundenlohn: parseDecimal(e.target.value) });
                           }}
                           onBlur={() => setStundenlohnText(formatForInput(parseDecimal(stundenlohnText)))}
+                        />
+                      </div>
+                      {/* Lenkzeitvergütung (Kundenvorgabe 02.09.2026): „der
+                          Fahrer bekommt etwas mehr Geld". Leer = betrieblicher
+                          Vorgabewert aus den Einstellungen. */}
+                      <div>
+                        <Label htmlFor="emp-fahrer">Lenkzeit Fahrer (€/Std.)</Label>
+                        <Input
+                          id="emp-fahrer"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="z.B. 12,00"
+                          value={fahrerText}
+                          onChange={(e) => {
+                            setFahrerText(e.target.value);
+                            setFormData({ ...formData, fahrer_verguetung: parseDecimal(e.target.value) });
+                          }}
+                          onBlur={() => setFahrerText(formatForInput(parseDecimal(fahrerText)))}
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="emp-beifahrer">Lenkzeit Beifahrer (€/Std.)</Label>
+                        <Input
+                          id="emp-beifahrer"
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="z.B. 8,00"
+                          value={beifahrerText}
+                          onChange={(e) => {
+                            setBeifahrerText(e.target.value);
+                            setFormData({ ...formData, beifahrer_verguetung: parseDecimal(e.target.value) });
+                          }}
+                          onBlur={() => setBeifahrerText(formatForInput(parseDecimal(beifahrerText)))}
                         />
                       </div>
                       <div>

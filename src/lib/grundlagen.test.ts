@@ -125,12 +125,13 @@ describe("Regelarbeitszeit", () => {
     expect(netto).toBeCloseTo(p!.totalHours, 2);
   });
 
-  it("Freitag hat 5h-Vorgabe (07:00-12:00), Sa/So arbeitsfrei", () => {
+  it("Freitag: 07:00-12:00 mit 15 min Pause = 4,75 h (Vorgabe 02.09.2026)", () => {
     const fr = getDefaultWorkTimes(new Date(2026, 6, 31)); // Fr
     expect(fr).not.toBeNull();
     expect(fr!.startTime).toBe("07:00");
     expect(fr!.endTime).toBe("12:00");
-    expect(fr!.totalHours).toBeCloseTo(5, 2);
+    expect(fr!.pauseMinutes).toBe(15);
+    expect(fr!.totalHours).toBeCloseTo(4.75, 2);
     expect(getDefaultWorkTimes(new Date(2026, 7, 1))).toBeNull();  // Sa
     expect(getDefaultWorkTimes(new Date(2026, 7, 2))).toBeNull();  // So
   });
@@ -142,7 +143,7 @@ describe("Regelarbeitszeit", () => {
     // Anwesenheits-Vorgabe (getDefaultWorkTimes) ist bewusst höher als das
     // Soll — die Differenz ist der laufende Zeitausgleich.
     expect(getDefaultWorkTimes(new Date(2026, 6, 27))!.totalHours).toBeCloseTo(9, 2);
-    expect(getDefaultWorkTimes(new Date(2026, 6, 31))!.totalHours).toBeCloseTo(5, 2);
+    expect(getDefaultWorkTimes(new Date(2026, 6, 31))!.totalHours).toBeCloseTo(4.75, 2);
   });
 
   it("Wochensoll passt zur Summe der Tagesvorgaben", () => {

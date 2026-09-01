@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users } from "lucide-react";
+import { Clock, Plus, AlertTriangle, CheckCircle2, Calendar, Sun, Trash2, Users , Car} from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { MultiEmployeeSelect } from "@/components/MultiEmployeeSelect";
 import { PageHeader } from "@/components/PageHeader";
@@ -28,6 +28,7 @@ import {
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 import { KOSTENSTELLEN_ICONS } from "@/lib/kostenstellen";
 import { heuteISO } from "@/lib/datum";
+import { istLenkzeitPflichtig, lenkzeitMinutenProTag, lenkzeitText } from "@/lib/lenkzeit";
 
 type Project = {
   id: string;
@@ -86,6 +87,10 @@ interface TimeBlock {
   /** Kundenwunsch 25.08.2026: aus diesem Zeitblock beim Speichern gleich
    *  einen Regiebericht erstellen (Fotos dann dort ergänzen). */
   regieberichtErstellen: boolean;
+  /** Lenkzeitvergütung (Kundenvorgabe 02.09.2026): Wer ist gefahren?
+   *  Nur relevant, wenn das Projekt ≥ 25 min entfernt ist. */
+  istFahrer: boolean;
+  istBeifahrer: boolean;
 }
 
 type Disturbance = {
@@ -116,6 +121,8 @@ const createDefaultBlock = (startTime = "", endTime = "", pauseStart = "", pause
   wetterschichtStunden: "",
   geraetId: "",
   regieberichtErstellen: false,
+  istFahrer: false,
+  istBeifahrer: false,
 });
 
 const TimeTracking = () => {
@@ -356,20 +363,20 @@ const TimeTracking = () => {
       // Fallback auf RLS-gefilterten Direktzugriff
       const { data } = await supabase
         .from("projects")
-        .select("id, name, status, plz")
+        .select("id, name, status, plz, fahrzeit_minuten")
         .not("status", "eq", "Abgeschlossen")
         .order("name");
-      if (data) setProjects(data);
+      if (data) setProjects(data as any);
     } else if (rpcData) {
       // RPC liefert nur id, name, status — plz nachladen für UI
       const ids = (rpcData as any[]).map((p: any) => p.id);
       if (ids.length > 0) {
         const { data: full } = await supabase
           .from("projects")
-          .select("id, name, status, plz")
+          .select("id, name, status, plz, fahrzeit_minuten")
           .in("id", ids)
           .order("name");
-        if (full) setProjects(full);
+        if (full) setProjects(full as any);
       } else {
         setProjects([]);
       }
@@ -826,10 +833,22 @@ const TimeTracking = () => {
         ? null
         : (block.projectId || null);
 
+      // Lenkzeit: nur bei Baustellen-Projekten ab der Schwelle, und nur wenn
+      // Fahrer oder Beifahrer angehakt ist (Kundenvorgabe 02.09.2026).
+      const projektFahrzeit = projectIdVal
+        ? (projects.find((pr: any) => pr.id === projectIdVal) as any)?.fahrzeit_minuten
+        : null;
+      const lenkzeitVal = (block.istFahrer || block.istBeifahrer)
+        ? lenkzeitMinutenProTag(projektFahrzeit)
+        : 0;
+
       const mainEntry = {
         user_id: user.id,
         datum: selectedDate,
         project_id: projectIdVal,
+        ist_fahrer: !!block.istFahrer,
+        ist_beifahrer: !block.istFahrer && !!block.istBeifahrer,
+        lenkzeit_minuten: lenkzeitVal,
         kostenstelle: block.kostenstelle,
         disturbance_id: null,
         taetigkeit: block.taetigkeit,
@@ -849,10 +868,15 @@ const TimeTracking = () => {
       };
 
       // Prepare team entries
+      // Mitgebuchte Kollegen sind Beifahrer — gefahren ist der, der die
+      // Buchung anlegt und „Fahrer" angehakt hat.
       const teamEntries = block.selectedEmployees.map(workerId => ({
         user_id: workerId,
         datum: selectedDate,
         project_id: projectIdVal,
+        ist_fahrer: false,
+        ist_beifahrer: lenkzeitVal > 0,
+        lenkzeit_minuten: lenkzeitVal,
         kostenstelle: block.kostenstelle,
         taetigkeit: block.taetigkeit,
         stunden: blockHours,
@@ -1445,6 +1469,55 @@ const TimeTracking = () => {
                           <Sun className="w-3 h-3 mr-1" />
                           Regelarbeitszeit einfüllen
                         </Button>
+
+                        {/* Lenkzeitvergütung (Kundenvorgabe 02.09.2026):
+                            erscheint nur, wenn das gewählte Projekt weit genug
+                            weg ist — sonst gibt es keine Sonderbuchung. */}
+                        {(() => {
+                          const pr: any = projects.find((x: any) => x.id === block.projectId);
+                          const fahrzeit = pr?.fahrzeit_minuten;
+                          if (!block.projectId || !istLenkzeitPflichtig(fahrzeit)) return null;
+                          const minuten = lenkzeitMinutenProTag(fahrzeit);
+                          return (
+                            <div className="rounded-md border border-blue-300/60 bg-blue-50/50 px-3 py-2 dark:bg-blue-950/20">
+                              <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-xs font-medium text-blue-900 dark:text-blue-200">
+                                <Car className="h-3.5 w-3.5" />
+                                Lenkzeit {lenkzeitText(minuten)} (hin und retour, {fahrzeit} min je Strecke)
+                              </div>
+                              <div className="flex flex-wrap gap-4">
+                                <label className="flex min-h-[36px] cursor-pointer items-center gap-2 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={block.istFahrer}
+                                    onChange={(e) => updateBlock(block.id, {
+                                      istFahrer: e.target.checked,
+                                      istBeifahrer: e.target.checked ? false : block.istBeifahrer,
+                                    })}
+                                  />
+                                  Ich bin gefahren (Fahrer)
+                                </label>
+                                <label className="flex min-h-[36px] cursor-pointer items-center gap-2 text-sm">
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={block.istBeifahrer}
+                                    onChange={(e) => updateBlock(block.id, {
+                                      istBeifahrer: e.target.checked,
+                                      istFahrer: e.target.checked ? false : block.istFahrer,
+                                    })}
+                                  />
+                                  Mitgefahren (Beifahrer)
+                                </label>
+                              </div>
+                              {block.selectedEmployees.length > 0 && (block.istFahrer || block.istBeifahrer) && (
+                                <p className="mt-1 text-[11px] text-blue-900/80 dark:text-blue-200/80">
+                                  Die {block.selectedEmployees.length} mitgebuchten Kollegen werden als Beifahrer vermerkt.
+                                </p>
+                              )}
+                            </div>
+                          );
+                        })()}
 
                         {/* Wetterschicht — nur bei Baustelle, rein informativ */}
                         {block.locationType === "baustelle" && (
