@@ -7,25 +7,26 @@ jobs:
       - env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
-          Q="SELECT 'Belege gesamt' AS was, count(*)::text AS zahl FROM invoices
-             UNION ALL SELECT 'davon Angebote', count(*)::text FROM invoices WHERE typ='angebot'
-             UNION ALL SELECT 'davon Rechnungen', count(*)::text FROM invoices WHERE typ IN ('rechnung','schlussrechnung')
-             UNION ALL SELECT 'Positionen gesamt', count(*)::text FROM invoice_items
-             UNION ALL SELECT 'Positionen mit Preis>0', count(*)::text FROM invoice_items WHERE einzelpreis > 0
-             UNION ALL SELECT 'verschiedene Positionstexte', count(DISTINCT lower(btrim(coalesce(kurztext,beschreibung))))::text FROM invoice_items WHERE einzelpreis > 0
-             UNION ALL SELECT 'Kalkulationen', count(*)::text FROM kalkulationen
-             UNION ALL SELECT 'Artikel im Katalog', count(*)::text FROM invoice_templates WHERE ist_aktiv
-             UNION ALL SELECT 'Projekte', count(*)::text FROM projects
-             UNION ALL SELECT 'Projekte mit Soll UND Ist', count(*)::text FROM projects p
-                WHERE EXISTS (SELECT 1 FROM invoices i WHERE i.project_id=p.id AND i.typ IN ('angebot','auftragsbestaetigung'))
-                  AND EXISTS (SELECT 1 FROM time_entries t WHERE t.project_id=p.id)
-             UNION ALL SELECT 'Zeitbuchungen', count(*)::text FROM time_entries
-             UNION ALL SELECT 'Aeltester Beleg', coalesce(min(datum)::text,'-') FROM invoices
-             UNION ALL SELECT 'Neuester Beleg', coalesce(max(datum)::text,'-') FROM invoices;"
+          Q="WITH t AS (
+               SELECT lower(btrim(coalesce(nullif(btrim(kurztext),''), beschreibung))) AS text,
+                      einzelpreis, einheit
+                 FROM invoice_items WHERE einzelpreis > 0 AND coalesce(kurztext, beschreibung) IS NOT NULL
+             ), g AS (
+               SELECT text, count(*) AS n, min(einzelpreis) AS pmin, max(einzelpreis) AS pmax,
+                      round(avg(einzelpreis)::numeric,2) AS pschnitt
+                 FROM t GROUP BY text
+             )
+             SELECT 'Texte die MEHRFACH vorkommen' AS was, count(*)::text AS zahl FROM g WHERE n > 1
+             UNION ALL SELECT 'Positionen in solchen Texten', coalesce(sum(n),0)::text FROM g WHERE n > 1
+             UNION ALL SELECT 'Texte ab 5x', count(*)::text FROM g WHERE n >= 5
+             UNION ALL SELECT 'Texte ab 20x', count(*)::text FROM g WHERE n >= 20
+             UNION ALL SELECT 'Laengster Text (Zeichen)', max(length(text))::text FROM g
+             UNION ALL SELECT 'TOP: ' || text, n::text || 'x, ' || pmin || '-' || pmax || ' EUR (Schnitt ' || pschnitt || ')'
+               FROM g WHERE n >= 20 ORDER BY 1;"
           python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" "$Q" \
           | curl -sS -X POST "https://api.supabase.com/v1/projects/tdehljzmqwmfgfoyyoee/database/query" \
             -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json" -d @- \
           | python3 -c "
           import json,sys
-          for r in json.load(sys.stdin): print('MESS>>>', r['was'].ljust(30), r['zahl'])
+          for r in json.load(sys.stdin): print('MESS>>>', r['was'][:60].ljust(62), r['zahl'])
           "
