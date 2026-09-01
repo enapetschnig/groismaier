@@ -721,6 +721,10 @@ export default function InvoiceDetail() {
   const [regieImportIds, setRegieImportIds] = useState<string[]>([]);
   /** „Baustelle abrechnen" — alle Quellen des Projekts auf einmal (01.09.2026). */
   const [baustelleOffen, setBaustelleOffen] = useState(false);
+  /** Übernommene Zeit-/Materialbuchungen — beim Speichern als verrechnet
+   *  vermerkt, damit sie beim nächsten Mal als „verrechnet in …" dastehen. */
+  const [zeitImportIds, setZeitImportIds] = useState<string[]>([]);
+  const [materialImportIds, setMaterialImportIds] = useState<string[]>([]);
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
   const [priceAdjustOpen, setPriceAdjustOpen] = useState(false);
@@ -3822,6 +3826,23 @@ Beleg: /invoices/${invoiceId || id || ""}`,
           });
         }
         setRegieImportIds([]);
+      }
+
+      // Übernommene Arbeitszeiten und Materialbuchungen bekommen denselben
+      // Vermerk wie die Regieberichte — dadurch zeigt „Baustelle abrechnen"
+      // beim nächsten Mal „verrechnet in <Nummer>" statt sie stumm erneut
+      // anzubieten (Kundenwunsch 01.09.2026).
+      if (savedId && _invoiceLikeTypesForVerrechnet.has(form.typ)) {
+        if (zeitImportIds.length > 0) {
+          const { error } = await (supabase.from("time_entries") as any)
+            .update({ verrechnet_in_invoice_id: savedId }).in("id", zeitImportIds);
+          if (!error) setZeitImportIds([]);
+        }
+        if (materialImportIds.length > 0) {
+          const { error } = await (supabase.from("material_entries") as any)
+            .update({ verrechnet_in_invoice_id: savedId }).in("id", materialImportIds);
+          if (!error) setMaterialImportIds([]);
+        }
       }
 
       setIsDirty(false);
@@ -9176,9 +9197,8 @@ Beleg: /invoices/${invoiceId || id || ""}`,
           open={baustelleOffen}
           onClose={() => setBaustelleOffen(false)}
           projectId={form.project_id || null}
-          customerId={form.customer_id || null}
           belegId={istNeueRoute ? null : (invoiceId || id || null)}
-          onUebernehmen={(positionen, regieIds) => {
+          onUebernehmen={({ positionen, regieIds, zeitIds, materialIds }) => {
             const neu = positionen.map((p, idx) => ({
               position: items.length + idx + 1,
               beschreibung: p.beschreibung,
@@ -9195,6 +9215,8 @@ Beleg: /invoices/${invoiceId || id || ""}`,
             // Beim Speichern werden diese Berichte als verrechnet markiert
             // (bestehende Mechanik) — Duplikate vermeiden.
             if (regieIds.length > 0) setRegieImportIds((alt) => [...new Set([...alt, ...regieIds])]);
+            if (zeitIds.length > 0) setZeitImportIds((alt) => [...new Set([...alt, ...zeitIds])]);
+            if (materialIds.length > 0) setMaterialImportIds((alt) => [...new Set([...alt, ...materialIds])]);
             setBaustelleOffen(false);
             toast({
               title: "Baustelle übernommen",

@@ -1,20 +1,20 @@
 // ============================================================================
-// „Baustelle abrechnen" — alles aus einem Projekt in EINE Rechnung
+// „Baustelle abrechnen" — alles, was zu einem Projekt gehört, auf einen Blick
 //
-// Kundenwunsch 30.08./01.09.2026: „BV Schindelböck ist fertig und kann
-// abgerechnet werden … wie bekomm ich die geleistete Anzahlungsrechnung als
-// Abzug rein, und muss ich die gebuchten Stunden per Hand eingeben?" —
-// und danach: „eine Schlussrechnung, wo alles drauf ist von der Baustelle".
+// Kundenwünsche 30.08./01.09.2026:
+//   „eine Schlussrechnung, wo alles drauf ist von der Baustelle"
+//   „alles was dem Projekt zugeordnet ist"
+//   „übersichtlicher, die einzelnen Positionen aufgeschlüsselt"
+//   „wenn schon mal eine Arbeitszeit in eine Rechnung reingeschrieben wurde,
+//    dann unter verrechnet — aber ich will ALLE Sachen von diesem Projekt sehen"
 //
-// Bisher lagen die Quellen an vier verschiedenen Knöpfen (Angebot,
-// Regiebericht, Zeit & Material, Anzahlungsabzug nur über die Belegliste).
-// Dieser Dialog sammelt sie an EINER Stelle, zeigt je Block die Summe und
-// übernimmt die Auswahl in einem Zug.
+// Deshalb: sieben Blöcke, jeder aufklappbar, JEDE Position einzeln an- und
+// abwählbar mit „Menge × Preis = Summe". Bereits Verrechnetes wird NICHT
+// versteckt, sondern mit Vermerk gezeigt („verrechnet in R-2026-041") und
+// ist nur nicht vorgewählt.
 //
-// WICHTIG — keine Doppelverrechnung: Stunden, die zu einem Regiebericht
-// gehören (time_entries.disturbance_id gesetzt), erscheinen NUR im Block
-// „Regieberichte". Werden die Berichte abgewählt, tauchen ihre Stunden im
-// Zeit-Block auf — nie in beiden gleichzeitig.
+// Keine Doppelverrechnung: Stunden und Material, die an einem Regiebericht
+// hängen, stehen ausschließlich im Regie-Block.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -22,60 +22,77 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, ClipboardList, Clock, Package, Receipt, FileText, Truck, ShoppingCart } from "lucide-react";
+import {
+  Loader2, ClipboardList, Clock, Package, Receipt, FileText, Truck,
+  ShoppingCart, ChevronDown, ChevronRight,
+} from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal } from "@/lib/num";
 import { verteileEingangsrechnung } from "@/lib/nachkalkulation";
 
 export interface AbrechnungsPosition {
+  /** Eindeutig je Zeile — trägt die Einzelauswahl. */
+  id: string;
   beschreibung: string;
   menge: number;
   einheit: string;
   einzelpreis: number;
-  /** Steuerfreie Brutto-Zeile (Anzahlungsabzug). */
+  /** Steuerfreie Brutto-Zeile (Rechnungs-Abzug). */
   mwst_exempt?: boolean;
+  /** „bezahlt · € 12.000" bzw. „verrechnet in R-2026-041" — reine Anzeige. */
+  vermerk?: string;
+  /** Steht schon auf einer Rechnung: sichtbar, aber nicht vorgewählt. */
+  erledigt?: boolean;
+  /** Quell-Zeilen, die beim Speichern als verrechnet markiert werden. */
+  quelle?: { art: "regie" | "zeit" | "material"; ids: string[] };
 }
 
-type BlockKey = "angebot" | "regie" | "zeit" | "material" | "lieferschein" | "eingangsrechnung" | "anzahlung";
+type BlockKey = "angebot" | "regie" | "zeit" | "material" | "lieferschein" | "eingangsrechnung" | "abzug";
 
 interface Block {
   key: BlockKey;
   titel: string;
   hinweis: string;
   positionen: AbrechnungsPosition[];
-  /** IDs der Regieberichte — werden nach dem Speichern als verrechnet markiert. */
-  regieIds?: string[];
+}
+
+/** Was der Dialog an den Beleg übergibt. */
+export interface AbrechnungsErgebnis {
+  positionen: AbrechnungsPosition[];
+  regieIds: string[];
+  zeitIds: string[];
+  materialIds: string[];
 }
 
 const eur = (n: number) =>
   new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(n || 0);
+const zahl = (n: number) =>
+  new Intl.NumberFormat("de-AT", { maximumFractionDigits: 2 }).format(n || 0);
 
 const ICONS: Record<BlockKey, typeof Clock> = {
   angebot: FileText, regie: ClipboardList, zeit: Clock, material: Package,
-  lieferschein: Truck, eingangsrechnung: ShoppingCart, anzahlung: Receipt,
+  lieferschein: Truck, eingangsrechnung: ShoppingCart, abzug: Receipt,
 };
 
 export function BaustelleAbrechnenDialog({
-  open, onClose, projectId, customerId, belegId, onUebernehmen,
+  open, onClose, projectId, belegId, onUebernehmen,
 }: {
   open: boolean;
   onClose: () => void;
   projectId: string | null;
-  customerId: string | null;
-  /** Der Beleg selbst — er darf sich nicht als Anzahlung selbst abziehen. */
+  /** Der Beleg selbst — er darf sich nicht selbst abziehen. */
   belegId: string | null;
-  onUebernehmen: (positionen: AbrechnungsPosition[], regieIds: string[]) => void;
+  onUebernehmen: (ergebnis: AbrechnungsErgebnis) => void;
 }) {
   const { toast } = useToast();
   const [laedt, setLaedt] = useState(false);
   const [bloecke, setBloecke] = useState<Block[]>([]);
-  const [gewaehlt, setGewaehlt] = useState<Set<BlockKey>>(new Set());
+  /** Angehakte Positionen — die Wahrheit der Auswahl (nicht der Block). */
+  const [gewaehlt, setGewaehlt] = useState<Set<string>>(new Set());
+  const [offeneBloecke, setOffeneBloecke] = useState<Set<BlockKey>>(new Set());
   const [stundensatz, setStundensatz] = useState(70);
-  /** Aufschlag auf eingekaufte Leistungen (Kundenwunsch 01.09.2026: die
-   *  Eingangsrechnungen sind EK — weiterverrechnet wird mit Aufschlag). */
   const [erAufschlag, setErAufschlag] = useState(0);
-  const [erRoh, setErRoh] = useState<{ beschreibung: string; betrag: number }[]>([]);
 
   const laden = useCallback(async () => {
     if (!projectId) return;
@@ -87,8 +104,18 @@ export function BaustelleAbrechnenDialog({
       setStundensatz(satz);
 
       const gefunden: Block[] = [];
+      const vorwahl = new Set<string>();
 
-      // ── 1) Auftrag: Positionen aus Auftragsbestätigung, sonst Angebot ──────
+      // Belegnummern für den Vermerk „verrechnet in …".
+      const { data: alleBelege } = await supabase
+        .from("invoices").select("id, nummer").eq("project_id", projectId);
+      const belegNummer = new Map<string, string>(
+        ((alleBelege as any[]) || []).map((b) => [b.id, b.nummer || "Rechnung"]),
+      );
+      const vermerkFuer = (id: string | null | undefined) =>
+        id ? `verrechnet in ${belegNummer.get(id) || "einer Rechnung"}` : undefined;
+
+      // ── 1) Auftrag: Auftragsbestätigung, sonst Angebot ────────────────────
       const { data: auftraege } = await supabase
         .from("invoices")
         .select("id, typ, nummer, status, datum")
@@ -101,10 +128,11 @@ export function BaustelleAbrechnenDialog({
       if (auftrag) {
         const { data: pos } = await supabase
           .from("invoice_items")
-          .select("beschreibung, kurztext, menge, einheit, einzelpreis, gesamtpreis")
+          .select("id, beschreibung, kurztext, menge, einheit, einzelpreis")
           .eq("invoice_id", auftrag.id)
           .order("position");
-        const positionen = ((pos as any[]) || []).map((p) => ({
+        const positionen: AbrechnungsPosition[] = ((pos as any[]) || []).map((p) => ({
+          id: `auftrag:${p.id}`,
           beschreibung: p.kurztext || p.beschreibung || "",
           menge: Number(p.menge) || 0,
           einheit: p.einheit ?? "",
@@ -113,26 +141,26 @@ export function BaustelleAbrechnenDialog({
         if (positionen.length > 0) {
           gefunden.push({
             key: "angebot",
-            titel: `Auftrag: ${auftrag.typ === "auftragsbestaetigung" ? "Auftragsbestätigung" : "Angebot"} ${auftrag.nummer || ""}`.trim(),
-            hinweis: "Die vereinbarten Positionen — Grundlage der Schlussrechnung.",
+            titel: `Auftrag — ${auftrag.typ === "auftragsbestaetigung" ? "Auftragsbestätigung" : "Angebot"} ${auftrag.nummer || ""}`.trim(),
+            hinweis: "Die vereinbarten Positionen.",
             positionen,
           });
+          positionen.forEach((p) => vorwahl.add(p.id));
         }
       }
 
-      // ── 2) Offene Regieberichte (Stunden, Material, Maschinen) ────────────
+      // ── 2) Regieberichte — ALLE, verrechnete mit Vermerk ──────────────────
       const { data: berichte } = await supabase
         .from("disturbances")
-        .select("id, datum, beschreibung, stunden, is_verrechnet")
+        .select("id, datum, beschreibung, stunden, is_verrechnet, verrechnet_in_invoice_id")
         .eq("project_id", projectId)
-        .eq("is_verrechnet", false)
         .order("datum");
       const regieIds = ((berichte as any[]) || []).map((b) => b.id);
       if (regieIds.length > 0) {
         const [{ data: arbeiter }, { data: materialien }, { data: maschinen }] = await Promise.all([
           supabase.from("disturbance_workers").select("disturbance_id, user_id").in("disturbance_id", regieIds),
-          supabase.from("disturbance_materials").select("disturbance_id, material, menge, einheit, einzelpreis").in("disturbance_id", regieIds),
-          (supabase.from("disturbance_maschinen" as never) as any).select("disturbance_id, maschine, menge, einheit, einzelpreis").in("disturbance_id", regieIds),
+          supabase.from("disturbance_materials").select("id, disturbance_id, material, menge, einheit, einzelpreis").in("disturbance_id", regieIds),
+          (supabase.from("disturbance_maschinen" as never) as any).select("id, disturbance_id, maschine, menge, einheit, einzelpreis").in("disturbance_id", regieIds),
         ]);
         const proBericht = new Map<string, number>();
         for (const w of ((arbeiter as any[]) || [])) {
@@ -140,212 +168,263 @@ export function BaustelleAbrechnenDialog({
         }
         const positionen: AbrechnungsPosition[] = [];
         for (const b of ((berichte as any[]) || [])) {
+          const fertig = !!b.is_verrechnet;
+          const vermerk = fertig ? (vermerkFuer(b.verrechnet_in_invoice_id) || "bereits verrechnet") : undefined;
+          const datum = b.datum ? new Date(b.datum).toLocaleDateString("de-AT") : "";
           const anzahl = Math.max(1, proBericht.get(b.id) || 1);
           const stunden = (Number(b.stunden) || 0) * anzahl;
           if (stunden > 0) {
-            const datum = b.datum ? new Date(b.datum).toLocaleDateString("de-AT") : "";
             positionen.push({
+              id: `regie:${b.id}`,
               beschreibung: `Regiearbeit ${datum}${anzahl > 1 ? ` (${anzahl} Mitarbeiter)` : ""}${b.beschreibung ? ` — ${String(b.beschreibung).slice(0, 60)}` : ""}`,
               menge: Math.round(stunden * 100) / 100,
               einheit: "Std.",
               einzelpreis: satz,
+              vermerk, erledigt: fertig,
+              quelle: { art: "regie", ids: [b.id] },
+            });
+          }
+          for (const m of ((materialien as any[]) || []).filter((x) => x.disturbance_id === b.id)) {
+            // menge ist ein FREITEXT-Feld („2,5") — parseFloat schnitte am Komma ab.
+            const menge = parseDecimal(String(m.menge ?? "")) ?? 0;
+            if (menge <= 0) continue;
+            positionen.push({
+              id: `regiemat:${m.id}`,
+              beschreibung: `${m.material || "Material"} (Regie ${datum})`,
+              menge, einheit: m.einheit || "Stk.",
+              einzelpreis: Number(m.einzelpreis) || 0,
+              vermerk, erledigt: fertig,
+              quelle: { art: "regie", ids: [b.id] },
+            });
+          }
+          for (const ma of ((maschinen as any[]) || []).filter((x) => x.disturbance_id === b.id)) {
+            const menge = parseDecimal(String(ma.menge ?? "")) ?? 0;
+            if (menge <= 0) continue;
+            positionen.push({
+              id: `regiemasch:${ma.id}`,
+              beschreibung: `${ma.maschine || "Maschine"} (Regie ${datum})`,
+              menge, einheit: ma.einheit || "Std.",
+              einzelpreis: Number(ma.einzelpreis) || 0,
+              vermerk, erledigt: fertig,
+              quelle: { art: "regie", ids: [b.id] },
             });
           }
         }
-        // menge ist ein FREITEXT-Feld („2,5") — parseFloat schnitte am
-        // Komma ab und machte daraus 2.
-        for (const m of ((materialien as any[]) || [])) {
-          const menge = parseDecimal(String(m.menge ?? "")) ?? 0;
-          if (menge <= 0) continue;
-          positionen.push({
-            beschreibung: `${m.material || "Material"} (Regie)`,
-            menge,
-            einheit: m.einheit || "Stk.",
-            einzelpreis: Number(m.einzelpreis) || 0,
-          });
-        }
-        // Maschinen/Geräte des Einsatzes gehören genauso dazu.
-        for (const ma of ((maschinen as any[]) || [])) {
-          const menge = parseDecimal(String(ma.menge ?? "")) ?? 0;
-          if (menge <= 0) continue;
-          positionen.push({
-            beschreibung: `${ma.maschine || "Maschine"} (Regie)`,
-            menge,
-            einheit: ma.einheit || "Std.",
-            einzelpreis: Number(ma.einzelpreis) || 0,
-          });
-        }
         if (positionen.length > 0) {
+          const offen = positionen.filter((p) => !p.erledigt).length;
           gefunden.push({
             key: "regie",
-            titel: `Regieberichte (${regieIds.length} offen)`,
-            hinweis: "Stunden × Mitarbeiter und das gebuchte Material. Werden nach dem Speichern als verrechnet markiert.",
+            titel: `Regieberichte — ${offen} offen, ${positionen.length - offen} verrechnet`,
+            hinweis: "Stunden × Mitarbeiter, Material und Maschinen der Einsätze.",
             positionen,
-            regieIds,
           });
+          positionen.filter((p) => !p.erledigt).forEach((p) => vorwahl.add(p.id));
         }
       }
 
-      // ── 3) Gebuchte Arbeitszeiten OHNE Regiebericht ───────────────────────
+      // ── 3) Arbeitszeiten ohne Regiebericht — ALLE, je Mitarbeiter ─────────
       const { data: zeiten } = await supabase
         .from("time_entries")
-        .select("user_id, stunden, taetigkeit, disturbance_id")
+        .select("id, user_id, stunden, datum, disturbance_id, verrechnet_in_invoice_id")
         .eq("project_id", projectId);
       const freieZeiten = ((zeiten as any[]) || []).filter((z) => !z.disturbance_id);
       if (freieZeiten.length > 0) {
         const userIds = [...new Set(freieZeiten.map((z) => z.user_id).filter(Boolean))];
         const [{ data: profile }, { data: mitarbeiter }] = await Promise.all([
           supabase.from("profiles").select("id, vorname, nachname, hidden").in("id", userIds),
-          supabase.from("employees").select("user_id, stundenlohn, position").in("user_id", userIds),
+          supabase.from("employees").select("user_id, stundenlohn").in("user_id", userIds),
         ]);
         const sichtbar = new Set(((profile as any[]) || []).filter((p) => !p.hidden).map((p) => p.id));
         const namen = new Map(((profile as any[]) || []).map((p) => [p.id, `${p.vorname || ""} ${p.nachname || ""}`.trim()]));
         const saetze = new Map(((mitarbeiter as any[]) || []).map((e) => [e.user_id, Number(e.stundenlohn) || satz]));
-        const summen = new Map<string, number>();
+        // Je Mitarbeiter getrennt nach offen / bereits verrechnet — sonst
+        // stünde eine halb verrechnete Summe da.
+        const gruppen = new Map<string, { stunden: number; ids: string[] }>();
         for (const z of freieZeiten) {
           if (!sichtbar.has(z.user_id)) continue;
-          summen.set(z.user_id, (summen.get(z.user_id) || 0) + (Number(z.stunden) || 0));
+          const key = `${z.user_id}|${z.verrechnet_in_invoice_id || ""}`;
+          const g = gruppen.get(key) || { stunden: 0, ids: [] };
+          g.stunden += Number(z.stunden) || 0;
+          g.ids.push(z.id);
+          gruppen.set(key, g);
         }
-        const positionen = [...summen.entries()]
-          .filter(([, std]) => std > 0)
-          .map(([uid, std]) => ({
-            beschreibung: `Arbeitszeit ${namen.get(uid) || "Mitarbeiter"}`,
-            menge: Math.round(std * 100) / 100,
-            einheit: "Std.",
-            einzelpreis: saetze.get(uid) || satz,
-          }));
+        const positionen: AbrechnungsPosition[] = [...gruppen.entries()]
+          .filter(([, g]) => g.stunden > 0)
+          .map(([key, g]) => {
+            const [uid, rechnungId] = key.split("|");
+            const fertig = !!rechnungId;
+            return {
+              id: `zeit:${key}`,
+              beschreibung: `Arbeitszeit ${namen.get(uid) || "Mitarbeiter"}`,
+              menge: Math.round(g.stunden * 100) / 100,
+              einheit: "Std.",
+              einzelpreis: saetze.get(uid) || satz,
+              vermerk: fertig ? vermerkFuer(rechnungId) : undefined,
+              erledigt: fertig,
+              quelle: { art: "zeit" as const, ids: g.ids },
+            };
+          });
         if (positionen.length > 0) {
           gefunden.push({
             key: "zeit",
             titel: "Gebuchte Arbeitszeiten",
-            hinweis: "Stunden aus der Zeiterfassung, die zu KEINEM Regiebericht gehören — je Mitarbeiter zusammengefasst.",
+            hinweis: "Stunden aus der Zeiterfassung ohne Regiebericht, je Mitarbeiter zusammengefasst.",
             positionen,
           });
+          positionen.filter((p) => !p.erledigt).forEach((p) => vorwahl.add(p.id));
         }
       }
 
-      // ── 4) Materialbuchungen des Projekts ─────────────────────────────────
+      // ── 4) Materialbuchungen — ALLE ───────────────────────────────────────
       const { data: materialBuchungen } = await supabase
         .from("material_entries")
-        .select("material, menge, einheit, einzelpreis, typ, disturbance_id")
+        .select("id, material, menge, einheit, einzelpreis, disturbance_id, verrechnet_in_invoice_id")
         .eq("project_id", projectId);
-      const materialPos = ((materialBuchungen as any[]) || [])
-        // Buchungen, die an einem Regiebericht hängen, stehen bereits im
-        // Regie-Block — sonst stünde dasselbe Material zweimal auf der Rechnung.
+      const materialPos: AbrechnungsPosition[] = ((materialBuchungen as any[]) || [])
+        // Was am Regiebericht hängt, steht schon im Regie-Block.
         .filter((m) => !m.disturbance_id)
         .map((m) => ({
+          id: `mat:${m.id}`,
           beschreibung: m.material || "Material",
           menge: parseDecimal(String(m.menge ?? "")) ?? 0,
           einheit: m.einheit || "Stk.",
           einzelpreis: Number(m.einzelpreis) || 0,
+          vermerk: vermerkFuer(m.verrechnet_in_invoice_id),
+          erledigt: !!m.verrechnet_in_invoice_id,
+          quelle: { art: "material" as const, ids: [m.id] },
         }))
         .filter((m) => m.menge > 0);
       if (materialPos.length > 0) {
         gefunden.push({
           key: "material",
           titel: "Materialbuchungen",
-          hinweis: "Auf das Projekt gebuchte Entnahmen. Preise ggf. noch prüfen.",
+          hinweis: "Auf das Projekt gebuchte Entnahmen — Preise prüfen, oft Einkaufspreise.",
           positionen: materialPos,
         });
+        // Bewusst NICHT vorgewählt (Preise prüfen).
       }
 
-      // ── 5) Offene Lieferscheine des Projekts ──────────────────────────────
+      // ── 5) Lieferscheine ──────────────────────────────────────────────────
       const { data: lieferscheine } = await supabase
         .from("invoices")
         .select("id, nummer, datum, status")
         .eq("project_id", projectId)
         .eq("typ", "lieferschein")
-        .not("status", "in", "(storniert,verrechnet,entwurf)")
+        .not("status", "in", "(storniert,entwurf)")
         .order("datum");
       const lsIds = ((lieferscheine as any[]) || []).map((l) => l.id);
       if (lsIds.length > 0) {
+        const lsInfo = new Map(((lieferscheine as any[]) || []).map((l) => [l.id, l]));
         const { data: lsPos } = await supabase
           .from("invoice_items")
-          .select("invoice_id, beschreibung, kurztext, menge, einheit, einzelpreis")
+          .select("id, invoice_id, beschreibung, kurztext, menge, einheit, einzelpreis")
           .in("invoice_id", lsIds)
           .order("position");
-        const positionen = ((lsPos as any[]) || [])
-          .map((p) => ({
-            beschreibung: p.kurztext || p.beschreibung || "",
-            menge: Number(p.menge) || 0,
-            einheit: p.einheit ?? "",
-            einzelpreis: Number(p.einzelpreis) || 0,
-          }))
-          .filter((p) => p.beschreibung || p.menge);
+        const positionen: AbrechnungsPosition[] = ((lsPos as any[]) || [])
+          .map((p) => {
+            const ls: any = lsInfo.get(p.invoice_id);
+            const fertig = ls?.status === "verrechnet";
+            return {
+              id: `ls:${p.id}`,
+              beschreibung: `${p.kurztext || p.beschreibung || ""} (LS ${ls?.nummer || ""})`.trim(),
+              menge: Number(p.menge) || 0,
+              einheit: p.einheit ?? "",
+              einzelpreis: Number(p.einzelpreis) || 0,
+              vermerk: fertig ? "Lieferschein bereits verrechnet" : undefined,
+              erledigt: fertig,
+            };
+          })
+          .filter((p) => p.menge || p.einzelpreis);
         if (positionen.length > 0) {
           gefunden.push({
             key: "lieferschein",
-            titel: `Offene Lieferscheine (${lsIds.length})`,
-            hinweis: "Geliefertes Material, das noch nicht verrechnet ist.",
+            titel: `Lieferscheine (${lsIds.length})`,
+            hinweis: "Geliefertes Material.",
             positionen,
           });
+          positionen.filter((p) => !p.erledigt).forEach((p) => vorwahl.add(p.id));
         }
       }
 
-      // ── 6) Eingangsrechnungen des Projekts (Zukauf weiterverrechnen) ──────
-      // Kopf-Zuordnung UND Teilbeträge — dieselbe Verteilung wie in der
-      // Nachkalkulation, damit Lager-Anteile korrekt draußen bleiben.
+      // ── 6) Eingangsrechnungen (Zukauf) ────────────────────────────────────
       const { data: erRechnungen } = await supabase
         .from("purchase_invoices")
-        .select("id, lieferant, rechnungsnummer, rechnungsdatum, betrag_netto, status, project_id, kategorie");
+        .select("id, lieferant, rechnungsnummer, betrag_netto, status, project_id, kategorie, verrechnet_in_invoice_id");
       const { data: erZuordnungen } = await (supabase.from("purchase_invoice_allocations" as never) as any)
         .select("project_id, purchase_invoice_id, betrag_netto, beschreibung, ziel");
-      const erPositionen: { beschreibung: string; betrag: number }[] = [];
+      const erPos: AbrechnungsPosition[] = [];
       for (const r of ((erRechnungen as any[]) || [])) {
+        // Dieselbe Verteilung wie die Nachkalkulation: Teilbeträge stimmen,
+        // Lager-Anteile bleiben draußen.
         const anteile = verteileEingangsrechnung(r as any, ((erZuordnungen as any[]) || []) as any);
-        for (const a of anteile) {
-          if (a.project_id !== projectId || a.betrag === 0) continue;
+        anteile.forEach((a, i) => {
+          if (a.project_id !== projectId || a.betrag === 0) return;
           const wer = [r.lieferant, r.rechnungsnummer].filter(Boolean).join(" ");
-          erPositionen.push({
+          erPos.push({
+            id: `er:${r.id}:${i}`,
             beschreibung: a.beschreibung || `${wer || "Eingangsrechnung"}${r.kategorie ? ` (${r.kategorie})` : ""}`,
-            betrag: a.betrag,
+            menge: 1, einheit: "pausch.", einzelpreis: a.betrag,
+            vermerk: vermerkFuer(r.verrechnet_in_invoice_id),
+            erledigt: !!r.verrechnet_in_invoice_id,
           });
-        }
-      }
-      setErRoh(erPositionen);
-      if (erPositionen.length > 0) {
-        gefunden.push({
-          key: "eingangsrechnung",
-          titel: `Eingangsrechnungen (${erPositionen.length})`,
-          hinweis: "Zugekauftes Material und Fremdleistungen dieser Baustelle — Einkaufspreise, Aufschlag unten einstellbar.",
-          positionen: erPositionen.map((e) => ({
-            beschreibung: e.beschreibung, menge: 1, einheit: "pausch.", einzelpreis: e.betrag,
-          })),
         });
       }
+      if (erPos.length > 0) {
+        gefunden.push({
+          key: "eingangsrechnung",
+          titel: `Eingangsrechnungen (${erPos.length})`,
+          hinweis: "Zugekauftes Material und Fremdleistungen — Einkaufspreise, Aufschlag unten einstellbar.",
+          positionen: erPos,
+        });
+        // Bewusst NICHT vorgewählt.
+      }
 
-      // ── 7) Anzahlungen der Belegkette als Abzug ───────────────────────────
-      const { data: anzahlungen } = await supabase
+      // ── 7) Bereits gestellte Rechnungen als Abzug ─────────────────────────
+      const { data: gestellte } = await supabase
         .from("invoices")
-        .select("id, nummer, datum, brutto_summe, status")
+        .select("id, typ, nummer, datum, brutto_summe, bezahlt_betrag, status")
         .eq("project_id", projectId)
-        .eq("typ", "anzahlungsrechnung")
-        .not("status", "eq", "storniert");
-      const abzuege = ((anzahlungen as any[]) || [])
+        .in("typ", ["anzahlungsrechnung", "rechnung", "schlussrechnung"])
+        .not("status", "in", "(storniert,entwurf)")
+        .order("datum");
+      const abzuege: AbrechnungsPosition[] = ((gestellte as any[]) || [])
         .filter((a) => a.id !== belegId)
-        .map((a) => ({
-          beschreibung: `Abzug Anzahlung ${a.nummer || ""} vom ${a.datum ? new Date(a.datum).toLocaleDateString("de-AT") : ""} (brutto, MwSt-frei)`.replace(/\s+/g, " ").trim(),
-          menge: 1,
-          einheit: "pausch.",
-          einzelpreis: -(Number(a.brutto_summe) || 0),
-          mwst_exempt: true,
-        }))
+        .map((a) => {
+          const brutto = Number(a.brutto_summe) || 0;
+          const bezahlt = Number(a.bezahlt_betrag) || 0;
+          const label = a.typ === "anzahlungsrechnung" ? "Anzahlung"
+            : a.typ === "schlussrechnung" ? "Schlussrechnung" : "Rechnung";
+          const stand = a.status === "bezahlt" || (bezahlt > 0 && bezahlt >= brutto - 0.01)
+            ? `bezahlt · ${eur(brutto)}`
+            : bezahlt > 0 ? `teilbezahlt ${eur(bezahlt)} von ${eur(brutto)}`
+            : `offen · ${eur(brutto)}`;
+          return {
+            id: `abzug:${a.id}`,
+            beschreibung: `Abzug ${label} ${a.nummer || ""} vom ${a.datum ? new Date(a.datum).toLocaleDateString("de-AT") : ""} (brutto, MwSt-frei)`.replace(/\s+/g, " ").trim(),
+            menge: 1, einheit: "pausch.", einzelpreis: -brutto,
+            mwst_exempt: true,
+            vermerk: stand,
+            // Anzahlungen gehören immer abgezogen; sonstige Rechnungen
+            // entscheidet der Chef selbst.
+            erledigt: a.typ !== "anzahlungsrechnung",
+          };
+        })
         .filter((a) => a.einzelpreis !== 0);
       if (abzuege.length > 0) {
         gefunden.push({
-          key: "anzahlung",
-          titel: `Anzahlungen abziehen (${abzuege.length})`,
-          hinweis: "Bereits gestellte Anzahlungsrechnungen — als steuerfreie Brutto-Zeile, wie es das Finanzamt verlangt.",
+          key: "abzug",
+          titel: `Bereits gestellte Rechnungen (${abzuege.length})`,
+          hinweis: "Als steuerfreie Brutto-Abzugszeile — Anzahlungen sind vorgewählt.",
           positionen: abzuege,
         });
+        abzuege.filter((a) => !a.erledigt).forEach((a) => vorwahl.add(a.id));
       }
 
       setBloecke(gefunden);
-      // Alles vorgewählt außer den Materialbuchungen: deren Preise sind oft
-      // Einkaufspreise und müssen erst geprüft werden.
-      // Material und Zukauf bewusst NICHT vorgewählt: dort stehen
-      // Einkaufspreise, die erst geprüft bzw. mit Aufschlag versehen gehören.
-      setGewaehlt(new Set(gefunden.map((b) => b.key).filter((k) => k !== "material" && k !== "eingangsrechnung")));
+      setGewaehlt(vorwahl);
+      // Übersichtlich starten: bei wenigen Zeilen alles offen, sonst zu.
+      const gesamtZeilen = gefunden.reduce((s, b) => s + b.positionen.length, 0);
+      setOffeneBloecke(gesamtZeilen <= 12 ? new Set(gefunden.map((b) => b.key)) : new Set());
     } finally {
       setLaedt(false);
     }
@@ -353,49 +432,71 @@ export function BaustelleAbrechnenDialog({
 
   useEffect(() => { if (open) void laden(); }, [open, laden]);
 
-  /**
-   * Eingangsrechnungen sind EINKAUFSpreise — mit Aufschlag wird daraus der
-   * Verkaufspreis. Die Umrechnung passiert erst hier, damit der Schieber
-   * ohne Neuladen wirkt und die Rohbeträge erhalten bleiben.
-   */
-  const mitAufschlag = useCallback((b: Block): Block => {
-    if (b.key !== "eingangsrechnung" || erAufschlag === 0) return b;
-    const f = 1 + erAufschlag / 100;
-    return {
-      ...b,
-      positionen: b.positionen.map((p) => ({
-        ...p,
-        einzelpreis: Math.round(p.einzelpreis * f * 100) / 100,
-      })),
-    };
-  }, [erAufschlag]);
+  /** Eingangsrechnungen sind EK — der Aufschlag macht daraus den VK. */
+  const preisVon = useCallback((b: Block, p: AbrechnungsPosition) =>
+    b.key === "eingangsrechnung" && erAufschlag !== 0
+      ? Math.round(p.einzelpreis * (1 + erAufschlag / 100) * 100) / 100
+      : p.einzelpreis,
+  [erAufschlag]);
 
-  const summeVon = (b: Block) =>
-    mitAufschlag(b).positionen.reduce((s, p) => s + p.menge * p.einzelpreis, 0);
+  const summeVon = useCallback((b: Block) =>
+    b.positionen.filter((p) => gewaehlt.has(p.id))
+      .reduce((s, p) => s + p.menge * preisVon(b, p), 0),
+  [gewaehlt, preisVon]);
+
   const gesamt = useMemo(
-    () => bloecke.filter((b) => gewaehlt.has(b.key)).reduce((s, b) => s + summeVon(b), 0),
+    () => bloecke.reduce((s, b) => s + summeVon(b), 0),
+    [bloecke, summeVon],
+  );
+  const anzahlGewaehlt = useMemo(
+    () => bloecke.reduce((s, b) => s + b.positionen.filter((p) => gewaehlt.has(p.id)).length, 0),
     [bloecke, gewaehlt],
   );
 
+  const blockUmschalten = (b: Block, an: boolean) =>
+    setGewaehlt((alt) => {
+      const neu = new Set(alt);
+      for (const p of b.positionen) {
+        if (an) neu.add(p.id); else neu.delete(p.id);
+      }
+      return neu;
+    });
+
   const uebernehmen = () => {
-    const aktive = bloecke.filter((b) => gewaehlt.has(b.key)).map(mitAufschlag);
-    const positionen = aktive.flatMap((b) => b.positionen);
+    const positionen: AbrechnungsPosition[] = [];
+    const regieIds = new Set<string>();
+    const zeitIds = new Set<string>();
+    const materialIds = new Set<string>();
+    for (const b of bloecke) {
+      for (const p of b.positionen) {
+        if (!gewaehlt.has(p.id)) continue;
+        positionen.push({ ...p, einzelpreis: preisVon(b, p) });
+        if (p.quelle?.art === "regie") p.quelle.ids.forEach((i) => regieIds.add(i));
+        if (p.quelle?.art === "zeit") p.quelle.ids.forEach((i) => zeitIds.add(i));
+        if (p.quelle?.art === "material") p.quelle.ids.forEach((i) => materialIds.add(i));
+      }
+    }
     if (positionen.length === 0) {
-      toast({ variant: "destructive", title: "Nichts gewählt", description: "Bitte mindestens einen Block auswählen." });
+      toast({ variant: "destructive", title: "Nichts gewählt", description: "Bitte mindestens eine Position anhaken." });
       return;
     }
-    const regieIds = aktive.flatMap((b) => b.regieIds || []);
-    onUebernehmen(positionen, regieIds);
+    onUebernehmen({
+      positionen,
+      regieIds: [...regieIds],
+      zeitIds: [...zeitIds],
+      materialIds: [...materialIds],
+    });
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="flex max-h-[92vh] max-w-3xl flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Baustelle abrechnen</DialogTitle>
           <DialogDescription>
-            Alles, was auf dieser Baustelle angefallen ist — auf einmal in den Beleg.
-            Wähle aus, was drauf soll; die Positionen sind danach ganz normal änderbar.
+            Alles, was diesem Projekt zugeordnet ist. Was bereits auf einer
+            Rechnung steht, ist mit Vermerk gekennzeichnet und nicht vorgewählt —
+            anhaken kannst du es trotzdem.
           </DialogDescription>
         </DialogHeader>
 
@@ -407,84 +508,123 @@ export function BaustelleAbrechnenDialog({
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : bloecke.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Für dieses Projekt ist nichts Abrechenbares gefunden worden — keine Auftragspositionen,
-            keine offenen Regieberichte, keine gebuchten Stunden oder Materialien.
+            Für dieses Projekt ist nichts Abrechenbares hinterlegt.
           </p>
         ) : (
-          <div className="space-y-2">
-            {bloecke.map((b) => {
-              const Icon = ICONS[b.key];
-              const an = gewaehlt.has(b.key);
-              return (
-                <label
-                  key={b.key}
-                  className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 ${an ? "border-primary/50 bg-primary/5" : "bg-background"}`}
-                >
-                  <Checkbox
-                    checked={an}
-                    className="mt-0.5"
-                    onCheckedChange={(c) =>
-                      setGewaehlt((alt) => {
-                        const neu = new Set(alt);
-                        if (c) neu.add(b.key); else neu.delete(b.key);
-                        return neu;
-                      })
-                    }
-                  />
-                  <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <span className="text-sm font-semibold">{b.titel}</span>
-                      <span className={`text-sm font-bold tabular-nums ${summeVon(b) < 0 ? "text-destructive" : ""}`}>
+          <>
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+              {bloecke.map((b) => {
+                const Icon = ICONS[b.key];
+                const auf = offeneBloecke.has(b.key);
+                const gewaehltImBlock = b.positionen.filter((p) => gewaehlt.has(p.id)).length;
+                return (
+                  <div key={b.key} className="rounded-md border">
+                    <div className="flex items-start gap-2 p-3">
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={gewaehltImBlock === b.positionen.length ? true : gewaehltImBlock > 0 ? "indeterminate" : false}
+                        onCheckedChange={(c) => blockUmschalten(b, !!c)}
+                        aria-label={`${b.titel} komplett an- oder abwählen`}
+                      />
+                      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={() =>
+                          setOffeneBloecke((alt) => {
+                            const neu = new Set(alt);
+                            if (neu.has(b.key)) neu.delete(b.key); else neu.add(b.key);
+                            return neu;
+                          })
+                        }
+                      >
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          {auf ? <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />}
+                          <span className="text-sm font-semibold">{b.titel}</span>
+                          <span className="text-xs text-muted-foreground">
+                            ({gewaehltImBlock} von {b.positionen.length} gewählt)
+                          </span>
+                        </span>
+                        <span className="block pl-5 text-xs text-muted-foreground">{b.hinweis}</span>
+                      </button>
+                      <span className={`shrink-0 text-sm font-bold tabular-nums ${summeVon(b) < 0 ? "text-destructive" : ""}`}>
                         {eur(summeVon(b))}
                       </span>
                     </div>
-                    <p className="text-xs text-muted-foreground">{b.hinweis}</p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {b.positionen.length} Position{b.positionen.length === 1 ? "" : "en"}
-                      {b.positionen.length > 0 && `: ${b.positionen.slice(0, 2).map((p) => p.beschreibung).join(" · ")}${b.positionen.length > 2 ? " …" : ""}`}
-                    </p>
-                  </div>
-                </label>
-              );
-            })}
 
-            <div className="flex items-center justify-between rounded-md border bg-muted/30 px-3 py-2">
-              <span className="text-sm font-semibold">Summe der Auswahl (netto)</span>
-              <span className="text-base font-bold tabular-nums">{eur(gesamt)}</span>
+                    {auf && (
+                      <div className="divide-y border-t">
+                        {b.positionen.map((p) => {
+                          const an = gewaehlt.has(p.id);
+                          const preis = preisVon(b, p);
+                          return (
+                            <label
+                              key={p.id}
+                              className={`flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-muted/40 ${p.erledigt && !an ? "opacity-60" : ""}`}
+                            >
+                              <Checkbox
+                                checked={an}
+                                onCheckedChange={(c) =>
+                                  setGewaehlt((alt) => {
+                                    const neu = new Set(alt);
+                                    if (c) neu.add(p.id); else neu.delete(p.id);
+                                    return neu;
+                                  })
+                                }
+                              />
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate">{p.beschreibung}</span>
+                                {p.vermerk && (
+                                  <span className={`text-[11px] ${p.erledigt ? "text-amber-700" : "text-muted-foreground"}`}>
+                                    {p.vermerk}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="hidden shrink-0 whitespace-nowrap text-xs text-muted-foreground tabular-nums sm:block">
+                                {zahl(p.menge)} {p.einheit} × {eur(preis)}
+                              </span>
+                              <span className={`w-24 shrink-0 text-right text-sm font-medium tabular-nums ${p.menge * preis < 0 ? "text-destructive" : ""}`}>
+                                {eur(p.menge * preis)}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
-            {gewaehlt.has("eingangsrechnung") && (
-              <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
-                <ShoppingCart className="h-4 w-4 shrink-0 text-amber-700" />
-                <span className="text-sm text-amber-900">Aufschlag auf zugekaufte Leistungen</span>
-                <div className="flex items-center gap-1">
+
+            <div className="space-y-2 border-t pt-3">
+              {bloecke.some((b) => b.key === "eingangsrechnung" && b.positionen.some((p) => gewaehlt.has(p.id))) && (
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
+                  <ShoppingCart className="h-4 w-4 shrink-0 text-amber-700" />
+                  <span className="text-sm text-amber-900">Aufschlag auf zugekaufte Leistungen</span>
                   {[0, 10, 15, 20, 35].map((v) => (
                     <button
-                      key={v}
-                      type="button"
-                      onClick={() => setErAufschlag(v)}
+                      key={v} type="button" onClick={() => setErAufschlag(v)}
                       className={`min-h-[32px] rounded border px-2 text-sm ${erAufschlag === v ? "border-amber-600 bg-white font-semibold text-amber-900" : "bg-white/70"}`}
-                    >
-                      {v} %
-                    </button>
+                    >{v} %</button>
                   ))}
                 </div>
-                <span className="text-xs text-amber-900/80">
-                  Einkauf {eur(erRoh.reduce((s, e) => s + e.betrag, 0))} → Verkauf{" "}
-                  {eur(erRoh.reduce((s, e) => s + e.betrag, 0) * (1 + erAufschlag / 100))}
+              )}
+              <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
+                <span className="text-sm font-semibold">
+                  {anzahlGewaehlt} Position{anzahlGewaehlt === 1 ? "" : "en"} gewählt — Summe netto
                 </span>
+                <span className="text-base font-bold tabular-nums">{eur(gesamt)}</span>
               </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              Regiestundensatz: {eur(stundensatz)}/Std. (Einstellungen). Stunden aus
-              Regieberichten stehen nur im Regie-Block — nie doppelt.
-            </p>
-
-            <div className="flex justify-end gap-2 pt-1">
-              <Button variant="outline" onClick={onClose}>Abbrechen</Button>
-              <Button onClick={uebernehmen}>In den Beleg übernehmen</Button>
+              <p className="text-xs text-muted-foreground">
+                Regiestundensatz {eur(stundensatz)}/Std. · Stunden und Material aus
+                Regieberichten stehen nur im Regie-Block, nie doppelt.
+              </p>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={onClose}>Abbrechen</Button>
+                <Button onClick={uebernehmen}>In den Beleg übernehmen</Button>
+              </div>
             </div>
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>

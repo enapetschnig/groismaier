@@ -92,3 +92,47 @@ describe("Zukauf aus Eingangsrechnungen", () => {
     expect(mitAufschlag(ek, 35)).toBe(5130);
   });
 });
+
+describe("Verrechnetes bleibt sichtbar, aber abgewählt (01.09.2026)", () => {
+  /** Vorauswahl-Regel des Dialogs, hier als reine Funktion gespiegelt. */
+  const vorgewaehlt = (p: { erledigt?: boolean }) => !p.erledigt;
+
+  it("bereits verrechnete Zeilen werden gezeigt, aber nicht angehakt", () => {
+    const zeilen = [
+      { id: "a", erledigt: false },
+      { id: "b", erledigt: true },   // steht schon auf R-2026-041
+    ];
+    // Beide sichtbar — nichts wird versteckt
+    expect(zeilen).toHaveLength(2);
+    expect(zeilen.filter(vorgewaehlt).map((z) => z.id)).toEqual(["a"]);
+  });
+
+  it("Arbeitszeiten trennen offen und verrechnet je Mitarbeiter", () => {
+    const zeiten = [
+      { user_id: "u1", stunden: 8, verrechnet_in_invoice_id: null },
+      { user_id: "u1", stunden: 4, verrechnet_in_invoice_id: null },
+      { user_id: "u1", stunden: 6, verrechnet_in_invoice_id: "r1" },
+    ];
+    const gruppen = new Map<string, number>();
+    for (const z of zeiten) {
+      const key = `${z.user_id}|${z.verrechnet_in_invoice_id || ""}`;
+      gruppen.set(key, (gruppen.get(key) || 0) + z.stunden);
+    }
+    // Zwei Zeilen: 12 h offen, 6 h verrechnet — keine vermischte Summe
+    expect(gruppen.get("u1|")).toBe(12);
+    expect(gruppen.get("u1|r1")).toBe(6);
+  });
+
+  it("Abzug: Anzahlungen vorgewählt, sonstige Rechnungen nicht", () => {
+    const belege = [
+      { typ: "anzahlungsrechnung", brutto: 12000 },
+      { typ: "rechnung", brutto: 5000 },
+    ];
+    const zeilen = belege.map((b) => ({
+      einzelpreis: -b.brutto,
+      erledigt: b.typ !== "anzahlungsrechnung",
+    }));
+    expect(zeilen.filter(vorgewaehlt)).toHaveLength(1);
+    expect(zeilen.filter(vorgewaehlt)[0].einzelpreis).toBe(-12000);
+  });
+});
