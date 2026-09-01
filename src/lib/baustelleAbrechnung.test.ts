@@ -8,6 +8,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { parseDecimal } from "./num";
+import { verteileEingangsrechnung } from "./nachkalkulation";
 
 /** Stunden zählen NUR im Regie-Block, wenn sie an einem Bericht hängen. */
 const freieZeiten = (zeiten: { stunden: number; disturbance_id: string | null }[]) =>
@@ -61,5 +62,33 @@ describe("Baustelle abrechnen — keine Doppelverrechnung", () => {
     expect(zeile.mwst_exempt).toBe(true);
     // Schlussrechnung: Auftrag 30.000 minus Anzahlung 12.000 brutto
     expect(30000 + zeile.menge * zeile.einzelpreis).toBe(18000);
+  });
+});
+
+describe("Zukauf aus Eingangsrechnungen", () => {
+  it("nimmt NUR den Anteil dieses Projekts — Lager bleibt draußen", () => {
+    const rechnung = { id: "e1", project_id: "p1", betrag_netto: 5000, status: "offen" } as any;
+    const zuordnungen = [
+      { project_id: "p1", purchase_invoice_id: "e1", betrag_netto: 3000, beschreibung: "Holz BV Knapp" },
+      { project_id: null, purchase_invoice_id: "e1", betrag_netto: 1200, ziel: "lager" },
+    ] as any;
+    const anteile = verteileEingangsrechnung(rechnung, zuordnungen);
+    const fuerProjekt = anteile.filter((a) => a.project_id === "p1").reduce((s, a) => s + a.betrag, 0);
+    // 3.000 zugeordnet + 800 Rest am Kopfprojekt; die 1.200 Lager NICHT
+    expect(fuerProjekt).toBe(3800);
+    expect(anteile.some((a) => a.betrag === 1200)).toBe(false);
+  });
+
+  it("abgelehnte Eingangsrechnungen zählen nie", () => {
+    const abgelehnt = { id: "e2", project_id: "p1", betrag_netto: 999, status: "abgelehnt" } as any;
+    expect(verteileEingangsrechnung(abgelehnt, [])).toEqual([]);
+  });
+
+  it("Aufschlag rechnet Einkauf auf Verkauf hoch", () => {
+    const ek = 3800;
+    const mitAufschlag = (v: number, prozent: number) => Math.round(v * (1 + prozent / 100) * 100) / 100;
+    expect(mitAufschlag(ek, 0)).toBe(3800);
+    expect(mitAufschlag(ek, 15)).toBe(4370);
+    expect(mitAufschlag(ek, 35)).toBe(5130);
   });
 });

@@ -22,10 +22,11 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, ClipboardList, Clock, Package, Receipt, FileText } from "lucide-react";
+import { Loader2, ClipboardList, Clock, Package, Receipt, FileText, Truck, ShoppingCart } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { parseDecimal } from "@/lib/num";
+import { verteileEingangsrechnung } from "@/lib/nachkalkulation";
 
 export interface AbrechnungsPosition {
   beschreibung: string;
@@ -36,7 +37,7 @@ export interface AbrechnungsPosition {
   mwst_exempt?: boolean;
 }
 
-type BlockKey = "angebot" | "regie" | "zeit" | "material" | "anzahlung";
+type BlockKey = "angebot" | "regie" | "zeit" | "material" | "lieferschein" | "eingangsrechnung" | "anzahlung";
 
 interface Block {
   key: BlockKey;
@@ -51,7 +52,8 @@ const eur = (n: number) =>
   new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(n || 0);
 
 const ICONS: Record<BlockKey, typeof Clock> = {
-  angebot: FileText, regie: ClipboardList, zeit: Clock, material: Package, anzahlung: Receipt,
+  angebot: FileText, regie: ClipboardList, zeit: Clock, material: Package,
+  lieferschein: Truck, eingangsrechnung: ShoppingCart, anzahlung: Receipt,
 };
 
 export function BaustelleAbrechnenDialog({
@@ -70,6 +72,10 @@ export function BaustelleAbrechnenDialog({
   const [bloecke, setBloecke] = useState<Block[]>([]);
   const [gewaehlt, setGewaehlt] = useState<Set<BlockKey>>(new Set());
   const [stundensatz, setStundensatz] = useState(70);
+  /** Aufschlag auf eingekaufte Leistungen (Kundenwunsch 01.09.2026: die
+   *  Eingangsrechnungen sind EK — weiterverrechnet wird mit Aufschlag). */
+  const [erAufschlag, setErAufschlag] = useState(0);
+  const [erRoh, setErRoh] = useState<{ beschreibung: string; betrag: number }[]>([]);
 
   const laden = useCallback(async () => {
     if (!projectId) return;
@@ -243,7 +249,72 @@ export function BaustelleAbrechnenDialog({
         });
       }
 
-      // ── 5) Anzahlungen der Belegkette als Abzug ───────────────────────────
+      // ── 5) Offene Lieferscheine des Projekts ──────────────────────────────
+      const { data: lieferscheine } = await supabase
+        .from("invoices")
+        .select("id, nummer, datum, status")
+        .eq("project_id", projectId)
+        .eq("typ", "lieferschein")
+        .not("status", "in", "(storniert,verrechnet,entwurf)")
+        .order("datum");
+      const lsIds = ((lieferscheine as any[]) || []).map((l) => l.id);
+      if (lsIds.length > 0) {
+        const { data: lsPos } = await supabase
+          .from("invoice_items")
+          .select("invoice_id, beschreibung, kurztext, menge, einheit, einzelpreis")
+          .in("invoice_id", lsIds)
+          .order("position");
+        const positionen = ((lsPos as any[]) || [])
+          .map((p) => ({
+            beschreibung: p.kurztext || p.beschreibung || "",
+            menge: Number(p.menge) || 0,
+            einheit: p.einheit ?? "",
+            einzelpreis: Number(p.einzelpreis) || 0,
+          }))
+          .filter((p) => p.beschreibung || p.menge);
+        if (positionen.length > 0) {
+          gefunden.push({
+            key: "lieferschein",
+            titel: `Offene Lieferscheine (${lsIds.length})`,
+            hinweis: "Geliefertes Material, das noch nicht verrechnet ist.",
+            positionen,
+          });
+        }
+      }
+
+      // ── 6) Eingangsrechnungen des Projekts (Zukauf weiterverrechnen) ──────
+      // Kopf-Zuordnung UND Teilbeträge — dieselbe Verteilung wie in der
+      // Nachkalkulation, damit Lager-Anteile korrekt draußen bleiben.
+      const { data: erRechnungen } = await supabase
+        .from("purchase_invoices")
+        .select("id, lieferant, rechnungsnummer, rechnungsdatum, betrag_netto, status, project_id, kategorie");
+      const { data: erZuordnungen } = await (supabase.from("purchase_invoice_allocations" as never) as any)
+        .select("project_id, purchase_invoice_id, betrag_netto, beschreibung, ziel");
+      const erPositionen: { beschreibung: string; betrag: number }[] = [];
+      for (const r of ((erRechnungen as any[]) || [])) {
+        const anteile = verteileEingangsrechnung(r as any, ((erZuordnungen as any[]) || []) as any);
+        for (const a of anteile) {
+          if (a.project_id !== projectId || a.betrag === 0) continue;
+          const wer = [r.lieferant, r.rechnungsnummer].filter(Boolean).join(" ");
+          erPositionen.push({
+            beschreibung: a.beschreibung || `${wer || "Eingangsrechnung"}${r.kategorie ? ` (${r.kategorie})` : ""}`,
+            betrag: a.betrag,
+          });
+        }
+      }
+      setErRoh(erPositionen);
+      if (erPositionen.length > 0) {
+        gefunden.push({
+          key: "eingangsrechnung",
+          titel: `Eingangsrechnungen (${erPositionen.length})`,
+          hinweis: "Zugekauftes Material und Fremdleistungen dieser Baustelle — Einkaufspreise, Aufschlag unten einstellbar.",
+          positionen: erPositionen.map((e) => ({
+            beschreibung: e.beschreibung, menge: 1, einheit: "pausch.", einzelpreis: e.betrag,
+          })),
+        });
+      }
+
+      // ── 7) Anzahlungen der Belegkette als Abzug ───────────────────────────
       const { data: anzahlungen } = await supabase
         .from("invoices")
         .select("id, nummer, datum, brutto_summe, status")
@@ -272,7 +343,9 @@ export function BaustelleAbrechnenDialog({
       setBloecke(gefunden);
       // Alles vorgewählt außer den Materialbuchungen: deren Preise sind oft
       // Einkaufspreise und müssen erst geprüft werden.
-      setGewaehlt(new Set(gefunden.map((b) => b.key).filter((k) => k !== "material")));
+      // Material und Zukauf bewusst NICHT vorgewählt: dort stehen
+      // Einkaufspreise, die erst geprüft bzw. mit Aufschlag versehen gehören.
+      setGewaehlt(new Set(gefunden.map((b) => b.key).filter((k) => k !== "material" && k !== "eingangsrechnung")));
     } finally {
       setLaedt(false);
     }
@@ -280,15 +353,32 @@ export function BaustelleAbrechnenDialog({
 
   useEffect(() => { if (open) void laden(); }, [open, laden]);
 
+  /**
+   * Eingangsrechnungen sind EINKAUFSpreise — mit Aufschlag wird daraus der
+   * Verkaufspreis. Die Umrechnung passiert erst hier, damit der Schieber
+   * ohne Neuladen wirkt und die Rohbeträge erhalten bleiben.
+   */
+  const mitAufschlag = useCallback((b: Block): Block => {
+    if (b.key !== "eingangsrechnung" || erAufschlag === 0) return b;
+    const f = 1 + erAufschlag / 100;
+    return {
+      ...b,
+      positionen: b.positionen.map((p) => ({
+        ...p,
+        einzelpreis: Math.round(p.einzelpreis * f * 100) / 100,
+      })),
+    };
+  }, [erAufschlag]);
+
   const summeVon = (b: Block) =>
-    b.positionen.reduce((s, p) => s + p.menge * p.einzelpreis, 0);
+    mitAufschlag(b).positionen.reduce((s, p) => s + p.menge * p.einzelpreis, 0);
   const gesamt = useMemo(
     () => bloecke.filter((b) => gewaehlt.has(b.key)).reduce((s, b) => s + summeVon(b), 0),
     [bloecke, gewaehlt],
   );
 
   const uebernehmen = () => {
-    const aktive = bloecke.filter((b) => gewaehlt.has(b.key));
+    const aktive = bloecke.filter((b) => gewaehlt.has(b.key)).map(mitAufschlag);
     const positionen = aktive.flatMap((b) => b.positionen);
     if (positionen.length === 0) {
       toast({ variant: "destructive", title: "Nichts gewählt", description: "Bitte mindestens einen Block auswählen." });
@@ -363,6 +453,28 @@ export function BaustelleAbrechnenDialog({
               <span className="text-sm font-semibold">Summe der Auswahl (netto)</span>
               <span className="text-base font-bold tabular-nums">{eur(gesamt)}</span>
             </div>
+            {gewaehlt.has("eingangsrechnung") && (
+              <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
+                <ShoppingCart className="h-4 w-4 shrink-0 text-amber-700" />
+                <span className="text-sm text-amber-900">Aufschlag auf zugekaufte Leistungen</span>
+                <div className="flex items-center gap-1">
+                  {[0, 10, 15, 20, 35].map((v) => (
+                    <button
+                      key={v}
+                      type="button"
+                      onClick={() => setErAufschlag(v)}
+                      className={`min-h-[32px] rounded border px-2 text-sm ${erAufschlag === v ? "border-amber-600 bg-white font-semibold text-amber-900" : "bg-white/70"}`}
+                    >
+                      {v} %
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-amber-900/80">
+                  Einkauf {eur(erRoh.reduce((s, e) => s + e.betrag, 0))} → Verkauf{" "}
+                  {eur(erRoh.reduce((s, e) => s + e.betrag, 0) * (1 + erAufschlag / 100))}
+                </span>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               Regiestundensatz: {eur(stundensatz)}/Std. (Einstellungen). Stunden aus
               Regieberichten stehen nur im Regie-Block — nie doppelt.
