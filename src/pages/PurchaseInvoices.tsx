@@ -215,6 +215,9 @@ export default function PurchaseInvoices() {
     return invoices.filter(inv => {
       if (statusFilter === "verrechnet") {
         if (!inv.verrechnet_am) return false;
+      } else if (statusFilter === "rueckfrage") {
+        // Offene Rückfragen der Buchhaltung (Kundenwunsch 01.09.2026)
+        if (!(inv as any).rueckfrage_am || (inv as any).rueckfrage_erledigt_am) return false;
       } else if (statusFilter !== "alle") {
         if (inv.status !== statusFilter) return false;
       }
@@ -456,6 +459,7 @@ export default function PurchaseInvoices() {
                 <SelectItem value="offen">Offen</SelectItem>
                 <SelectItem value="bezahlt">Bezahlt</SelectItem>
                 <SelectItem value="verrechnet">Verrechnet</SelectItem>
+                <SelectItem value="rueckfrage">❓ Rückfragen</SelectItem>
                 <SelectItem value="abgelehnt">Abgelehnt</SelectItem>
               </SelectContent>
             </Select>
@@ -523,6 +527,12 @@ export default function PurchaseInvoices() {
                           <span className="text-xs text-muted-foreground">#{inv.rechnungsnummer}</span>
                         )}
                         {statusBadge(inv)}
+                        {(inv as any).rueckfrage_am && !(inv as any).rueckfrage_erledigt_am && (
+                          <span className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800"
+                            title={(inv as any).rueckfrage_text || "Rückfrage zur Buchung"}>
+                            ❓ Rückfrage
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground flex-wrap">
                         {inv.rechnungsdatum && (

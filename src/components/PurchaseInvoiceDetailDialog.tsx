@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X, Split, Plus, Percent, AlertTriangle } from "lucide-react";
+import { ExternalLink, Save, Loader2, Receipt, Lock, Search, Check, X, Split, Plus, Percent, AlertTriangle, HelpCircle } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { usePermissions } from "@/hooks/usePermissions";
@@ -60,6 +60,35 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState<any>(null);
+  /** Rückfrage an den Chef (Kundenwunsch 01.09.2026): „Wo buche ich die hin?" */
+  const [rueckfrageOffenDialog, setRueckfrageOffenDialog] = useState(false);
+  const [rueckfrageText, setRueckfrageText] = useState("");
+  const rueckfrageStellen = async () => {
+    if (!invoiceId) return;
+    const { data: { user } } = await supabase.auth.getUser();
+    const { error } = await supabase.from("purchase_invoices").update({
+      rueckfrage_text: rueckfrageText.trim() || "Wohin soll diese Rechnung gebucht werden?",
+      rueckfrage_von: user?.id || null,
+      rueckfrage_am: new Date().toISOString(),
+      rueckfrage_erledigt_am: null,
+    } as any).eq("id", invoiceId);
+    if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
+    setForm((f: any) => ({ ...f, rueckfrage_text: rueckfrageText.trim() || "Wohin soll diese Rechnung gebucht werden?", rueckfrage_am: new Date().toISOString(), rueckfrage_erledigt_am: null }));
+    setRueckfrageOffenDialog(false);
+    setRueckfrageText("");
+    toast({ title: "Rückfrage gestellt", description: "Die Rechnung liegt jetzt beim Chef zur Klärung — Reiter Rückfragen in der Liste." });
+    onUpdated?.();
+  };
+  const rueckfrageErledigen = async () => {
+    if (!invoiceId) return;
+    const { error } = await supabase.from("purchase_invoices").update({
+      rueckfrage_erledigt_am: new Date().toISOString(),
+    } as any).eq("id", invoiceId);
+    if (error) { toast({ variant: "destructive", title: "Fehler", description: error.message }); return; }
+    setForm((f: any) => ({ ...f, rueckfrage_erledigt_am: new Date().toISOString() }));
+    toast({ title: "Rückfrage erledigt" });
+    onUpdated?.();
+  };
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   /** Fahrzeuge & Maschinen für die Zuordnung (Kosten laufen in den KFZ-Manager). */
   const [geraete, setGeraete] = useState<{ id: string; bezeichnung: string; kennzeichen: string | null; art: string }[]>([]);
@@ -512,6 +541,53 @@ export function PurchaseInvoiceDetailDialog({ invoiceId, onClose, onUpdated }: P
         <DialogHeader>
           <DialogTitle className="pr-6 text-base sm:text-lg">Eingangsrechnung bearbeiten</DialogTitle>
         </DialogHeader>
+
+        {/* Offene Rückfrage: gelb und unübersehbar — der Chef sieht die Frage
+            direkt über der Rechnung und bucht daneben (Kundenwunsch 01.09.2026). */}
+        {form?.rueckfrage_am && !form?.rueckfrage_erledigt_am && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2">
+            <HelpCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-amber-900">Rückfrage zur Buchung</p>
+              <p className="text-sm text-amber-900/90">{form.rueckfrage_text}</p>
+            </div>
+            <Button size="sm" variant="outline" className="shrink-0 bg-white" onClick={() => void rueckfrageErledigen()}>
+              Geklärt
+            </Button>
+          </div>
+        )}
+        {form && !(form.rueckfrage_am && !form.rueckfrage_erledigt_am) && (
+          <div>
+            <Button size="sm" variant="outline" className="gap-1.5"
+              onClick={() => { setRueckfrageText(""); setRueckfrageOffenDialog(true); }}>
+              <HelpCircle className="h-4 w-4" />
+              Rückfrage an Chef
+            </Button>
+          </div>
+        )}
+
+        {/* Rückfrage-Text erfassen */}
+        <Dialog open={rueckfrageOffenDialog} onOpenChange={setRueckfrageOffenDialog}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Rückfrage an den Chef</DialogTitle>
+              <DialogDescription>
+                Die Rechnung erscheint beim Chef unter „Rückfragen" — er sieht sie
+                samt deiner Frage und wählt, wie sie zu buchen ist.
+              </DialogDescription>
+            </DialogHeader>
+            <Textarea
+              autoFocus rows={3}
+              placeholder="z. B. Gehört die zu BV Knapp oder ins Lager?"
+              value={rueckfrageText}
+              onChange={(e) => setRueckfrageText(e.target.value)}
+            />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setRueckfrageOffenDialog(false)}>Abbrechen</Button>
+              <Button onClick={() => void rueckfrageStellen()}>Rückfrage stellen</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {loading || !form ? (
           <div className="py-10 flex justify-center">
