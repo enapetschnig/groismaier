@@ -724,6 +724,23 @@ export default function InvoiceDetail() {
   /** Übernommene Zeit-/Materialbuchungen — beim Speichern als verrechnet
    *  vermerkt, damit sie beim nächsten Mal als „verrechnet in …" dastehen. */
   const [zeitImportIds, setZeitImportIds] = useState<string[]>([]);
+  /** Regieberichte, die in DIESEM Beleg verrechnet sind — ihre Original-PDFs
+   *  bietet der Mailversand als Anhang an (Kundenwunsch 01.09.2026). */
+  const [regieAmBeleg, setRegieAmBeleg] = useState<string[]>([]);
+  useEffect(() => {
+    const belegId = istNeueRoute ? null : (invoiceId || id || null);
+    if (!belegId) { setRegieAmBeleg([]); return; }
+    let abgebrochen = false;
+    void (async () => {
+      // Cast wie im Projekt üblich: die tief verschachtelten Supabase-Typen
+      // sprengen sonst die Typprüfung dieser sehr großen Datei.
+      const { data } = await (supabase.from("disturbances") as any)
+        .select("id").eq("verrechnet_in_invoice_id", belegId);
+      if (!abgebrochen) setRegieAmBeleg(((data as any[]) || []).map((d) => d.id));
+    })();
+    return () => { abgebrochen = true; };
+    // Nach dem Speichern neu prüfen: dort werden die Berichte verknüpft.
+  }, [istNeueRoute, invoiceId, id, saving]);
   const [materialImportIds, setMaterialImportIds] = useState<string[]>([]);
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
@@ -8544,6 +8561,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
             belegTyp: form.typ,
           }}
           onGesendet={nachfrageAnbieten}
+          regieberichtIds={regieAmBeleg}
         />
 
         {/* Nachfrage-Termin (Kundenwunsch 30.08.2026) */}

@@ -128,6 +128,14 @@ jobs:
             || npx --yes supabase@2 functions deploy sprache-zu-text --project-ref "${PROJECT_REF}"
           echo "✓ sprache-zu-text deployt."
 
+      - name: Edge Function mail-postfach erneut deployen (Aktion "gelesen")
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: ${{ inputs.project_ref || 'tdehljzmqwmfgfoyyoee' }}
+        run: |
+          set -euo pipefail
+          echo "(mail-postfach wird oben bereits deployt — dieser Schritt ist ein Platzhalter)"
+
       - name: Edge Function wunsch-datei deployen
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}

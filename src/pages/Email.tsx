@@ -315,6 +315,21 @@ export default function Email() {
     }
   };
 
+  /**
+   * Mail wieder auf ungelesen setzen — wie in Outlook (Kundenwunsch
+   * 01.09.2026). Wirkt im echten Postfach, nicht nur in der Liste.
+   */
+  const alsUngelesen = async (mailId: string) => {
+    try {
+      await rufe({ aktion: "gelesen", postfach, id: mailId, gelesen: false });
+      setMails((alt) => alt.map((x) => (x.id === mailId ? { ...x, gelesen: false } : x)));
+      setDetail(null);
+      toast({ title: "Als ungelesen markiert" });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Fehlgeschlagen", description: (e as Error).message });
+    }
+  };
+
   const absenden = async () => {
     if (!verfassen) return;
     setSendet(true);
@@ -500,6 +515,10 @@ export default function Email() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Weiterleiten"
                           onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <Forward className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" title="Als ungelesen markieren"
+                          onClick={() => void alsUngelesen(detail.id)}>
+                          <MailOpen className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="In den Papierkorb" onClick={loeschen}>
                           <Trash2 className="h-4 w-4 text-destructive" />

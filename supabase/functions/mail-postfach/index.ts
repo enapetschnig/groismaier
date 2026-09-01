@@ -14,6 +14,7 @@
 //       Zitat + Betreff (AW:/WG:) selbst an und legt die Mail in "Gesendete
 //       Elemente" ab → Outlook bleibt automatisch synchron.
 //   { aktion: "loeschen", postfach, id }                       → in den Papierkorb
+//   { aktion: "gelesen",  postfach, id, gelesen }              → gelesen/ungelesen
 //
 // Zugriff NUR für angemeldete Administratoren — die Funktion prüft das
 // Benutzer-Token und die Rolle selbst (verify_jwt ist projektweit aus).
@@ -507,6 +508,18 @@ Deno.serve(async (req) => {
       });
       einzig.sort((a, b) => String(b.empfangen).localeCompare(String(a.empfangen)));
       return antwort({ mails: einzig.slice(0, 20) });
+    }
+
+    if (aktion === "gelesen") {
+      // Wieder auf ungelesen setzen wie in Outlook (Kundenwunsch 01.09.2026:
+      // „Wie können wir Mails, wenn bereits geöffnet, wieder auf ungelesen
+      // markieren?"). Wirkt auch im echten Postfach.
+      const r = await graph(`/users/${mb}/messages/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isRead: !!body.gelesen }),
+      });
+      if (!r.ok) return antwort({ error: `Markieren fehlgeschlagen (Graph ${r.status})` }, 502);
+      return antwort({ ok: true });
     }
 
     if (aktion === "loeschen") {

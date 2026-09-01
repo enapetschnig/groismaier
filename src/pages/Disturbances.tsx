@@ -1,11 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt, Folder, FolderOpen, ChevronDown, ChevronRight } from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt, Folder, FolderOpen, ChevronDown, ChevronRight , Printer} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { regieberichtPdfNachId } from "@/lib/regieberichtPdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
@@ -58,6 +59,42 @@ const Disturbances = () => {
   // Sammelrechnung (Kundenwunsch 08/2026): mehrere Berichte anhaken und in
   // EINE Rechnung übernehmen.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [pdfLaeuft, setPdfLaeuft] = useState(false);
+
+  /**
+   * Ausgewählte Regieberichte als PDF öffnen (Kundenwunsch 01.09.2026:
+   * „Berichte einzeln oder eine Auswahl drucken bzw. als PDF ausgeben").
+   * Jeder Bericht wird ein eigenes Dokument — so bleibt er das Original,
+   * das man einzeln an eine Rechnung hängen kann.
+   */
+  const berichtePdf = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setPdfLaeuft(true);
+    try {
+      let ok = 0;
+      for (const id of ids) {
+        const ergebnis = await regieberichtPdfNachId(id);
+        if (!ergebnis) continue;
+        const url = URL.createObjectURL(ergebnis.blob);
+        // Erstes Dokument im selben Klick öffnen (Popup-Blocker), weitere
+        // bekommen einen kurzen Abstand.
+        window.open(url, "_blank");
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        ok++;
+      }
+      toast({
+        title: ok === 1 ? "Regiebericht erzeugt" : `${ok} Regieberichte erzeugt`,
+        description: ok < ids.length
+          ? `${ids.length - ok} Bericht(e) konnten nicht geladen werden.`
+          : "In den neuen Fenstern kannst du drucken oder speichern.",
+      });
+    } catch (e) {
+      toast({ variant: "destructive", title: "PDF fehlgeschlagen", description: (e as Error).message });
+    } finally {
+      setPdfLaeuft(false);
+    }
+  };
   // Offene (nicht verrechnete) Beträge: Stunden × Regie-Stundensatz +
   // Material + Maschinen — für die Übersicht "offene Summe je Projekt".
   const [regieSatz, setRegieSatz] = useState(70);
@@ -483,6 +520,12 @@ const Disturbances = () => {
               <Button size="sm" className="h-10 gap-1.5" onClick={sammelrechnungErstellen}>
                 <Receipt className="h-4 w-4" />
                 {selectedIds.size === 1 ? "Rechnung erstellen" : "Sammelrechnung erstellen"}
+              </Button>
+              {/* Berichte drucken / als PDF (Kundenwunsch 01.09.2026) */}
+              <Button size="sm" variant="outline" className="h-10 gap-1.5"
+                onClick={() => void berichtePdf()} disabled={pdfLaeuft}>
+                <Printer className="h-4 w-4" />
+                {pdfLaeuft ? "Erzeugt…" : selectedIds.size === 1 ? "PDF öffnen" : `${selectedIds.size} PDFs öffnen`}
               </Button>
               <Button size="sm" variant="ghost" className="h-10" onClick={() => setSelectedIds(new Set())}>
                 Auswahl aufheben

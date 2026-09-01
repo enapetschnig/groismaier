@@ -55,11 +55,19 @@ interface Props {
   };
   /** Nach erfolgreichem Versand (z. B. Nachfrage-Termin anbieten). */
   onGesendet?: () => void;
+  /**
+   * Regieberichte, die in diesem Beleg verrechnet sind — ihre Original-PDFs
+   * können mitgeschickt werden (Kundenwunsch 01.09.2026: „Regieberichte
+   * müssen im Original an die Rechnung angehängt … oder als eigenes PDF
+   * per Mail mitgeschickt werden").
+   */
+  regieberichtIds?: string[];
 }
 
 export function BelegMailDialog({
   open, onOpenChange, pdfBlob, dateiname, xmlBlob, xmlDateiname, xmlFehler,
   empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll, onGesendet,
+  regieberichtIds,
 }: Props) {
   const { toast } = useToast();
   const [von, setVon] = useState(POSTFAECHER[0].adresse);
@@ -70,6 +78,8 @@ export function BelegMailDialog({
   const [sendet, setSendet] = useState(false);
   /** Was hängt an? „pdf" ist voreingestellt (Kundenwunsch). */
   const [anhangWahl, setAnhangWahl] = useState<"pdf" | "beides" | "xml">("pdf");
+  /** Regieberichte im Original mitschicken (Kundenwunsch 01.09.2026). */
+  const [regieMitschicken, setRegieMitschicken] = useState(true);
 
   useEffect(() => {
     if (!open) return;
@@ -131,6 +141,24 @@ export function BelegMailDialog({
           typ: "application/xml",
         });
       }
+      // Regieberichte als eigene PDFs anhängen — jeder Bericht bleibt ein
+      // eigenständiges Original.
+      if (regieMitschicken && (regieberichtIds?.length || 0) > 0) {
+        const { regieberichtPdfNachId } = await import("@/lib/regieberichtPdf");
+        for (const id of regieberichtIds!) {
+          const ergebnis = await regieberichtPdfNachId(id);
+          if (!ergebnis) continue;
+          const datum = ergebnis.bericht.datum
+            ? new Date(ergebnis.bericht.datum).toLocaleDateString("de-AT").replace(/\./g, "-")
+            : id.slice(0, 8);
+          anhaenge.push({
+            name: `Regiebericht ${datum}.pdf`,
+            inhaltBase64: await alsBase64(ergebnis.blob),
+            typ: "application/pdf",
+          });
+        }
+      }
+
       if (anhaenge.length === 0) throw new Error("Kein Anhang gewählt");
 
       const { data, error } = await supabase.functions.invoke("mail-postfach", {
@@ -276,6 +304,26 @@ export function BelegMailDialog({
                 )}
               </div>
             ) : null}
+
+            {/* Regieberichte im Original mitschicken (Kundenwunsch 01.09.2026) */}
+            {(regieberichtIds?.length || 0) > 0 && (
+              <label className="flex cursor-pointer items-start gap-2 rounded-md border border-kb-blue/40 bg-[hsl(210_60%_97%)] px-3 py-2">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4"
+                  checked={regieMitschicken}
+                  onChange={(e) => setRegieMitschicken(e.target.checked)}
+                />
+                <span className="text-xs">
+                  <span className="block font-medium">
+                    {regieberichtIds!.length} Regiebericht{regieberichtIds!.length === 1 ? "" : "e"} im Original anhängen
+                  </span>
+                  <span className="text-muted-foreground">
+                    Jeder Bericht geht als eigenes PDF mit — so sieht der Kunde, was verrechnet wird.
+                  </span>
+                </span>
+              </label>
+            )}
 
             {/* Was tatsächlich mitgeht */}
             <div className="space-y-1">

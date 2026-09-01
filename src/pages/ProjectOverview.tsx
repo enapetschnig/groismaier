@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen, Send } from "lucide-react";
+import { FileText, Camera, ImagePlus, Lock, Pencil, Check, Settings, Download, FileDown, Package, Plus, FolderOpen, Send, NotebookPen } from "lucide-react";
+import { buildProjectFilePath, safeStorageName } from "@/lib/projectFiles";
 import { getDocConfig } from "@/lib/documentTypes";
 import { Separator } from "@/components/ui/separator";
 import { ContactHistoryTimeline } from "@/components/ContactHistoryTimeline";
@@ -540,6 +541,50 @@ const ProjectOverview = () => {
 
   const handleQuickPhotoUpload = () => {
     navigate(`/projects/${projectId}/photos`);
+  };
+
+  /**
+   * Handnotiz / Naturmaß abfotografieren (Kundenwunsch 01.09.2026:
+   * „meine mit der Hand verfassten Notizen … gesammelt im Projekt ablegen …
+   *  es sind immer wieder Notizen verloren gegangen, das muss aufhören").
+   *
+   * Landet im Dokumente-Ordner des Projekts unter „Notizen" — dort liegen
+   * sie beisammen und sind über die Dokumentenansicht wiederzufinden.
+   */
+  const notizRef = useRef<HTMLInputElement>(null);
+  const [notizLaeuft, setNotizLaeuft] = useState(false);
+  const notizHochladen = async (files: FileList | null) => {
+    if (!files || files.length === 0 || !projectId) return;
+    setNotizLaeuft(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      let ok = 0;
+      for (const file of Array.from(files)) {
+        const stempel = new Date().toLocaleDateString("de-AT").replace(/\./g, "-");
+        const basis = buildProjectFilePath(projectId, `Notiz ${stempel} ${file.name}`);
+        const pfad = `${projectId}/${safeStorageName("Notizen")}/${basis.slice(projectId.length + 1)}`;
+        const { error } = await supabase.storage.from("project-reports").upload(pfad, file);
+        if (error) continue;
+        ok++;
+        if (user) {
+          const { data: urlData } = supabase.storage.from("project-reports").getPublicUrl(pfad);
+          await supabase.from("documents").insert({
+            project_id: projectId, user_id: user.id, typ: "reports",
+            name: `Notiz ${stempel} — ${file.name}`, file_url: urlData.publicUrl,
+          } as any);
+        }
+      }
+      toast({
+        title: ok > 0 ? "Notiz abgelegt" : "Nicht gespeichert",
+        description: ok > 0
+          ? `${ok} Aufnahme(n) im Projekt unter Dokumente → Notizen.`
+          : "Der Upload ist fehlgeschlagen.",
+        variant: ok > 0 ? undefined : "destructive",
+      });
+
+    } finally {
+      setNotizLaeuft(false);
+    }
   };
 
   // Filter categories based on admin status
@@ -1142,9 +1187,31 @@ const ProjectOverview = () => {
           </div>
         )}
 
+        {/* Handnotiz / Naturmaß direkt abfotografieren (Kundenwunsch
+            01.09.2026) — landet im Projekt unter Dokumente → Notizen. */}
+        <input
+          ref={notizRef}
+          type="file"
+          accept="image/*,application/pdf"
+          multiple
+          capture="environment"
+          className="hidden"
+          onChange={(e) => { void notizHochladen(e.target.files); e.target.value = ""; }}
+        />
+        <Button
+          className="fixed bottom-24 right-6 z-50 h-14 w-14 rounded-full shadow-lg"
+          size="icon"
+          variant="secondary"
+          title="Handnotiz / Naturmaß fotografieren"
+          disabled={notizLaeuft}
+          onClick={() => notizRef.current?.click()}
+        >
+          <NotebookPen className="h-6 w-6" />
+        </Button>
         <Button
           className="fixed bottom-6 right-6 z-50 h-14 w-14 rounded-full shadow-lg"
           size="icon"
+          title="Fotos zum Projekt"
           onClick={handleQuickPhotoUpload}
         >
           <ImagePlus className="h-6 w-6" />
