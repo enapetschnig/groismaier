@@ -1,0 +1,18 @@
+name: temp-projektquellen
+on: workflow_dispatch
+jobs:
+  lesen:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          Q="SELECT c.table_name, (SELECT n_live_tup FROM pg_stat_user_tables t WHERE t.relname = c.table_name) AS zeilen FROM information_schema.columns c WHERE c.table_schema='public' AND c.column_name='project_id' ORDER BY 2 DESC NULLS LAST;"
+          python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" "$Q" \
+          | curl -sS -X POST "https://api.supabase.com/v1/projects/tdehljzmqwmfgfoyyoee/database/query" \
+            -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json" -d @- \
+          | python3 -c "
+          import json,sys
+          for r in json.load(sys.stdin):
+              print('ZEILE>>>', r['table_name'], '|', r['zeilen'])
+          "
