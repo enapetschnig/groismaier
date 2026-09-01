@@ -35,7 +35,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
-import { Plus, Pencil, Trash2, Printer, Filter, ChevronDown, ChevronUp, Check, Truck, FileScan, FileText } from "lucide-react";
+import { Plus, Pencil, Trash2, Printer, Filter, ChevronDown, ChevronUp, Check, Truck, FileScan, FileText, Upload } from "lucide-react";
 import { ZulassungsscheinUpload } from "@/components/ZulassungsscheinUpload";
 import { PruefbuchUpload } from "@/components/PruefbuchUpload";
 import { format, parseISO } from "date-fns";
@@ -242,7 +242,44 @@ export default function Fahrzeuge() {
   const [editId, setEditId] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [saving, setSaving] = useState(false);
-  const [tab, setTab] = useState<"kosten" | "einsaetze">("kosten");
+  const [tab, setTab] = useState<"kosten" | "einsaetze" | "dokumente">("kosten");
+  /** Allgemeine Dokumente je Fahrzeug/Maschine — z.B. Schaltpläne
+      (Kundenwunsch 31.08.2026: „dann ist alles beisammen"). */
+  const [dokumente, setDokumente] = useState<{ id: string; name: string; file_path: string }[]>([]);
+  const [dokLaedt, setDokLaedt] = useState(false);
+  const dokTable = () => (supabase.from("vehicle_dokumente" as never) as any);
+  const ladeDokumente = async (vehicleId: string) => {
+    const { data } = await dokTable()
+      .select("id, name, file_path").eq("vehicle_id", vehicleId).order("created_at");
+    setDokumente((data as any[]) || []);
+  };
+  const dokumentHochladen = async (files: FileList | null) => {
+    if (!files || !editId) return;
+    setDokLaedt(true);
+    let ok = 0;
+    for (const file of Array.from(files)) {
+      const sauber = file.name.replace(/[^\w.\-]+/g, "_");
+      const pfad = `${editId}/dok_${Date.now()}_${sauber}`;
+      const { error: upErr } = await supabase.storage.from("vehicle-documents").upload(pfad, file);
+      if (upErr) { toast({ title: "Upload fehlgeschlagen", description: `${file.name}: ${upErr.message}`, variant: "destructive" }); continue; }
+      const { error } = await dokTable().insert({ vehicle_id: editId, name: file.name, file_path: pfad });
+      if (!error) ok++;
+    }
+    setDokLaedt(false);
+    if (ok > 0) { toast({ title: "Hochgeladen", description: `${ok} Dokument(e) gespeichert.` }); void ladeDokumente(editId); }
+  };
+  const dokumentOeffnen = async (d: { file_path: string }) => {
+    const { data, error } = await supabase.storage.from("vehicle-documents").createSignedUrl(d.file_path, 3600);
+    if (error || !data?.signedUrl) { toast({ title: "Öffnen fehlgeschlagen", description: error?.message, variant: "destructive" }); return; }
+    window.open(data.signedUrl, "_blank");
+  };
+  const dokumentLoeschen = async (d: { id: string; name: string; file_path: string }) => {
+    if (!confirm(`Dokument „${d.name}" löschen?`)) return;
+    await supabase.storage.from("vehicle-documents").remove([d.file_path]);
+    const { error } = await dokTable().delete().eq("id", d.id);
+    if (error) { toast({ title: "Fehler", description: error.message, variant: "destructive" }); return; }
+    setDokumente((p) => p.filter((x) => x.id !== d.id));
+  };
 
   // Kosten-Tab
   const [costs, setCosts] = useState<VehicleCost[]>([]);
@@ -995,6 +1032,13 @@ export default function Fahrzeuge() {
                 >
                   Einsätze
                 </button>
+                <button
+                  type="button"
+                  className={tab === "dokumente" ? "kb-tab-active" : "kb-tab"}
+                  onClick={() => { setTab("dokumente"); if (editId) void ladeDokumente(editId); }}
+                >
+                  Dokumente
+                </button>
               </div>
 
               {/* ── Tab „Kosten": Reparatur-/Service-/Treibstoffkosten buchen ── */}
@@ -1178,6 +1222,49 @@ export default function Fahrzeuge() {
                     Letzte 50 Einsätze aus der Zeiterfassung (nur Anzeige). Der km-Stand
                     kommt aus den Buchungen mit „km Start / Ende".
                   </p>
+                </div>
+              )}
+
+              {/* ── Tab „Dokumente": Schaltpläne & Co. (Kundenwunsch 31.08.2026) ── */}
+              {tab === "dokumente" && (
+                <div className="pt-3 space-y-3">
+                  <label className="kb-btn inline-flex cursor-pointer items-center gap-1.5 text-sm">
+                    <Upload className="h-4 w-4 text-kb-blue" />
+                    {dokLaedt ? "Lädt hoch …" : "Dokumente hochladen"}
+                    <input
+                      type="file" multiple className="hidden"
+                      onChange={(e) => { void dokumentHochladen(e.target.files); e.target.value = ""; }}
+                    />
+                  </label>
+                  {dokumente.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Noch keine Dokumente — z.B. Schaltpläne, Bedienungsanleitungen, Serviceberichte.
+                    </p>
+                  ) : (
+                    <div className="divide-y rounded-md border">
+                      {dokumente.map((d) => (
+                        <div key={d.id} className="flex items-center gap-2 px-3 py-2">
+                          <FileText className="h-4 w-4 shrink-0 text-kb-blue" />
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 truncate text-left text-sm hover:underline"
+                            title={`${d.name} öffnen`}
+                            onClick={() => void dokumentOeffnen(d)}
+                          >
+                            {d.name}
+                          </button>
+                          <button
+                            type="button"
+                            className="flex h-8 w-8 items-center justify-center rounded text-destructive hover:bg-destructive/10"
+                            title="Dokument löschen"
+                            onClick={() => void dokumentLoeschen(d)}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
