@@ -29,6 +29,35 @@ import {
 } from "lucide-react";
 import { buildProjectFilePath, safeStorageName } from "@/lib/projectFiles";
 
+/**
+ * Mail-Signaturen je Postfach (Kundenwunsch 01.09.2026: "Wenn ich eine Mail
+ * beantworte, ist keine Mailsignatur dabei"). Wortlaut aus Christians
+ * eigenen Mails übernommen; die anderen Postfächer bekommen die
+ * Firmenvariante ohne persönlichen Namen.
+ */
+const FIRMEN_SIGNATUR = `-----------------------------------
+HOLZBAU GROISMAIER GMBH
+3753 Dallein 43
+
+M +43 (0) 664 4520 758
+T +43 (0) 2913 221 30
+
+office@cg-holzbau.at
+www.cg-holzbau.at
+-----------------------------------`;
+const SIGNATUREN: Record<string, string> = {
+  "christian.groismaier@cg-holzbau.at": `Mit freundlichen Grüßen
+
+Christian Groismaier
+Holzbaumeister
+
+${FIRMEN_SIGNATUR}`,
+};
+const signaturFuer = (postfach: string) =>
+  SIGNATUREN[postfach] || `Mit freundlichen Grüßen
+
+${FIRMEN_SIGNATUR}`;
+
 const POSTFAECHER = [
   { adresse: "christian.groismaier@cg-holzbau.at", kurz: "Christian" },
   { adresse: "office@cg-holzbau.at", kurz: "Office" },
@@ -375,7 +404,7 @@ export default function Email() {
           <Button onClick={suchen} disabled={laedt}>Suchen</Button>
           <Button
             variant="outline"
-            onClick={() => setVerfassen({ modus: "neu", an: "", cc: "", betreff: "", text: "" })}
+            onClick={() => setVerfassen({ modus: "neu", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}` })}
             title={`Neue E-Mail von ${postfach}`}
           >
             <PenLine className="mr-1.5 h-4 w-4" /> Neue E-Mail
@@ -461,15 +490,15 @@ export default function Email() {
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Antworten"
-                          onClick={() => setVerfassen({ modus: "antwort", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "antwort", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <Reply className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Allen antworten"
-                          onClick={() => setVerfassen({ modus: "antwortAlle", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "antwortAlle", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <ReplyAll className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Weiterleiten"
-                          onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: "", bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <Forward className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="In den Papierkorb" onClick={loeschen}>
