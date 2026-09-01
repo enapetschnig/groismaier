@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2 } from "lucide-react";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2, ClipboardList,
+} from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
@@ -30,6 +31,7 @@ import {
 import { usePermissions } from "@/hooks/usePermissions";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
 import { ImportFromProjectDialog } from "@/components/ImportFromProjectDialog";
+import { BaustelleAbrechnenDialog } from "@/components/BaustelleAbrechnenDialog";
 import { ImportDisturbanceDialog } from "@/components/ImportDisturbanceDialog";
 import { ImportFromOfferDialog } from "@/components/ImportFromOfferDialog";
 import { useEinheiten } from "@/hooks/useEinheiten";
@@ -717,6 +719,8 @@ export default function InvoiceDetail() {
   // Importierte Regieberichte: nach dem Speichern des Belegs werden sie als
   // verrechnet markiert und mit dem Beleg verknüpft (Sammelrechnung).
   const [regieImportIds, setRegieImportIds] = useState<string[]>([]);
+  /** „Baustelle abrechnen" — alle Quellen des Projekts auf einmal (01.09.2026). */
+  const [baustelleOffen, setBaustelleOffen] = useState(false);
   const [importOfferOpen, setImportOfferOpen] = useState(false);
   const [importTimeOpen, setImportTimeOpen] = useState(false);
   const [priceAdjustOpen, setPriceAdjustOpen] = useState(false);
@@ -7153,7 +7157,20 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                 <CardTitle className="shrink-0">Positionen</CardTitle>
                 {!isLocked && (
                 <div className="flex gap-2 flex-wrap">
-                  {form.typ === "rechnung" && (
+                  {/* Die Herkunfts-Importe galten früher NUR für typ
+                      "rechnung" — auf einer SCHLUSSRECHNUNG fehlten sie
+                      dadurch komplett (Kundenmeldung 01.09.2026: "wie
+                      bekomm ich alles von der Baustelle drauf"). */}
+                  {/* Ein Knopf für alles von der Baustelle (Kundenwunsch
+                      01.09.2026) — die Einzel-Importe daneben bleiben. */}
+                  {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && (
+                    <Button onClick={() => setBaustelleOffen(true)} variant="default" size="sm" className="gap-1"
+                      title="Auftrag, Regieberichte, Stunden, Material und Anzahlungs-Abzug auf einmal übernehmen">
+                      <ClipboardList className="w-4 h-4" />
+                      Baustelle abrechnen
+                    </Button>
+                  )}
+                  {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && (
                     <>
                       <Button onClick={() => setImportOfferOpen(true)} variant="outline" size="sm" className="gap-1">
                         <FileText className="w-4 h-4" />
@@ -7168,9 +7185,10 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                   {/* Arbeitszeiten erst auf RECHNUNGEN buchbar (Kundenwunsch) —
                       bei Angeboten gibt es noch nichts Gebuchtes. */}
                   {["rechnung", "anzahlungsrechnung", "schlussrechnung"].includes(form.typ) && (
-                    <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1">
+                    <Button onClick={() => setImportTimeOpen(true)} variant="outline" size="sm" className="gap-1"
+                      title="Gebuchte Arbeitszeiten und Materialbuchungen des Projekts übernehmen">
                       <FileText className="w-4 h-4" />
-                      Arbeitszeiten
+                      Zeit &amp; Material
                     </Button>
                   )}
                   {/* Bei ANGEBOTEN statt „Materialien" der Kalkulations-Knopf
@@ -9154,12 +9172,45 @@ Beleg: /invoices/${invoiceId || id || ""}`,
         />
 
         {/* Import Arbeitszeiten aus Projekt */}
+        <BaustelleAbrechnenDialog
+          open={baustelleOffen}
+          onClose={() => setBaustelleOffen(false)}
+          projectId={form.project_id || null}
+          customerId={form.customer_id || null}
+          belegId={istNeueRoute ? null : (invoiceId || id || null)}
+          onUebernehmen={(positionen, regieIds) => {
+            const neu = positionen.map((p, idx) => ({
+              position: items.length + idx + 1,
+              beschreibung: p.beschreibung,
+              kurztext: p.beschreibung,
+              langtext: "",
+              menge: round3(p.menge),
+              einheit: p.einheit,
+              einzelpreis: round2(p.einzelpreis),
+              rabatt_prozent: 0,
+              gesamtpreis: round2(round3(p.menge) * round2(p.einzelpreis)),
+              ...(p.mwst_exempt ? { mwst_exempt: true } : {}),
+            }));
+            setItemsDirty((prev) => mergeItems(prev, neu as any));
+            // Beim Speichern werden diese Berichte als verrechnet markiert
+            // (bestehende Mechanik) — Duplikate vermeiden.
+            if (regieIds.length > 0) setRegieImportIds((alt) => [...new Set([...alt, ...regieIds])]);
+            setBaustelleOffen(false);
+            toast({
+              title: "Baustelle übernommen",
+              description: `${neu.length} Position${neu.length === 1 ? "" : "en"} eingefügt${regieIds.length ? ` · ${regieIds.length} Regiebericht(e) werden beim Speichern als verrechnet markiert` : ""}.`,
+            });
+          }}
+        />
+
         <ImportFromProjectDialog
           open={importTimeOpen}
           onClose={() => setImportTimeOpen(false)}
           projectId={form.project_id || null}
           customerId={form.customer_id || null}
-          mode="zeit"
+          /* Material-Tab war gebaut, aber nie erreichbar (mode="zeit") —
+             für die Baustellen-Abrechnung braucht es beides. */
+          mode="alle"
           onImport={(importedItems) => {
             const newItems = importedItems.map((item, idx) => ({
               position: items.length + idx + 1,
