@@ -1,0 +1,14 @@
+name: temp-check
+on: workflow_dispatch
+jobs:
+  lesen:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          Q() { python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" "$1" | curl -sS -X POST "https://api.supabase.com/v1/projects/tdehljzmqwmfgfoyyoee/database/query" -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json" -d @- | python3 -c "import json,sys; [print('ERG>>>', json.dumps(r, ensure_ascii=False)) for r in json.load(sys.stdin)]"; }
+          Q "SELECT nummer, netto_summe, mwst_betrag, brutto_summe FROM invoices WHERE id='af88493c-295f-426f-a682-f2e8b9857a7b';"
+          Q "SELECT position, left(beschreibung,45) AS text, einzelpreis, gesamtpreis, mwst_exempt FROM invoice_items WHERE invoice_id='af88493c-295f-426f-a682-f2e8b9857a7b' AND position=28;"
+          Q "SELECT nummer, project_id IS NOT NULL AS hat_projekt FROM invoices WHERE id='7f930e08-f142-44e9-8788-966a3d60f3a0';"
+          Q "SELECT left(id::text,8) AS id, status FROM aenderungswuensche WHERE id::text LIKE '3778459f%' OR id::text LIKE 'db6cc91c%';"
