@@ -144,7 +144,9 @@ export function AufgabeDialog({ open, aufgabe, isAdmin, onClose }: Props) {
     } else {
       // Mitarbeiter-Aufgaben starten als "wartet_freigabe" (Admin gibt frei).
       const { data, error } = await aufgabenTable()
-        .insert({ ...felder, erstellt_von: user.id, status: isAdmin ? "offen" : "wartet_freigabe" })
+        // Selbst zugewiesen = Erinnerung an sich selbst → sofort offen, ohne
+        // Freigabe (Policy „Aufgaben anlegen" erlaubt genau das).
+        .insert({ ...felder, erstellt_von: user.id, status: (isAdmin || zugewiesenAn === user.id) ? "offen" : "wartet_freigabe" })
         .select("id")
         .single();
       if (error) {

@@ -647,6 +647,9 @@ export async function generateInvoicePdf(
     }
     const item = items[e.index];
     const p = printLines[e.index];
+    // Geleistete Zahlungen (mwst_exempt) stehen als eigenes Kapitel unter
+    // dem Bruttobetrag — nicht mitten in den Positionen.
+    if (p.exempt) return;
     const kurztext = (item as any).kurztext || item.beschreibung;
     const langtext = (item as any).langtext || "";
     if (langtext && langtext !== kurztext) {
@@ -806,11 +809,10 @@ export async function generateInvoicePdf(
   // Wunsch (Vorschau/Ausdruck ohne Betragsblock). Default = Summen sichtbar.
   const hideTotals = (invoice as any)._hideTotals === true;
   if (!hidePrices && !hideTotals) {
-    // Block 1: Item-Rabatt-Aufschlüsselung (nur falls Item-Rabatte vorhanden)
-    if (itemRabattTotal > 0) {
-      tableFoot.push(footRow("Zwischensumme", fmtCurrency(positionenBrutto)));
-      tableFoot.push(footRow("Rabatt Positionen", `- ${fmtCurrency(itemRabattTotal)}`));
-    }
+    // Die Summe der Positions-Rabatte wird NICHT mehr als rote Zeile
+    // ausgewiesen (Kundenwunsch 01.09.2026): Der Rabatt steht je Zeile in
+    // der Rabattspalte und ist in den Zeilensummen bereits abgezogen —
+    // eine zusätzliche Zeile las sich wie ein zweiter Abzug.
     // Block 2: Globaler Rabatt — IMMER drucken, wenn er ≠ 0 ist.
     // Ein negativer Rabatt (Altdaten / Fehleingabe) erhöht die Summe; wurde er
     // hier verschwiegen, passten die gedruckten Positionen nicht zur
@@ -836,14 +838,25 @@ export async function generateInvoicePdf(
     } else if (isReverseCharge) {
       tableFoot.push(footRow("Rechnungsbetrag", fmtCurrency(nettoGedruckt)));
     } else if (exemptBrutto !== 0) {
-      // Schlussrechnung mit Anzahlungs-Abzug: expliziter Block
-      // Netto → USt → Zwischensumme brutto → Abzug → Verbleibend
+      // Schlussrechnung: Netto → USt → Bruttobetrag, darunter als EIGENES
+      // Kapitel mit fetter Überschrift die geleisteten Zahlungen — je Zeile
+      // eine — und zuletzt der Restbetrag (Kundenwunsch 01.09.2026: „mit
+      // dicker Überschrift als eigenes Kapitel am Ende angeführt und vom
+      // Rechnungsbetrag abgezogen").
       const bruttoVorAbzug = r2(nettoGedruckt + mwstGedruckt);
       tableFoot.push(footRow("Nettobetrag", fmtCurrency(nettoGedruckt)));
       tableFoot.push(footRow(`USt. ${mwstSatzPdf.toFixed(0)}%`, fmtCurrency(mwstGedruckt)));
-      tableFoot.push(footRow("Zwischensumme brutto", fmtCurrency(bruttoVorAbzug)));
-      tableFoot.push(footRow("Anzahlungs-Abzug (brutto)", fmtCurrency(exemptBrutto)));
-      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(bruttoGedruckt)));
+      tableFoot.push(footRow("Bruttobetrag", fmtCurrency(bruttoVorAbzug)));
+      tableFoot.push(footRow("§K:Abzüglich geleistete Zahlungen", ""));
+      printLines.forEach((pl, i) => {
+        if (!pl.exempt || pl.gesamt === 0) return;
+        const it: any = items[i];
+        const text = String(it.kurztext || it.beschreibung || "Zahlung")
+          .replace(/\s*\(brutto, MwSt-frei\)\s*$/i, "")
+          .replace(/^Abzug\s+/i, "");
+        tableFoot.push(footRow(`§Z:${text}`, fmtCurrency(pl.gesamt)));
+      });
+      tableFoot.push(footRow("Restbetrag", fmtCurrency(bruttoGedruckt)));
     } else {
       tableFoot.push(footRow("Nettobetrag", fmtCurrency(nettoGedruckt)));
       tableFoot.push(footRow(`USt. ${mwstSatzPdf.toFixed(0)}%`, fmtCurrency(mwstGedruckt)));
@@ -1234,10 +1247,33 @@ export async function generateInvoicePdf(
   }
 
   tableFoot.forEach((row) => {
-    const label = row[3];
+    const rohLabel = row[3];
     const value = row[5];
-    const isBrutto = label === "Bruttobetrag";
+    // §K: = Kapitelüberschrift (fett, linksbündig), §Z: = Zahlungszeile
+    const istKapitel = rohLabel.startsWith("§K:");
+    const istZahlung = rohLabel.startsWith("§Z:");
+    const label = istKapitel || istZahlung ? rohLabel.slice(3) : rohLabel;
+    const isBrutto = label === "Bruttobetrag" || label === "Restbetrag";
     const isRabatt = label.startsWith("Rabatt") || label.startsWith("Anzahlungs-Abzug");
+
+    if (istKapitel) {
+      y += 3;
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(label, ml, y + 5);
+      y += 7;
+      return;
+    }
+    if (istZahlung) {
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(9);
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(label, ml + 4, y + 5);
+      pdf.text(value, pageWidth - mr - 2, y + 5, { align: "right" });
+      y += 6;
+      return;
+    }
 
     if (isBrutto) {
       pdf.setDrawColor(0, 0, 0);

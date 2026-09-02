@@ -104,7 +104,24 @@ export function AufgabenWidget({ userId, isAdmin }: { userId: string; isAdmin: b
                 : `${freigaben} Aufgaben warten auf deine Freigabe.`}
             </p>
           )}
-          {naechste.length > 0 && <div className="space-y-1.5">{naechste.map(zeile)}</div>}
+          {/* Auch der Chef hat eigene Aufgaben (z. B. Nachfrage-Termine nach
+              dem Angebotsversand) — sie stehen hier unter „Meine Aufgaben",
+              genau wie die Antworten in der App es versprechen. */}
+          {meine.length > 0 && (
+            <div className="space-y-1.5">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-kb-blue-dark">
+                Meine Aufgaben
+                <span className="rounded-full bg-kb-blue px-1.5 py-0.5 text-[10px] font-bold text-white">{meine.length}</span>
+              </p>
+              {meine.slice(0, 3).map(zeile)}
+            </div>
+          )}
+          {naechste.length > 0 && (
+            <div className="space-y-1.5">
+              {meine.length > 0 && <p className="text-xs font-semibold text-muted-foreground">Nächste Aufgaben im Betrieb</p>}
+              {naechste.map(zeile)}
+            </div>
+          )}
         </CardContent>
       </Card>
     );

@@ -380,13 +380,50 @@ export function BaustelleAbrechnenDialog({
       }
 
       // ── 7) Bereits gestellte Rechnungen als Abzug ─────────────────────────
-      const { data: gestellte } = await supabase
+      // NICHT nur über das Projekt: Bei Schindelböck (01.09.2026) hing die
+      // bezahlte Anzahlung 2026-044 an keinem Projekt, nur an der Belegkette
+      // (parent_invoice_id) — und fiel so durch. Deshalb zusätzlich die
+      // ganze Kette des aktuellen Belegs einsammeln, wie „Kopieren in →
+      // Schlussrechnung" es tut.
+      const { data: eigener } = belegId
+        ? await supabase.from("invoices").select("id, customer_id, parent_invoice_id").eq("id", belegId).maybeSingle()
+        : { data: null as any };
+      const kundeId = (eigener as any)?.customer_id || null;
+      const { data: kandidaten } = await supabase
         .from("invoices")
-        .select("id, typ, nummer, datum, brutto_summe, bezahlt_betrag, status")
-        .eq("project_id", projectId)
-        .in("typ", ["anzahlungsrechnung", "rechnung", "schlussrechnung"])
+        .select("id, typ, nummer, datum, brutto_summe, bezahlt_betrag, status, project_id, customer_id, parent_invoice_id")
+        .in("typ", ["anzahlungsrechnung", "rechnung", "schlussrechnung", "angebot", "auftragsbestaetigung"])
         .not("status", "in", "(storniert,entwurf)")
+        .or(kundeId ? `project_id.eq.${projectId},customer_id.eq.${kundeId}` : `project_id.eq.${projectId}`)
         .order("datum");
+      const alle = ((kandidaten as any[]) || []);
+      // Kette: von diesem Beleg nach oben zur Wurzel, von dort alle Nachfahren.
+      const byId = new Map(alle.map((b) => [b.id, b]));
+      const kinder = new Map<string, string[]>();
+      for (const b of alle) {
+        if (!b.parent_invoice_id) continue;
+        if (!kinder.has(b.parent_invoice_id)) kinder.set(b.parent_invoice_id, []);
+        kinder.get(b.parent_invoice_id)!.push(b.id);
+      }
+      let wurzel: string | null = belegId;
+      const gesehen = new Set<string>();
+      let elternId = (eigener as any)?.parent_invoice_id as string | null;
+      while (elternId && !gesehen.has(elternId)) {
+        gesehen.add(elternId);
+        wurzel = elternId;
+        elternId = byId.get(elternId)?.parent_invoice_id || null;
+      }
+      const kette = new Set<string>();
+      const stapel = wurzel ? [wurzel] : [];
+      while (stapel.length) {
+        const akt = stapel.pop()!;
+        if (kette.has(akt)) continue;
+        kette.add(akt);
+        for (const k of kinder.get(akt) || []) stapel.push(k);
+      }
+      const gestellte = alle.filter((b) =>
+        ["anzahlungsrechnung", "rechnung", "schlussrechnung"].includes(b.typ)
+        && (b.project_id === projectId || kette.has(b.id)));
       const abzuege: AbrechnungsPosition[] = ((gestellte as any[]) || [])
         .filter((a) => a.id !== belegId)
         .map((a) => {

@@ -796,7 +796,10 @@ export default function InvoiceDetail() {
 Beleg: /invoices/${invoiceId || id || ""}`,
         faellig_am: nachfrageDatum,
         prioritaet: "normal",
-        status: isAdmin ? "offen" : "wartet_freigabe",
+        // Eine Erinnerung an sich SELBST braucht keine Chef-Freigabe — sonst
+        // sah ein Mitarbeiter seinen eigenen Nachfrage-Termin nie unter
+        // „Meine Aufgaben" (Prüfbefund 02.09.2026). Policy erlaubt das.
+        status: "offen",
       });
       if (error) throw new Error(error.message);
       toast({ title: "Nachfrage-Termin gesetzt", description: `Am ${new Date(nachfrageDatum).toLocaleDateString("de-AT")} erinnert dich die Startseite unter „Meine Aufgaben".` });
@@ -1023,7 +1026,16 @@ Beleg: /invoices/${invoiceId || id || ""}`,
     !isNew && !!invoiceId
     && RECHNUNGSARTIGE_TYPEN.has(form.typ)
     && form.status !== "entwurf";
-  const isKundeLocked = isLocked;
+  /**
+   * Korrekturmodus (Kundenmeldung 01.09.2026: „gespeicherte Rechnungen kann
+   * ich gar nicht mehr ändern — ich müsste den Namen ‚Heidi' beim Kunden
+   * dazubringen"). Nur für Administratoren, und nur für das, was den Betrag
+   * NICHT berührt: Kundenblock sowie Vor- und Schlusstext. Positionen,
+   * Beträge, Datum und Nummer bleiben gesperrt — dafür gibt es Storno.
+   */
+  const [korrekturModus, setKorrekturModus] = useState(false);
+  const isKundeLocked = isLocked && !korrekturModus;
+  const isTextLocked = isLocked && !korrekturModus;
 
   /** Rechnungsartiger Beleg, der noch nicht ausgestellt ist (Entwurf). */
   const istRechnungsartig = RECHNUNGSARTIGE_TYPEN.has(form.typ);
@@ -5089,6 +5101,38 @@ Beleg: /invoices/${invoiceId || id || ""}`,
               }}
             />
           )}
+          {/* Korrektur an ausgestellten Belegen (nur Admin, nur Kunde + Texte) */}
+          {isLocked && isAdmin && !korrekturModus && (
+            <KBToolbarButton
+              icon={Pencil}
+              label="Korrektur"
+              title="Kundendaten sowie Vor-/Schlusstext eines ausgestellten Belegs berichtigen — Beträge, Positionen und Nummer bleiben gesperrt"
+              onClick={() => {
+                if (window.confirm("Korrekturmodus einschalten?\n\nFreigegeben werden nur Kundendaten sowie Vor- und Schlusstext. Beträge, Positionen, Datum und Belegnummer bleiben gesperrt — dafür gibt es Storno.")) {
+                  setKorrekturModus(true);
+                }
+              }}
+            />
+          )}
+          {isLocked && korrekturModus && (
+            <>
+              <KBToolbarButton
+                icon={Save}
+                variant="green"
+                label={saving ? "Speichert…" : "Korrektur speichern"}
+                disabled={saving}
+                onClick={async () => {
+                  const ok = await handleSave();
+                  if (ok) { setKorrekturModus(false); toast({ title: "Korrektur gespeichert" }); }
+                }}
+              />
+              <KBToolbarButton
+                icon={X}
+                label="Abbrechen"
+                onClick={() => { setKorrekturModus(false); if (invoiceId) void loadInvoice(invoiceId); }}
+              />
+            </>
+          )}
           {!isLocked ? (
             <>
               <KBToolbarButton
@@ -6363,7 +6407,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
 
                 {/* Vortext — pro Beleg editierbar, mit Standardtext des Typs */}
                 {allgemeinSubTab === "vortext" && (
-                  <fieldset disabled={isLocked} className="min-w-0 space-y-2">
+                  <fieldset disabled={isTextLocked} className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="vortext">Vortext (erscheint über den Positionen)</Label>
                       {textDefaultsAngezeigt.intro && (
@@ -6394,7 +6438,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
 
                 {/* Schlusstext — pro Beleg editierbar, mit Standardtext des Typs */}
                 {allgemeinSubTab === "schluss" && (
-                  <fieldset disabled={isLocked} className="min-w-0 space-y-2">
+                  <fieldset disabled={isTextLocked} className="min-w-0 space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <Label htmlFor="schlusstext">Schlusstext (erscheint unter den Positionen)</Label>
                       {textDefaultsAngezeigt.closing && (

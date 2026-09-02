@@ -104,6 +104,21 @@ export default function Email() {
   const [suchParams] = useSearchParams();
   const startPostfach = POSTFAECHER.find((p) => p.adresse === suchParams.get("postfach"))?.adresse;
   const [postfach, setPostfach] = useState(startPostfach || POSTFAECHER[0].adresse);
+  // Signatur beim Postfachwechsel nachziehen (Prüfbefund 02.09.2026): sonst
+  // stand Christians persönliche Signatur unter einer Office-Mail, wenn das
+  // Postfach erst NACH dem Öffnen des Verfassen-Fensters gewechselt wurde.
+  const vorherPostfach = useRef(postfach);
+  useEffect(() => {
+    const alt = vorherPostfach.current;
+    vorherPostfach.current = postfach;
+    if (alt === postfach) return;
+    setVerfassen((v) => {
+      if (!v) return v;
+      const alteSig = signaturFuer(alt);
+      const neueSig = signaturFuer(postfach);
+      return v.text.endsWith(alteSig) ? { ...v, text: v.text.slice(0, -alteSig.length) + neueSig } : v;
+    });
+  }, [postfach]);
   const deepLinkMail = useRef(suchParams.get("mail"));
   const [mails, setMails] = useState<MailZeile[]>([]);
   const [mehrDa, setMehrDa] = useState(false);

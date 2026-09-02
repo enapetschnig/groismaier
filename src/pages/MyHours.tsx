@@ -673,8 +673,11 @@ const MyHours = () => {
               {/* Pause */}
               <div className="space-y-1.5">
                 <Label>Pause</Label>
-                <div className="grid grid-cols-4 gap-2">
-                  {[{ label: "Keine", value: 0 }, { label: "30 Min", value: 30 }, { label: "45 Min", value: 45 }, { label: "1 Std", value: 60 }].map(opt => (
+                {/* 15 Min auch hier — sonst ließ sich ein 15-Min-Eintrag aus der
+                    Zeiterfassung beim Nachbessern nicht mehr darstellen
+                    (Prüfbefund 02.09.2026 zu Kundenwunsch 28.08.). */}
+                <div className="grid grid-cols-5 gap-1.5">
+                  {[{ label: "Keine", value: 0 }, { label: "15 Min", value: 15 }, { label: "30 Min", value: 30 }, { label: "45 Min", value: 45 }, { label: "1 Std", value: 60 }].map(opt => (
                     <Button key={opt.value} type="button" variant={(editingEntry.pause_minutes || 0) === opt.value ? "default" : "outline"} size="sm" className="h-9 text-xs"
                       onClick={() => setEditingEntry({...editingEntry, pause_minutes: opt.value})}>
                       {opt.label}

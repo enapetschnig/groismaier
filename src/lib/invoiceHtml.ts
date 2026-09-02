@@ -204,7 +204,8 @@ export function buildDruckplan(items: readonly any[]): DruckEintrag[] {
   // (Kundenwunsch 25.08.2026). Sobald welche vorhanden sind, wird sauber
   // durchnummeriert, damit keine Lücke entsteht ("01, 03, 04").
   const hatTextzeilen = liste.some((it) => istTextzeile(it));
-  if (!hatGruppen && !etwasVersteckt && !hatTextzeilen) {
+  const hatAbzug = liste.some((it) => !!(it as any).mwst_exempt);
+  if (!hatGruppen && !etwasVersteckt && !hatTextzeilen && !hatAbzug) {
     return liste.map((it, index) => ({
       art: "position" as const,
       index,
@@ -240,10 +241,12 @@ export function buildDruckplan(items: readonly any[]): DruckEintrag[] {
     // Reine Textzeilen (Einleitungstext, Nachtext, freier Textbaustein)
     // zählen nicht als Position und tragen deshalb keine Nummer.
     const nurText = istTextzeile(it);
+    // Geleistete Zahlungen (Abzugszeilen) sind keine Leistungsposition.
+    const nurAbzug = !!(it as any).mwst_exempt;
     plan.push({
       art: "position",
       index,
-      nummer: detail || nurText ? "" : String(++laufNr).padStart(2, "0"),
+      nummer: detail || nurText || nurAbzug ? "" : String(++laufNr).padStart(2, "0"),
       detail,
       summenzeile: !!it?.ist_gruppensumme,
     });
@@ -367,10 +370,9 @@ export function buildInvoiceHtml(
     .join("");
 
   let totalsHtml = "";
-  if (hasItemRabatt) {
-    totalsHtml += `<tr><td style="padding:5px 0;color:#666;font-size:9.5pt;">Zwischensumme</td><td style="padding:5px 0;text-align:right;color:#333;font-size:9.5pt;">${fmtCurrency(positionenBrutto)}</td></tr>`;
-    totalsHtml += `<tr><td style="padding:5px 0;color:${accent};font-size:9.5pt;">Rabatt Positionen</td><td style="padding:5px 0;text-align:right;color:${accent};font-size:9.5pt;">- ${fmtCurrency(itemRabattTotal)}</td></tr>`;
-  }
+  // Keine Summenzeile für Positions-Rabatte mehr (Kundenwunsch 01.09.2026) —
+  // der Rabatt steht je Zeile und ist in den Zeilensummen bereits drin.
+  void hasItemRabatt; void positionenBrutto;
   if (hasRabatt) {
     totalsHtml += `<tr><td style="padding:5px 0;color:#666;font-size:9.5pt;">Zwischensumme</td><td style="padding:5px 0;text-align:right;color:#333;font-size:9.5pt;">${fmtCurrency(positionenNetto)}</td></tr>`;
     totalsHtml += `<tr><td style="padding:5px 0;color:${accent};font-size:9.5pt;">Rabatt${rabattProzent > 0 ? ` (${rabattProzent}%)` : ""}</td><td style="padding:5px 0;text-align:right;color:${accent};font-size:9.5pt;">- ${fmtCurrency(rabattWert)}</td></tr>`;
