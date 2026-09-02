@@ -1,0 +1,15 @@
+name: temp-sr
+on: workflow_dispatch
+jobs:
+  lesen:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          Q() { python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" "$1" | curl -sS -X POST "https://api.supabase.com/v1/projects/tdehljzmqwmfgfoyyoee/database/query" -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json" -d @-; }
+          echo "TEXTE>>>"
+          Q "SELECT to_jsonb(t) AS zeile FROM document_texts t WHERE typ IN ('schlussrechnung','rechnung','anzahlungsrechnung') OR typ IS NULL;"
+          echo ""
+          echo "LAYOUT>>>"
+          Q "SELECT key, left(value,220) AS value FROM app_settings WHERE key ILIKE '%closing%' OR key ILIKE '%zahl%' OR key ILIKE '%schluss%' OR key ILIKE '%layout%' ORDER BY key;"
