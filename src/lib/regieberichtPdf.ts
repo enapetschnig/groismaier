@@ -143,7 +143,7 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
   // Material
   const { data: mats } = await supabase
     .from("disturbance_materials")
-    .select("material, menge, einheit, notizen")
+    .select("material, menge, einheit, notizen, einzelpreis")
     .eq("disturbance_id", d.id)
     .order("created_at", { ascending: true });
 
@@ -154,8 +154,12 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
     y += 3;
     autoTable(pdf, {
       startY: y,
-      head: [["Material", "Menge", "Einheit", "Notiz"]],
-      body: mats.map((m: any) => [m.material || "", m.menge || "", m.einheit || "", m.notizen || ""]),
+      head: [["Material", "Menge", "Einheit", "Preis/Einh.", "Notiz"]],
+      body: mats.map((m: any) => [
+        m.material || "", m.menge || "", m.einheit || "",
+        m.einzelpreis != null ? `€ ${Number(m.einzelpreis).toFixed(2)}` : "",
+        m.notizen || "",
+      ]),
       theme: "plain",
       margin: { left: ml, right: mr, bottom: 26 },
       headStyles: { fillColor: [240, 240, 240], textColor: [0, 0, 0], fontStyle: "bold", fontSize: 8.5 },
@@ -217,8 +221,59 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
     y = (pdf as any).lastAutoTable.finalY + 6;
   }
 
-  // Unterschrift
+  // Fotos des Einsatzes (Kundenwunsch 02.09.2026: „die Bilder, die im
+  // Bericht hinterlegt sind, müssen auch auf den Bericht mit drauf").
+  // Zwei je Reihe, bei Platzmangel neue Seite; ein Foto, das nicht ladbar
+  // ist, wird still übersprungen — der Bericht darf daran nicht scheitern.
   const pageHeight = pdf.internal.pageSize.getHeight();
+  try {
+    const { data: fotos } = await supabase
+      .from("disturbance_photos")
+      .select("file_path, file_name")
+      .eq("disturbance_id", d.id)
+      .order("created_at");
+    const liste = ((fotos as any[]) || []);
+    if (liste.length > 0) {
+      const bildBreite = (contentW - 6) / 2;
+      const bildHoehe = bildBreite * 0.75;
+      if (y > pageHeight - (bildHoehe + 40)) { pdf.addPage(); y = LETTERHEAD_MARGIN.top; }
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(10);
+      pdf.setTextColor(0, 0, 0);
+      pdf.text(`Fotos (${liste.length})`, ml, y);
+      y += 4;
+      let spalte = 0;
+      for (const f of liste) {
+        const { data: pu } = supabase.storage.from("disturbance-photos").getPublicUrl(f.file_path);
+        let dataUrl: string | null = null;
+        try {
+          const antwort = await fetch(pu.publicUrl);
+          if (antwort.ok) {
+            const blob = await antwort.blob();
+            dataUrl = await new Promise<string>((auf, ab) => {
+              const r = new FileReader();
+              r.onload = () => auf(String(r.result));
+              r.onerror = () => ab(new Error("Foto nicht lesbar"));
+              r.readAsDataURL(blob);
+            });
+          }
+        } catch { dataUrl = null; }
+        if (!dataUrl) continue;
+        if (spalte === 0 && y + bildHoehe > pageHeight - 30) { pdf.addPage(); y = LETTERHEAD_MARGIN.top; }
+        const x = ml + spalte * (bildBreite + 6);
+        try {
+          const typ = /^data:image\/png/i.test(dataUrl) ? "PNG" : "JPEG";
+          pdf.addImage(dataUrl, typ, x, y, bildBreite, bildHoehe, undefined, "MEDIUM");
+        } catch { /* Format nicht einbettbar — überspringen */ }
+        spalte += 1;
+        if (spalte === 2) { spalte = 0; y += bildHoehe + 5; }
+      }
+      if (spalte !== 0) y += bildHoehe + 5;
+      y += 2;
+    }
+  } catch { /* ohne Fotos weiter */ }
+
+  // Unterschrift
   if (y > pageHeight - 70) {
     pdf.addPage();
     y = LETTERHEAD_MARGIN.top;

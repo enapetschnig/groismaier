@@ -277,21 +277,24 @@ export default function Bildideen() {
               </div>
 
               <div>
-                <Label className="mb-1.5 block">2. Was soll dort hin?</Label>
-                <div className="mb-2 flex flex-wrap gap-1.5">
+                <Label className="mb-1.5 block">2. Was soll dort hin? — einfach in eigenen Worten</Label>
+                <Textarea
+                  rows={4}
+                  value={wunsch}
+                  onChange={(e) => setWunsch(e.target.value)}
+                  placeholder={"Beschreib es so, wie du es einem Kollegen sagen würdest, z. B.:\n»eine zarte Holzkonstruktion im Farbton der Fassade, mit Glasdach, über dem Vorplatz«\nJe konkreter (Material, Farbe, Ort im Bild, Größe), desto besser das Ergebnis."}
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Vorlagen als Starthilfe — sie setzen einen Text ein, den du danach frei änderst:
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
                   {BILD_VORLAGEN.map((v) => (
                     <button key={v.key} type="button" onClick={() => setWunsch(v.text)}
-                      className={`min-h-[32px] rounded-full border px-3 text-xs ${wunsch === v.text ? "border-primary bg-primary/10 font-semibold text-primary" : "bg-background hover:bg-muted/40"}`}>
+                      className="min-h-[30px] rounded-full border bg-background px-2.5 text-xs hover:bg-muted/40">
                       {v.label}
                     </button>
                   ))}
                 </div>
-                <Textarea
-                  rows={3}
-                  value={wunsch}
-                  onChange={(e) => setWunsch(e.target.value)}
-                  placeholder="z. B. ein Carport aus Lärche für zwei Autos links neben dem Haus, Flachdach, Holz sichtbar"
-                />
               </div>
 
               <div>

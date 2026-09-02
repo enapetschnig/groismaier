@@ -804,6 +804,7 @@ export default function Fahrzeuge() {
                   onChange={(e) => setForm(f => ({ ...f, verrechnungseinheit: e.target.value }))}
                 >
                   <option value="h">€/h</option>
+                  <option value="km">€/km</option>
                   <option value="Tag">€/Tag</option>
                   <option value="Einsatz">€/Einsatz</option>
                   <option value="Stk.">€/Stk.</option>

@@ -454,11 +454,26 @@ const Disturbances = () => {
               </Select>
             </div>
             {(projectFilter || disturbances.length > 0) && (
-              <p className="text-xs text-muted-foreground mt-2">
-                {filteredDisturbances.length} von {disturbances.length} Berichten
-                {offeneAnzahl > 0 && ` · ${offeneAnzahl} noch nicht abgeschlossen`}
-                {projectFilter && " · auf dieses Projekt gefiltert"}
-              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <p className="text-xs text-muted-foreground">
+                  {filteredDisturbances.length} von {disturbances.length} Berichten
+                  {offeneAnzahl > 0 && ` · ${offeneAnzahl} noch nicht abgeschlossen`}
+                  {projectFilter && " · auf dieses Projekt gefiltert"}
+                </p>
+                {/* „Alle auswählen" (Kundenwunsch 02.09.2026) — wählt genau die
+                    gerade sichtbaren (gefilterten) Berichte. */}
+                {isAdmin && filteredDisturbances.length > 0 && (
+                  <Button
+                    size="sm" variant="outline" className="h-8 text-xs"
+                    onClick={() => setSelectedIds((prev) =>
+                      prev.size === filteredDisturbances.length
+                        ? new Set()
+                        : new Set(filteredDisturbances.map((d) => d.id)))}
+                  >
+                    {selectedIds.size === filteredDisturbances.length ? "Auswahl aufheben" : `Alle ${filteredDisturbances.length} auswählen`}
+                  </Button>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>

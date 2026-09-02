@@ -93,23 +93,21 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   }
   const [maschinen, setMaschinen] = useState<MaschinenEintrag[]>([]);
   const [maschinenStamm, setMaschinenStamm] = useState<
-    { id: string; bezeichnung: string; verrechnungssatz: number | null; verrechnungseinheit: string | null }[]
+    { id: string; bezeichnung: string; art: string | null; verrechnungssatz: number | null; verrechnungseinheit: string | null }[]
   >([]);
 
   useEffect(() => {
     (async () => {
-      // Alle Maschinen — plus Fahrzeuge, die einen Verrechnungssatz haben
-      // (Kundenwunsch 08/2026: auch Kran/LKW als Regie-Position buchbar).
+      // Alle Maschinen und alle aktiven Fahrzeuge (Kundenwunsch 02.09.2026:
+      // „bei Regieberichten Fahrzeuge hinzufügen mit den hinterlegten
+      // km-Preisen"). Ein Fahrzeug ohne Verrechnungssatz ist trotzdem
+      // wählbar — der Satz wird dann von Hand eingetragen.
       const { data } = await (supabase.from("vehicles" as never) as any)
         .select("id, bezeichnung, art, verrechnungssatz, verrechnungseinheit")
         .eq("aktiv", true)
         .order("art", { ascending: false }) // Maschinen vor Fahrzeugen
         .order("bezeichnung");
-      setMaschinenStamm(
-        (((data as any[]) || []) as any[]).filter(
-          (v) => v.art === "maschine" || v.verrechnungssatz != null,
-        ) as any,
-      );
+      setMaschinenStamm((((data as any[]) || []) as any[]) as any);
     })();
   }, []);
 
@@ -347,6 +345,54 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
   };
 
   /**
+   * Artikel-Datenbank je Materialzeile (Kundenwunsch 02.09.2026: „einmal den
+   * Zugriff auf die Datenbank mit den Preisen, und einmal eine freie
+   * Eingabe"). Beim Tippen kommen Treffer aus der Artikelliste; ein Klick
+   * übernimmt Name, Einheit und Verkaufspreis. Wer nichts anklickt, bucht
+   * frei — Preis lässt sich immer auch von Hand eintragen.
+   */
+  const [matVorschlaege, setMatVorschlaege] = useState<Record<string, { id: string; name: string; einheit: string | null; vk: number }[]>>({});
+  const [matPreisRoh, setMatPreisRoh] = useState<Record<string, string>>({});
+  const matSucheTimer = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const sucheArtikel = (zeileId: string, text: string) => {
+    clearTimeout(matSucheTimer.current[zeileId]);
+    const q = text.trim();
+    if (q.length < 2) { setMatVorschlaege((alt) => ({ ...alt, [zeileId]: [] })); return; }
+    matSucheTimer.current[zeileId] = setTimeout(async () => {
+      const { data } = await supabase
+        .from("invoice_templates")
+        .select("id, name, kurzbezeichnung, einheit, vk_netto, einzelpreis")
+        .eq("ist_aktiv", true)
+        .or(`name.ilike.%${q}%,kurzbezeichnung.ilike.%${q}%`)
+        .limit(8);
+      setMatVorschlaege((alt) => ({
+        ...alt,
+        [zeileId]: (((data as any[]) || [])).map((t) => ({
+          id: t.id,
+          name: t.kurzbezeichnung || t.name,
+          einheit: t.einheit,
+          vk: Number(t.vk_netto ?? t.einzelpreis) || 0,
+        })),
+      }));
+    }, 250);
+  };
+  const waehleArtikel = (zeileId: string, a: { name: string; einheit: string | null; vk: number }) => {
+    setMaterials((alt) => alt.map((m) => m.id === zeileId ? {
+      ...m,
+      material: a.name,
+      einheit: a.einheit && einheiten.includes(a.einheit) ? a.einheit : m.einheit,
+      einzelpreis: a.vk > 0 ? a.vk : m.einzelpreis,
+    } : m));
+    setMatVorschlaege((alt) => ({ ...alt, [zeileId]: [] }));
+    setMatPreisRoh((alt) => { const n = { ...alt }; delete n[zeileId]; return n; });
+  };
+  const setzeMatPreis = (zeileId: string, roh: string) => {
+    setMatPreisRoh((alt) => ({ ...alt, [zeileId]: roh }));
+    const zahl = roh.trim() === "" ? null : Number(roh.replace(",", "."));
+    setMaterials((alt) => alt.map((m) => m.id === zeileId ? { ...m, einzelpreis: zahl == null || Number.isNaN(zahl) ? null : zahl } : m));
+  };
+
+  /**
    * Die Stunden werden zusätzlich in die Zeiterfassung gebucht. Schlägt das
    * fehl (z. B. weil für den Zeitblock schon ein Eintrag existiert), darf das
    * den Regiebericht NICHT kippen — der Chef muss es aber erfahren, sonst
@@ -519,6 +565,8 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
             material: m.material.trim(),
             menge: m.menge.trim() || null,
             einheit: m.einheit || "Stk.",
+            notizen: m.notizen ?? null,
+            einzelpreis: m.einzelpreis ?? null,
           }))
         );
       }
@@ -976,11 +1024,29 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                 {materials.map((mat) => (
                   <div key={mat.id} className="rounded-lg border p-2 space-y-2 bg-muted/20">
                     <Input
-                      placeholder="Material / Bezeichnung"
+                      placeholder="Material — tippen für Artikel aus der Liste, oder frei"
                       value={mat.material}
-                      onChange={(e) => updateMaterial(mat.id, "material", e.target.value)}
+                      onChange={(e) => { updateMaterial(mat.id, "material", e.target.value); sucheArtikel(mat.id, e.target.value); }}
                       className="h-11 w-full"
+                      autoComplete="off"
                     />
+                    {(matVorschlaege[mat.id]?.length ?? 0) > 0 && (
+                      <div className="divide-y rounded-md border bg-background shadow-sm">
+                        {matVorschlaege[mat.id].map((a) => (
+                          <button
+                            key={a.id}
+                            type="button"
+                            className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                            onClick={() => waehleArtikel(mat.id, a)}
+                          >
+                            <span className="min-w-0 truncate">{a.name}</span>
+                            <span className="shrink-0 text-xs text-muted-foreground">
+                              {a.vk > 0 ? `€ ${a.vk.toFixed(2)} / ${a.einheit || "Stk."}` : "ohne Preis"}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                     <div className="flex gap-2 items-center">
                       <Input
                         placeholder="Menge"
@@ -999,6 +1065,18 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                           ))}
                         </SelectContent>
                       </Select>
+                      <div className="relative w-28 shrink-0">
+                        <Input
+                          placeholder="Preis"
+                          inputMode="decimal"
+                          value={matPreisRoh[mat.id] ?? (mat.einzelpreis ?? "")}
+                          onChange={(e) => setzeMatPreis(mat.id, e.target.value)}
+                          onBlur={() => setMatPreisRoh((alt) => { const n = { ...alt }; delete n[mat.id]; return n; })}
+                          className="h-11 pr-7"
+                          title="Preis je Einheit (aus der Artikelliste oder von Hand) — für die Abrechnung"
+                        />
+                        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
+                      </div>
                       <Button
                         type="button"
                         variant="ghost"
@@ -1023,11 +1101,11 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
             <div className="flex items-center justify-between">
               <h3 className="font-medium flex items-center gap-2">
                 <Wrench className="h-4 w-4" />
-                Maschinen / Werkzeug (optional)
+                Maschinen / Fahrzeuge (optional)
               </h3>
               <Button type="button" variant="outline" className="h-11" onClick={addMaschine}>
                 <Plus className="h-4 w-4 mr-1" />
-                Maschine
+                Maschine / Fahrzeug
               </Button>
             </div>
 
@@ -1043,13 +1121,15 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                           : waehleMaschine(ma.id, v)}
                       >
                         <SelectTrigger className="h-11" aria-label="Maschine wählen">
-                          <SelectValue placeholder="Aus dem Maschinen-Manager wählen…" />
+                          <SelectValue placeholder="Maschine oder Fahrzeug aus dem Stamm wählen…" />
                         </SelectTrigger>
                         <SelectContent>
                           {maschinenStamm.map((v) => (
                             <SelectItem key={v.id} value={v.id}>
                               {v.bezeichnung}
-                              {v.verrechnungssatz != null ? ` — € ${Number(v.verrechnungssatz).toFixed(2)}/${v.verrechnungseinheit || "h"}` : ""}
+                              {v.verrechnungssatz != null
+                                ? ` — € ${Number(v.verrechnungssatz).toFixed(2)}/${v.verrechnungseinheit || "h"}`
+                                : v.art !== "maschine" ? " — kein Satz hinterlegt" : ""}
                             </SelectItem>
                           ))}
                           <SelectItem value="frei">Freie Eingabe …</SelectItem>
@@ -1074,6 +1154,7 @@ export const DisturbanceForm = ({ open, onOpenChange, onSuccess, editData, prefi
                         <SelectTrigger className="h-11 w-28" aria-label="Einheit"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="h">Stunden</SelectItem>
+                          <SelectItem value="km">Kilometer</SelectItem>
                           <SelectItem value="Tag">Tage</SelectItem>
                           <SelectItem value="Einsatz">Einsatz</SelectItem>
                           <SelectItem value="Stk.">Stück</SelectItem>

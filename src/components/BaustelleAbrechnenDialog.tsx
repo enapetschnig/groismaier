@@ -46,6 +46,8 @@ export interface AbrechnungsPosition {
   erledigt?: boolean;
   /** Quell-Zeilen, die beim Speichern als verrechnet markiert werden. */
   quelle?: { art: "regie" | "zeit" | "material"; ids: string[] };
+  /** Abzugszeile: tatsächlich bezahlter Betrag (brutto) — falls abweichend. */
+  bezahltBetrag?: number;
 }
 
 type BlockKey = "angebot" | "regie" | "zeit" | "material" | "lieferschein" | "eingangsrechnung" | "abzug";
@@ -93,6 +95,14 @@ export function BaustelleAbrechnenDialog({
   const [offeneBloecke, setOffeneBloecke] = useState<Set<BlockKey>>(new Set());
   const [stundensatz, setStundensatz] = useState(70);
   const [erAufschlag, setErAufschlag] = useState(0);
+  /**
+   * Abzug: Rechnungsbetrag oder tatsächlich bezahlter Betrag (Kundenwunsch
+   * 02.09.2026: „den tatsächlich gebuchten Betrag, den der Kunde vielleicht
+   * abzüglich Skonto bezahlt hat, berücksichtigen"). Standard bleibt der
+   * Rechnungsbetrag — ein gewährter Skonto ist erledigt und wird nicht
+   * nachgefordert. Wer den bezahlten Betrag abziehen will, schaltet um.
+   */
+  const [abzugBezahlt, setAbzugBezahlt] = useState(false);
 
   const laden = useCallback(async () => {
     if (!projectId) return;
@@ -441,6 +451,7 @@ export function BaustelleAbrechnenDialog({
             menge: 1, einheit: "pausch.", einzelpreis: -brutto,
             mwst_exempt: true,
             vermerk: stand,
+            bezahltBetrag: bezahlt > 0 ? bezahlt : undefined,
             // Anzahlungen gehören immer abgezogen; sonstige Rechnungen
             // entscheidet der Chef selbst.
             erledigt: a.typ !== "anzahlungsrechnung",
@@ -470,11 +481,15 @@ export function BaustelleAbrechnenDialog({
   useEffect(() => { if (open) void laden(); }, [open, laden]);
 
   /** Eingangsrechnungen sind EK — der Aufschlag macht daraus den VK. */
-  const preisVon = useCallback((b: Block, p: AbrechnungsPosition) =>
-    b.key === "eingangsrechnung" && erAufschlag !== 0
-      ? Math.round(p.einzelpreis * (1 + erAufschlag / 100) * 100) / 100
-      : p.einzelpreis,
-  [erAufschlag]);
+  const preisVon = useCallback((b: Block, p: AbrechnungsPosition) => {
+    if (b.key === "eingangsrechnung" && erAufschlag !== 0) {
+      return Math.round(p.einzelpreis * (1 + erAufschlag / 100) * 100) / 100;
+    }
+    if (b.key === "abzug" && abzugBezahlt && p.bezahltBetrag && p.bezahltBetrag > 0) {
+      return -Math.round(p.bezahltBetrag * 100) / 100;
+    }
+    return p.einzelpreis;
+  }, [erAufschlag, abzugBezahlt]);
 
   const summeVon = useCallback((b: Block) =>
     b.positionen.filter((p) => gewaehlt.has(p.id))
@@ -507,7 +522,15 @@ export function BaustelleAbrechnenDialog({
     for (const b of bloecke) {
       for (const p of b.positionen) {
         if (!gewaehlt.has(p.id)) continue;
-        positionen.push({ ...p, einzelpreis: preisVon(b, p) });
+        const preis = preisVon(b, p);
+        const bezahltAbgezogen = b.key === "abzug" && abzugBezahlt && p.bezahltBetrag && preis !== p.einzelpreis;
+        positionen.push({
+          ...p,
+          einzelpreis: preis,
+          beschreibung: bezahltAbgezogen
+            ? p.beschreibung.replace(" (brutto, MwSt-frei)", ` — bezahlter Betrag (brutto, MwSt-frei)`)
+            : p.beschreibung,
+        });
         if (p.quelle?.art === "regie") p.quelle.ids.forEach((i) => regieIds.add(i));
         if (p.quelle?.art === "zeit") p.quelle.ids.forEach((i) => zeitIds.add(i));
         if (p.quelle?.art === "material") p.quelle.ids.forEach((i) => materialIds.add(i));
@@ -645,6 +668,18 @@ export function BaustelleAbrechnenDialog({
                     >{v} %</button>
                   ))}
                 </div>
+              )}
+              {bloecke.some((b) => b.key === "abzug" && b.positionen.some((p) => p.bezahltBetrag && Math.abs(p.bezahltBetrag + p.einzelpreis) > 0.005)) && (
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+                  <Checkbox className="mt-0.5" checked={abzugBezahlt} onCheckedChange={(c) => setAbzugBezahlt(!!c)} />
+                  <span>
+                    <span className="block font-medium text-amber-900">Tatsächlich bezahlten Betrag abziehen (statt Rechnungsbetrag)</span>
+                    <span className="text-xs text-amber-900/80">
+                      Mindestens eine Rechnung wurde mit anderem Betrag bezahlt (z. B. Skonto). Standard ist der
+                      Rechnungsbetrag — ein gewährter Skonto wird damit nicht nachgefordert.
+                    </span>
+                  </span>
+                </label>
               )}
               <div className="flex items-center justify-between rounded-md bg-muted/40 px-3 py-2">
                 <span className="text-sm font-semibold">

@@ -41,7 +41,37 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
     menge: "",
     einheit: "Stk.",
     notizen: "",
+    /** Preis aus der Artikel-Datenbank (leer = frei/ohne Preis). */
+    einzelpreis: "",
   });
+  /**
+   * Artikel-Datenbank beim Tippen (Kundenwunsch 02.09.2026: „einmal den
+   * Zugriff auf die Datenbank mit den Preisen, und einmal eine freie
+   * Eingabe"). Treffer übernehmen Name, Einheit und Verkaufspreis;
+   * wer nichts anklickt, bucht weiterhin frei.
+   */
+  const [vorschlaege, setVorschlaege] = useState<{ id: string; name: string; einheit: string | null; vk: number }[]>([]);
+  useEffect(() => {
+    const q = formData.material.trim();
+    if (q.length < 2 || !showForm) { setVorschlaege([]); return; }
+    let aktiv = true;
+    const t = setTimeout(async () => {
+      const { data } = await supabase
+        .from("invoice_templates")
+        .select("id, name, kurzbezeichnung, einheit, vk_netto, einzelpreis")
+        .eq("ist_aktiv", true)
+        .or(`name.ilike.%${q}%,kurzbezeichnung.ilike.%${q}%`)
+        .limit(8);
+      if (!aktiv) return;
+      setVorschlaege(((data as any[]) || []).map((t) => ({
+        id: t.id,
+        name: t.kurzbezeichnung || t.name,
+        einheit: t.einheit,
+        vk: Number(t.vk_netto ?? t.einzelpreis) || 0,
+      })));
+    }, 250);
+    return () => { aktiv = false; clearTimeout(t); };
+  }, [formData.material, showForm]);
 
   useEffect(() => {
     fetchMaterials();
@@ -69,7 +99,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
 
   const openAddForm = () => {
     setEditingMaterial(null);
-    setFormData({ material: "", menge: "", einheit: "Stk.", notizen: "" });
+    setFormData({ material: "", menge: "", einheit: "Stk.", notizen: "", einzelpreis: "" });
     setShowForm(true);
   };
 
@@ -80,6 +110,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
       menge: material.menge || "",
       einheit: material.einheit || "Stk.",
       notizen: material.notizen || "",
+      einzelpreis: (material as any).einzelpreis != null ? String((material as any).einzelpreis).replace(".", ",") : "",
     });
     setShowForm(true);
   };
@@ -108,6 +139,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
       menge: formData.menge.trim() || null,
       einheit: formData.einheit || "Stk.",
       notizen: formData.notizen.trim() || null,
+      einzelpreis: formData.einzelpreis.trim() ? Number(formData.einzelpreis.replace(",", ".")) || null : null,
     };
 
     if (editingMaterial) {
@@ -118,6 +150,7 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
           menge: materialData.menge,
           einheit: materialData.einheit,
           notizen: materialData.notizen,
+          einzelpreis: materialData.einzelpreis,
         })
         .eq("id", editingMaterial.id);
 
@@ -280,8 +313,45 @@ export const DisturbanceMaterials = ({ disturbanceId, canEdit }: DisturbanceMate
                 id="material"
                 value={formData.material}
                 onChange={(e) => setFormData({ ...formData, material: e.target.value })}
-                placeholder="z.B. Sicherungsautomat 16A"
+                placeholder="Tippen: Vorschläge aus der Artikelliste — oder frei eingeben"
+                autoComplete="off"
                 required
+              />
+              {vorschlaege.length > 0 && (
+                <div className="mt-1 divide-y rounded-md border bg-background shadow-sm">
+                  {vorschlaege.map((v) => (
+                    <button
+                      key={v.id}
+                      type="button"
+                      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                      onClick={() => {
+                        setFormData({
+                          ...formData,
+                          material: v.name,
+                          einheit: v.einheit || formData.einheit,
+                          einzelpreis: v.vk > 0 ? String(v.vk).replace(".", ",") : formData.einzelpreis,
+                        });
+                        setVorschlaege([]);
+                      }}
+                    >
+                      <span className="min-w-0 truncate">{v.name}</span>
+                      <span className="shrink-0 text-xs text-muted-foreground">
+                        {v.vk > 0 ? `€ ${v.vk.toFixed(2)} / ${v.einheit || "Stk."}` : "ohne Preis"}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div>
+              <Label htmlFor="einzelpreis">Preis je Einheit (€, für die Abrechnung)</Label>
+              <Input
+                id="einzelpreis"
+                className="h-11"
+                inputMode="decimal"
+                value={formData.einzelpreis}
+                onChange={(e) => setFormData({ ...formData, einzelpreis: e.target.value })}
+                placeholder="kommt aus der Artikelliste oder frei eintragen"
               />
             </div>
             <div className="flex gap-2">
