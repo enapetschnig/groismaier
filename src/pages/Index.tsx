@@ -12,6 +12,7 @@ import {
   type LucideIcon,
   KeyRound,
   Mail,
+  Wand2,
 } from "lucide-react";
 import { useOnboarding } from "@/contexts/OnboardingContext";
 import {
@@ -584,6 +585,18 @@ export default function Index() {
                 icon={Calculator}
                 label="Kalkulationsliste"
                 onClick={() => navigate("/auftragskalkulation")}
+              />
+            </KBBereich>
+          )}
+
+          {/* ── Bildideen (KI) — Kundenwunsch 02.09.2026 ─────────── */}
+          {canView("bildideen") && (
+            <KBBereich icon={Wand2} title="Bildideen">
+              <KBButton
+                className="w-full"
+                icon={Wand2}
+                label="Bild erzeugen"
+                onClick={() => navigate("/bildideen")}
               />
             </KBBereich>
           )}

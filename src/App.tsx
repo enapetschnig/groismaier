@@ -43,6 +43,7 @@ import Nachkalkulation from "./pages/Nachkalkulation";
 import Finanzplanung from "./pages/Finanzplanung";
 import Ausschreibungen from "./pages/Ausschreibungen";
 import Fahrzeuge from "./pages/Fahrzeuge";
+import Bildideen from "./pages/Bildideen";
 import ScheduleBoard from "./pages/ScheduleBoard";
 import FreelancerHours from "./pages/FreelancerHours";
 import Aufgaben from "./pages/Aufgaben";
@@ -138,6 +139,7 @@ function AppContent() {
               (Review-Befund). */}
           <Route path="/ausschreibungen" element={<ProtectedRoute feature="admin"><Ausschreibungen /></ProtectedRoute>} />
           <Route path="/fahrzeuge" element={<ProtectedRoute feature="fahrzeuge"><Fahrzeuge /></ProtectedRoute>} />
+          <Route path="/bildideen" element={<ProtectedRoute feature="bildideen"><Bildideen /></ProtectedRoute>} />
         </Route>
 
         <Route path="*" element={<NotFound />} />

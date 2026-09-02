@@ -5,7 +5,7 @@ export const FEATURES = [
   'zeiterfassung','projekte','meine_stunden','regieberichte','rechnungen',
   'plantafel',
   'kunden','materialien','admin','stundenauswertung','eingangsrechnungen',
-  'nachkalkulation','fahrzeuge','finanzplanung'
+  'nachkalkulation','fahrzeuge','finanzplanung','bildideen'
 ] as const;
 export type FeatureKey = typeof FEATURES[number];
 
@@ -24,6 +24,7 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   nachkalkulation: "Nachkalkulation",
   fahrzeuge: "KFZ-Manager",
   finanzplanung: "Finanzplanung",
+  bildideen: "Bildideen (KI)",
 };
 
 // Map routes to features for ProtectedRoute
@@ -41,6 +42,7 @@ export const ROUTE_FEATURE_MAP: Record<string, FeatureKey> = {
   '/eingangsrechnungen': 'eingangsrechnungen',
   '/nachkalkulation': 'nachkalkulation',
   '/finanzplanung': 'finanzplanung',
+  '/bildideen': 'bildideen',
 };
 
 type PermsMap = Record<string, { can_view: boolean; can_edit: boolean }>;
