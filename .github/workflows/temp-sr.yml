@@ -9,10 +9,11 @@ jobs:
         run: |
           Q() { python3 -c "import json,sys; print(json.dumps({'query': sys.argv[1]}))" "$1" | curl -sS -X POST "https://api.supabase.com/v1/projects/tdehljzmqwmfgfoyyoee/database/query" -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" -H "Content-Type: application/json" -d @-; }
           echo "KOPF>>>"
-          Q "SELECT typ, nummer, status, datum, netto_summe, mwst_betrag, brutto_summe, rabatt_prozent, rabatt_betrag, bezahlt_betrag, skonto_prozent, skonto_tage, nettofrist, parent_invoice_id, project_id, kunde_name FROM invoices WHERE id='af88493c-295f-426f-a682-f2e8b9857a7b';"
+          Q "SELECT to_jsonb(i) - 'kunde_adresse' - 'kunde_email' - 'kunde_telefon' - 'lieferadresse' AS zeile FROM invoices i WHERE id='af88493c-295f-426f-a682-f2e8b9857a7b';"
           echo ""
-          echo "ANZAHLUNG>>>"
-          Q "SELECT id, typ, nummer, status, datum, brutto_summe, bezahlt_betrag, project_id, parent_invoice_id FROM invoices WHERE id='7f930e08-f142-44e9-8788-966a3d60f3a0' OR nummer LIKE '%2026-044%';"
+          echo "ZAHLUNGEN>>>"
+          Q "SELECT * FROM invoice_payments WHERE invoice_id IN ('7f930e08-f142-44e9-8788-966a3d60f3a0','af88493c-295f-426f-a682-f2e8b9857a7b');"
           echo ""
-          echo "TEXTSPALTEN>>>"
-          Q "SELECT column_name FROM information_schema.columns WHERE table_name='invoices' AND column_name ~ 'text|zahlung|bedingung|fuss|schluss';"
+          echo "TEXTE>>>"
+          Q "SELECT key, left(value, 200) AS value FROM document_texts WHERE key ILIKE '%closing%' OR key ILIKE '%zahl%' ORDER BY key;" 2>/dev/null
+          Q "SELECT column_name FROM information_schema.columns WHERE table_name='document_texts';"
