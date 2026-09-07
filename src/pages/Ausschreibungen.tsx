@@ -26,6 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { parseDecimal, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
+import { erkenneSpalten, baueLvAusZellen, LvExcelFehler, type Zellen, type SpaltenZuordnung } from "@/lib/lvExcel";
 import { belegSummen } from "@/lib/belegSummen";
 import {
   parseOnlv, lvSummen, positionspreis, epGesamt, istBepreisbar,
@@ -99,7 +100,19 @@ export default function Ausschreibungen() {
   const [loeschenId, setLoeschenId] = useState<string | null>(null);
 
   // ── Import-Vorschau ──
-  const [vorschau, setVorschau] = useState<{ lv: OnlvLV; xml: string; dateiName: string } | null>(null);
+  const [vorschau, setVorschau] = useState<{ lv: OnlvLV; xml: string | null; dateiName: string; quelle: "onlv" | "excel" } | null>(null);
+  /**
+   * Excel-Import (Kundenwunsch 07.09.2026): Arbeitsmappe im Speicher, gewähltes
+   * Blatt, erkannte Kopfzeile und Spaltenzuordnung — der Anwender prüft und
+   * korrigiert die Zuordnung, bevor daraus das LV gebaut wird.
+   */
+  const [excel, setExcel] = useState<{
+    dateiName: string;
+    blaetter: Record<string, Zellen>;
+    blatt: string;
+    kopfZeile: number;
+    zuordnung: SpaltenZuordnung;
+  } | null>(null);
   const [importiere, setImportiere] = useState(false);
 
   // ── Bepreisen ──
@@ -200,25 +213,63 @@ export default function Ausschreibungen() {
     const datei = e.target.files?.[0];
     e.target.value = ""; // gleiche Datei erneut wählbar
     if (!datei) return;
+    const ext = datei.name.split(".").pop()?.toLowerCase();
     try {
+      if (ext === "xlsx" || ext === "xlsm" || ext === "xls" || ext === "csv") {
+        // Excel-LV: Arbeitsmappe lesen (xlsx bleibt als eigener Chunk aus dem
+        // Hauptbundle), Spalten erraten, Zuordnung zur Kontrolle anzeigen.
+        const XLSX = await import("xlsx");
+        const wb = XLSX.read(await datei.arrayBuffer(), { type: "array", cellDates: false });
+        const blaetter: Record<string, Zellen> = {};
+        for (const name of wb.SheetNames) {
+          // raw: Zahlen kommen als Zahlen (nicht als formatierter Text mit
+          // Tausenderpunkt in wechselnder Landeseinstellung) — parseDecimal liest sie sicher.
+          blaetter[name] = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, raw: true, defval: "" }) as Zellen;
+        }
+        // Erstes Blatt mit erkennbaren Positionen bevorzugen.
+        const kandidat = wb.SheetNames.find((n) => erkenneSpalten(blaetter[n]).kopfZeile >= 0) || wb.SheetNames[0];
+        if (!kandidat) throw new LvExcelFehler("Die Arbeitsmappe enthält kein Tabellenblatt.");
+        const { kopfZeile, zuordnung } = erkenneSpalten(blaetter[kandidat]);
+        setExcel({ dateiName: datei.name, blaetter, blatt: kandidat, kopfZeile, zuordnung });
+        return;
+      }
       const xml = await datei.text();
       const lv = parseOnlv(xml);
-      setVorschau({ lv, xml, dateiName: datei.name });
+      setVorschau({ lv, xml, dateiName: datei.name, quelle: "onlv" });
     } catch (err) {
       toast({
         variant: "destructive",
         title: "Datei nicht lesbar",
-        description: err instanceof OnlvFehler
+        description: err instanceof OnlvFehler || err instanceof LvExcelFehler
           ? err.message
-          : "Die Datei konnte nicht verarbeitet werden. Erwartet wird eine .onlv-Datei nach ÖNORM A 2063.",
+          : "Die Datei konnte nicht verarbeitet werden. Erwartet wird eine .onlv-Datei nach ÖNORM A 2063 oder eine Excel-Tabelle (.xlsx).",
       });
+    }
+  };
+
+  /** Excel: Blatt wechseln → Kopfzeile/Spalten für dieses Blatt neu erraten. */
+  const excelBlattWaehlen = (blatt: string) => {
+    if (!excel) return;
+    const { kopfZeile, zuordnung } = erkenneSpalten(excel.blaetter[blatt] || []);
+    setExcel({ ...excel, blatt, kopfZeile, zuordnung });
+  };
+
+  /** Excel: aus Zuordnung das LV bauen → normale Import-Vorschau. */
+  const excelWeiter = () => {
+    if (!excel) return;
+    try {
+      const lv = baueLvAusZellen(excel.blaetter[excel.blatt] || [], excel.kopfZeile, excel.zuordnung, excel.dateiName, excel.blatt);
+      setVorschau({ lv, xml: null, dateiName: excel.dateiName, quelle: "excel" });
+      setExcel(null);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Zuordnung unvollständig", description: err instanceof Error ? err.message : String(err) });
     }
   };
 
   const importBestaetigt = async () => {
     if (!vorschau) return;
     setImportiere(true);
-    const { lv, xml, dateiName } = vorschau;
+    const { lv, xml, dateiName, quelle } = vorschau;
     const { data: kopf, error } = await (supabase.from("lv_ausschreibungen" as never) as any)
       .insert({
         name: lv.lvbezeichnung || lv.vorhaben || dateiName,
@@ -233,6 +284,7 @@ export default function Ausschreibungen() {
         programmsystem: lv.programmsystem || null,
         datei_name: dateiName,
         xml_original: xml,
+        quelle,
         // Vertragstext der LG/ULG-Ebene — muss beim Bepreisen sichtbar sein.
         vorbemerkungen: lv.vorbemerkungen,
         created_by: (await supabase.auth.getUser()).data.user?.id || null,
@@ -261,6 +313,9 @@ export default function Ausschreibungen() {
       positionsart: p.positionsart,
       leistungsteil: p.leistungsteil,
       sort: p.sort,
+      // Excel: Einheitspreis aus der Datei als Vorschlag (EP Sonstiges).
+      ep_sonstiges: p.epSonstiges ?? null,
+      bepreist_am: p.epSonstiges != null ? new Date().toISOString() : null,
     }));
     for (let i = 0; i < zeilen.length; i += 200) {
       const { error: posFehler } = await (supabase.from("lv_positionen" as never) as any)
@@ -805,14 +860,14 @@ export default function Ausschreibungen() {
           icon={Plus}
           iconClassName="text-kb-green"
           label="LV einlesen"
-          title="ÖNORM-A-2063-Datei (.onlv) einlesen"
+          title="Leistungsverzeichnis einlesen: ÖNORM A 2063 (.onlv) oder Excel (.xlsx)"
           onClick={() => dateiInput.current?.click()}
         />
       </KBToolbar>
       <input
         ref={dateiInput}
         type="file"
-        accept=".onlv,.xml"
+        accept=".onlv,.xml,.xlsx,.xlsm,.xls,.csv"
         className="hidden"
         onChange={dateiGewaehlt}
       />
@@ -825,9 +880,9 @@ export default function Ausschreibungen() {
             <FileText className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
             <p className="mb-1 text-lg font-semibold">Noch keine Ausschreibung eingelesen</p>
             <p className="mb-4 text-sm text-muted-foreground">
-              Lies ein Leistungsverzeichnis nach ÖNORM A 2063 (.onlv) ein — danach kannst du
-              jede Position mit Lohn- und Sonstiges-Anteil bepreisen und siehst die
-              Angebotssumme laufend mit.
+              Lies ein Leistungsverzeichnis ein — nach ÖNORM A 2063 (.onlv) oder als
+              Excel-Tabelle (.xlsx) vom Planer. Danach kannst du jede Position mit Lohn-
+              und Sonstiges-Anteil bepreisen und siehst die Angebotssumme laufend mit.
             </p>
             <Button className="h-11" onClick={() => dateiInput.current?.click()}>
               <FileUp className="mr-2 h-4 w-4" /> LV-Datei einlesen
@@ -908,6 +963,108 @@ export default function Ausschreibungen() {
         )}
       </div>
 
+      {/* ── Excel: Spalten zuordnen (Kundenwunsch 07.09.2026) ── */}
+      <Dialog open={!!excel} onOpenChange={(o) => { if (!o) setExcel(null); }}>
+        <DialogContent className="sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Excel-LV: Spalten zuordnen</DialogTitle>
+            <DialogDescription>
+              Jeder Planer baut seine Tabelle anders. Die App hat Kopfzeile und Spalten erraten —
+              bitte kurz prüfen und bei Bedarf umstellen. Zeilen mit Menge und Einheit werden
+              bepreisbare Positionen, Zeilen nur mit Text werden Überschriften bzw. Vertragstexte.
+            </DialogDescription>
+          </DialogHeader>
+          {excel && (() => {
+            const zellen = excel.blaetter[excel.blatt] || [];
+            const spaltenAnzahl = Math.max(0, ...zellen.slice(0, 50).map((r) => (r || []).length));
+            const spaltenName = (c: number) => {
+              let n = "", x = c + 1;
+              while (x > 0) { n = String.fromCharCode(64 + ((x - 1) % 26) + 1) + n; x = Math.floor((x - 1) / 26); }
+              const kopf = excel.kopfZeile >= 0 ? String((zellen[excel.kopfZeile] || [])[c] ?? "").trim() : "";
+              return kopf ? `${n} — ${kopf}` : n;
+            };
+            const felder: { key: keyof SpaltenZuordnung; label: string; pflicht?: boolean }[] = [
+              { key: "pos", label: "Positionsnummer" },
+              { key: "kurztext", label: "Text / Bezeichnung", pflicht: true },
+              { key: "langtext", label: "Langtext (optional)" },
+              { key: "menge", label: "Menge", pflicht: true },
+              { key: "einheit", label: "Einheit", pflicht: true },
+              { key: "ep", label: "Einheitspreis (optional)" },
+            ];
+            const vorschauZeilen = zellen.slice(excel.kopfZeile + 1, excel.kopfZeile + 9);
+            const setZu = (key: keyof SpaltenZuordnung, wert: string) =>
+              setExcel({ ...excel, zuordnung: { ...excel.zuordnung, [key]: wert === "" ? null : Number(wert) } });
+            return (
+              <div className="space-y-3 text-sm">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <label className="grid gap-1">
+                    <span className="text-xs text-muted-foreground">Tabellenblatt</span>
+                    <select className="kb-input h-10 px-2" value={excel.blatt} onChange={(e) => excelBlattWaehlen(e.target.value)}>
+                      {Object.keys(excel.blaetter).map((n) => <option key={n} value={n}>{n}</option>)}
+                    </select>
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-muted-foreground">Kopfzeile (Überschriften)</span>
+                    <select className="kb-input h-10 px-2" value={excel.kopfZeile}
+                      onChange={(e) => setExcel({ ...excel, kopfZeile: Number(e.target.value) })}>
+                      <option value={-1}>keine — Daten beginnen in Zeile 1</option>
+                      {zellen.slice(0, 40).map((r, i) => (
+                        <option key={i} value={i}>Zeile {i + 1}: {(r || []).map((z) => String(z ?? "").trim()).filter(Boolean).slice(0, 4).join(" | ").slice(0, 60) || "(leer)"}</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {felder.map((f) => (
+                    <label key={f.key} className="grid gap-1">
+                      <span className="text-xs text-muted-foreground">{f.label}{f.pflicht ? " *" : ""}</span>
+                      <select className="kb-input h-10 px-2" value={excel.zuordnung[f.key] ?? ""} onChange={(e) => setZu(f.key, e.target.value)}>
+                        <option value="">— nicht vorhanden —</option>
+                        {Array.from({ length: spaltenAnzahl }, (_, c) => <option key={c} value={c}>{spaltenName(c)}</option>)}
+                      </select>
+                    </label>
+                  ))}
+                </div>
+                <div className="overflow-x-auto rounded border">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-muted/40 text-left text-muted-foreground">
+                        {felder.map((f) => <th key={f.key} className="px-2 py-1 font-semibold">{f.label.replace(" (optional)", "")}</th>)}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {vorschauZeilen.map((r, i) => (
+                        <tr key={i} className="border-t">
+                          {felder.map((f) => {
+                            const c = excel.zuordnung[f.key];
+                            const v = c === null ? "" : String((r || [])[c] ?? "").trim();
+                            return <td key={f.key} className="max-w-[260px] truncate px-2 py-1" title={v}>{v}</td>;
+                          })}
+                        </tr>
+                      ))}
+                      {vorschauZeilen.length === 0 && (
+                        <tr><td colSpan={felder.length} className="px-2 py-3 text-center text-muted-foreground">Keine Datenzeilen unter der Kopfzeile.</td></tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Vorschau der ersten Datenzeilen mit der gewählten Zuordnung. Menge und Einheit sind Pflicht,
+                  sonst kann nichts bepreist werden. Ein Einheitspreis aus der Datei wird als „EP Sonstiges" vorgeschlagen.
+                </p>
+                <div className="flex gap-2 pt-1">
+                  <Button variant="outline" className="flex-1" onClick={() => setExcel(null)}>Abbrechen</Button>
+                  <Button className="flex-1" onClick={excelWeiter}
+                    disabled={excel.zuordnung.kurztext === null || excel.zuordnung.menge === null || excel.zuordnung.einheit === null}>
+                    Weiter zur Vorschau
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
+        </DialogContent>
+      </Dialog>
+
       {/* ── Import-Vorschau ── */}
       <Dialog open={!!vorschau} onOpenChange={(o) => { if (!o) setVorschau(null); }}>
         <DialogContent className="sm:max-w-lg">
@@ -925,7 +1082,7 @@ export default function Ausschreibungen() {
                 ["LV-Bezeichnung", vorschau.lv.lvbezeichnung || "–"],
                 ["Auftraggeber", [vorschau.lv.auftraggeberName, vorschau.lv.auftraggeberAdresse].filter(Boolean).join(", ") || "–"],
                 ["Erstellt mit", vorschau.lv.programmsystem || "–"],
-                ["Schema", `ÖNORM A 2063 / ${vorschau.lv.schemaVersion || "unbekannt"}`],
+                ["Format", vorschau.quelle === "excel" ? "Excel-Tabelle (Spalten zugeordnet)" : `ÖNORM A 2063 / ${vorschau.lv.schemaVersion || "unbekannt"}`],
               ].map(([k, v]) => (
                 <div key={k} className="grid grid-cols-[130px_1fr] gap-2">
                   <span className="text-muted-foreground">{k}</span>

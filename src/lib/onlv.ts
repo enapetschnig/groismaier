@@ -44,6 +44,11 @@ export interface OnlvPosition {
   leistungsteil: string | null;
   /** Reihenfolge in der Datei — die Anzeige muss der Ausschreibung folgen. */
   sort: number;
+  /**
+   * Nur beim Excel-Import (07.09.2026): Einheitspreis aus der Datei als
+   * Vorschlag für „EP Sonstiges". ÖNORM-Ausschreibungen sind unbepreist.
+   */
+  epSonstiges?: number | null;
 }
 
 /** Vorbemerkung auf LG- oder ULG-Ebene — Vertragstext, gehört zur Anzeige. */
