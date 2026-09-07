@@ -2,7 +2,11 @@
  * Zahlungsfrist im Schlusstext-Baustein — Kundenmeldung 01.09.2026:
  * „die Zeile mit 14 Tagen bleibt immer drin" (bei „Zahlbar sofort").
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+// Der Supabase-Client wird beim Import des Loaders angelegt und liest in Node
+// eine Session aus dem (fehlenden) localStorage — das warf eine Unhandled
+// Rejection und ließ den Testlauf mit Exit 1 enden (behoben 07.09.2026).
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: () => ({ select: async () => ({ data: null, error: null }) }) } }));
 import { zahlungsfristAusBeleg, fristInText, applyDocumentTextsToInvoice } from "./documentTextsLoader";
 
 const BAUSTEIN = "Der ausgewiesene Restbetrag ist innerhalb {{tage}} Tagen fällig.";

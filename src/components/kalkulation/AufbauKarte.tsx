@@ -9,6 +9,7 @@
 // (nachkalk.actualDays, materialRows[].actualVK) bleiben unangetastet, damit
 // Altdaten nicht kaputtgehen — ausgewertet wird auf der Seite /nachkalkulation.
 // ============================================================================
+import { useState } from "react";
 import { BookmarkPlus, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
 import {
   KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten,
@@ -47,6 +48,8 @@ interface Props {
   onArtikelKalkulieren?: (artikel: import("./useKalkKatalog").KatalogArtikel) => void;
   onRemove: () => void;
   dragProps: DragProps;
+  /** Kapitel-Vorlagen (Einstellungen › Kapitel für das Angebot) + bereits vergebene Kapitel. */
+  kapitelVorlagen?: string[];
 }
 
 /** Feldhöhe: am Handy 44 px (Touch-Ziel), am Desktop kompakt. */
@@ -65,8 +68,16 @@ const Feld = ({ label, children }: { label: string; children: React.ReactNode })
 export function AufbauKarte({
   module: m, index, ergebnis: erg, faktor, bd, kategorien,
   onPatch, onPatchRow, onReplaceRow, onAddRow, onRemoveRow, onMoveRow, onClone, onSaveVorlage, onRemove, dragProps, onArtikelKalkulieren,
+  kapitelVorlagen = [],
 }: Props) {
   const titel = m.name || `Aufbau ${index + 1}`;
+  // Kapitel-Auswahl (Kundenwunsch 07.09.2026: „ein Drop Down, das ich mit
+  // Textbausteinen befüllen kann — die Kapitelnamen sind immer die gleichen").
+  // „Eigenes Kapitel …" öffnet ein Freitextfeld; der aktuelle Wert steht immer
+  // in der Liste, auch wenn er (noch) keine Vorlage ist.
+  const [kapitelFrei, setKapitelFrei] = useState(false);
+  const kapitelAktuell = (m.kapitel || "").trim();
+  const kapitelOptionen = Array.from(new Set([...kapitelVorlagen.map((k) => k.trim()), kapitelAktuell].filter(Boolean)));
   const materialAdj = erg.material.vkTotal * faktor;
   const laborAdj = erg.laborTotal * faktor;
   const gesamtAdj = materialAdj + laborAdj;
@@ -160,11 +171,31 @@ export function AufbauKarte({
                   gleichem Kapitel stehen im Angebot unter einer Überschrift mit
                   Zwischensumme — wie die Bereiche eines Sammelangebots. */}
               <Feld label="Kapitel im Angebot (gleiches Kapitel = gemeinsame Überschrift mit Zwischensumme)">
-                <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.kapitel || ""}
-                  list="kalk-kapitel-vorschlaege" autoComplete="off"
-                  placeholder="z. B. Rohbau, Dach, Fassade — leer = ohne Kapitel"
-                  title="Aufbauten ohne Kapitel stehen im Angebot vor dem ersten Kapitel."
-                  onChange={(e) => onPatch({ kapitel: e.target.value })} />
+                <select
+                  className={`kb-input ${FELD_H} min-h-0 w-full px-2 py-1 text-sm`}
+                  value={kapitelFrei ? "__frei" : kapitelAktuell}
+                  title="Liste pflegen: Einstellungen › Kapitel für das Angebot. Aufbauten ohne Kapitel stehen im Angebot vor dem ersten Kapitel."
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (v === "__frei") { setKapitelFrei(true); return; }
+                    setKapitelFrei(false);
+                    onPatch({ kapitel: v });
+                  }}
+                >
+                  <option value="">— ohne Kapitel —</option>
+                  {kapitelOptionen.map((k) => <option key={k} value={k}>{k}</option>)}
+                  <option value="__frei">Eigenes Kapitel eingeben …</option>
+                </select>
+                {kapitelFrei && (
+                  <input
+                    className={`kb-input ${FELD_H} mt-1 min-h-0 px-2 py-1 text-sm`}
+                    value={m.kapitel || ""}
+                    autoFocus
+                    placeholder="Kapitelname — unter Einstellungen als Vorlage merken"
+                    onChange={(e) => onPatch({ kapitel: e.target.value })}
+                    onBlur={() => { if (kapitelAktuell) setKapitelFrei(false); }}
+                  />
+                )}
               </Feld>
               {/* Kundenwunsch 25.08.2026: kleiner Text, der im Angebot VOR dem
                   Aufbau steht — im Beleg per Auge ausblendbar. */}

@@ -367,6 +367,16 @@ export default function KalkulationEditor() {
   }, [loaded, katalog.loading, katalog.materialKategorien, state.modules, toast]);
 
   // ---------------------------------------------------------- Berechnungen
+  // Kapitel-Vorlagen (Einstellungen › Kapitel für das Angebot, app_settings
+  // kalk_kapitel_vorlagen als JSON-Liste) + die in dieser Kalkulation bereits
+  // vergebenen Kapitel — Kundenwunsch 07.09.2026.
+  const kapitelVorlagen = useMemo(() => {
+    let liste: string[] = [];
+    try { const roh = JSON.parse(katalog.settings["kalk_kapitel_vorlagen"] || "[]"); if (Array.isArray(roh)) liste = roh.map(String); } catch { /* keine Vorlagen */ }
+    const vergeben = state.modules.map((m) => (m.kapitel || "").trim()).filter(Boolean);
+    return Array.from(new Set([...liste.map((k) => k.trim()).filter(Boolean), ...vergeben]));
+  }, [katalog.settings, state.modules]);
+
   const bd = useMemo(
     () => resolveBetriebsdaten(state.settings.businessData, katalog.settings),
     [state.settings.businessData, katalog.settings],
@@ -1143,14 +1153,6 @@ export default function KalkulationEditor() {
           <div className="space-y-4">
             <ProjektUebersicht projekt={projekt} />
 
-            {/* Vorschläge für das Kapitel-Feld der Aufbau-Karten: alle bereits
-                vergebenen Kapitel dieser Kalkulation (Tippfehler-Schutz). */}
-            <datalist id="kalk-kapitel-vorschlaege">
-              {Array.from(new Set(state.modules.map((m) => (m.kapitel || "").trim()).filter(Boolean))).map((k) => (
-                <option key={k} value={k} />
-              ))}
-            </datalist>
-
             {projekt.zeilen.map((z, index) => (
               <AufbauKarte
                 key={z.module.id}
@@ -1161,6 +1163,7 @@ export default function KalkulationEditor() {
                 bd={bd}
                 kategorien={katalog.materialKategorien}
                 onPatch={(patch) => patchModule(z.module.id, patch)}
+                kapitelVorlagen={kapitelVorlagen}
                 onPatchRow={(idx, patch) => patchRow(z.module.id, idx, patch)}
                 onReplaceRow={(idx, row) => replaceRow(z.module.id, idx, row)}
                 onAddRow={() => addRow(z.module.id)}

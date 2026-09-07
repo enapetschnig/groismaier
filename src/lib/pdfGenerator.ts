@@ -762,7 +762,10 @@ export async function generateInvoicePdf(
       zwischenRows.add(pos);
       uebertragNachZeile[pos] = uebertragNachZeile[run.ende] ?? 0;
     }
-    // Seitenumbrüche: jede Kalkulation beginnt auf einer neuen Seite.
+    // Bereichs-Anfänge merken. Früher begann hier zwingend eine neue Seite —
+    // seit 07.09.2026 (Kundenmeldung „hier bleibt gerade eine ganze Seite
+    // frei, das darf nicht passieren") entscheidet die Seitenfluss-Simulation
+    // unten: Umbruch nur, wenn die laufende Seite ohnehin fast voll ist.
     for (let i = 1; i < bereichVonRow.length; i++) {
       const b = bereichVonRow[i];
       if (b && b !== bereichVonRow[i - 1]) bereichSeitenStarts.push(i);
@@ -1045,10 +1048,15 @@ export async function generateInvoicePdf(
   try {
     // Blockgrenzen: Anhang-Zeilen (Detail/Text) hängen am laufenden Block;
     // eine Kapitelüberschrift bindet die ihr folgende Positionszeile an sich.
+    // Eine Bereichs-Überschrift („Bereich: …", selbst eine Textzeile) beginnt
+    // einen EIGENEN Block und bindet die erste Position des Bereichs an sich
+    // — sonst hing der Balken am vorigen Block, die Simulation lief neben der
+    // echten Ausgabe her und erzeugte fast leere Seiten (07.09.2026).
+    // Zwischensummen hängen am Block davor: kein einsamer Summenbalken oben.
     const bloecke: { start: number; ende: number }[] = [];
     for (let i = 0; i < tableBody.length; i++) {
-      const anhang = detailRows.has(i) || textRows.has(i);
-      const vorherKapitel = i > 0 && kapitelRows.has(i - 1);
+      const anhang = (detailRows.has(i) || textRows.has(i) || zwischenRows.has(i)) && !bereichsTitelRows.has(i);
+      const vorherKapitel = i > 0 && (kapitelRows.has(i - 1) || bereichsTitelRows.has(i - 1));
       if (!anhang && !vorherKapitel) bloecke.push({ start: i, ende: i });
       else if (bloecke.length > 0) bloecke[bloecke.length - 1].ende = i;
       else bloecke.push({ start: i, ende: i });
@@ -1084,7 +1092,16 @@ export async function generateInvoicePdf(
     const bereichStartSet = new Set(bereichSeitenStarts);
     let cursor = y + kopfHoehe;
     for (const b of bloecke) {
-      if (bereichStartSet.has(b.start)) cursor = seitenStart; // eigener Umbruch
+      // Neuer Bereich: keine Pflicht-Seite mehr. Umbruch nur, wenn auf der
+      // laufenden Seite ohnehin höchstens MAX_LEERRAUM_ANTEIL frei wäre —
+      // sonst bliebe eine fast leere Seite zurück (Kundenmeldung 07.09.2026).
+      if (bereichStartSet.has(b.start) && b.start > 0 && cursor > seitenStart) {
+        const restPlatz = unterkante - cursor;
+        if (restPlatz <= leereSeite * MAX_LEERRAUM_ANTEIL) {
+          blockUmbrueche.push(b.start);
+          cursor = seitenStart;
+        }
+      }
       let blockHoehe = 0;
       for (let i = b.start; i <= b.ende; i++) blockHoehe += zeilenHoehe[i] || 0;
       const platz = unterkante - cursor;
@@ -1101,7 +1118,7 @@ export async function generateInvoicePdf(
         }
         const kopfBleibtHaengen = kopfHoeheBlock > platz;
         if ((passtAufLeereSeite && leerraumVertretbar) || kopfBleibtHaengen) {
-          if (b.start > 0 && !bereichStartSet.has(b.start)) {
+          if (b.start > 0 && !blockUmbrueche.includes(b.start)) {
             blockUmbrueche.push(b.start);
             cursor = seitenStart;
           }
@@ -1114,9 +1131,24 @@ export async function generateInvoicePdf(
         cursor += h;
       }
     }
+    // Summenblock: passt er nicht mehr unter die letzte Position, stünde er
+    // allein auf einer sonst leeren Seite. Dann wandert die letzte Position
+    // mit auf diese Seite — sofern sie klein genug ist, dass auf der Seite
+    // davor kein großer Leerraum entsteht (Kundenmeldung 07.09.2026).
+    const letzter = bloecke[bloecke.length - 1];
+    if (letzter && letzter.start > 0 && !blockUmbrueche.includes(letzter.start)
+        && cursor + closingH > pageHeight - footerH - 4) {
+      let hLetzter = 0;
+      for (let i = letzter.start; i <= letzter.ende; i++) hLetzter += zeilenHoehe[i] || 0;
+      // Hier darf mehr Leerraum bleiben als bei einem normalen Umbruch: eine
+      // Seite, auf der NUR der Summenblock steht, ist das größere Übel.
+      if (hLetzter <= leereSeite * 0.5 && hLetzter + closingH <= leereSeite) {
+        blockUmbrueche.push(letzter.start);
+      }
+    }
   } catch { /* Messung ist Kosmetik — im Zweifel fließt die Tabelle wie bisher */ }
 
-  const segmentGrenzen = [...new Set([0, ...bereichSeitenStarts, ...blockUmbrueche, tableBody.length])]
+  const segmentGrenzen = [...new Set([0, ...blockUmbrueche, tableBody.length])]
     .sort((a, b) => a - b);
   for (let segIdx = 0; segIdx < segmentGrenzen.length - 1; segIdx++) {
   const segStart = segmentGrenzen[segIdx];

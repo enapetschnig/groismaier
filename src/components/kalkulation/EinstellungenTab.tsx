@@ -133,6 +133,29 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const { toast } = useToast();
   const [werte, setWerte] = useState<Record<string, string>>({});
   const [savingBd, setSavingBd] = useState(false);
+  // Kapitel-Vorlagen für das Angebot (Kundenwunsch 07.09.2026): eine Zeile je
+  // Kapitel, gespeichert als JSON-Liste in app_settings.kalk_kapitel_vorlagen.
+  const [kapitelText, setKapitelText] = useState("");
+  const [savingKapitel, setSavingKapitel] = useState(false);
+  useEffect(() => {
+    try {
+      const roh = JSON.parse(katalog.settings["kalk_kapitel_vorlagen"] || "[]");
+      setKapitelText(Array.isArray(roh) ? roh.map(String).join("\n") : "");
+    } catch { setKapitelText(""); }
+  }, [katalog.settings]);
+  const saveKapitel = async () => {
+    const liste = Array.from(new Set(kapitelText.split("\n").map((z) => z.trim()).filter(Boolean)));
+    setSavingKapitel(true);
+    const { error } = await supabase.from("app_settings")
+      .upsert([{ key: "kalk_kapitel_vorlagen", value: JSON.stringify(liste) }], { onConflict: "key" });
+    setSavingKapitel(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Fehler", description: `Kapitel konnten nicht gespeichert werden (nur Administratoren): ${error.message}` });
+      return;
+    }
+    toast({ title: "Gespeichert", description: `${liste.length} Kapitel-Vorlage${liste.length === 1 ? "" : "n"} für das Angebot.` });
+    katalog.reload();
+  };
   const [neueKategorie, setNeueKategorie] = useState<Record<string, string>>({});
   /** Kategorie-Filter oben (Kundenwunsch 3.2): eine Kategorie wählen statt
    *  durch alle zu scrollen. */
@@ -533,6 +556,29 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
 
   return (
     <div className="space-y-6">
+      {/* Kapitel-Vorlagen (Kundenwunsch 07.09.2026) */}
+      <div className="kb-panel">
+        <div className="border-b px-4 py-2.5 text-sm font-bold">Kapitel für das Angebot (Vorlagen)</div>
+        <div className="space-y-2 p-4">
+          <p className="text-xs text-muted-foreground">
+            Eine Zeile je Kapitel. Diese Namen stehen bei jedem Aufbau im Dropdown „Kapitel im Angebot";
+            Aufbauten mit gleichem Kapitel bekommen im Angebot eine gemeinsame Überschrift mit Zwischensumme.
+          </p>
+          <textarea
+            className="kb-input min-h-[120px] w-full px-2 py-1 text-sm"
+            rows={6}
+            value={kapitelText}
+            onChange={(e) => setKapitelText(e.target.value)}
+            placeholder={"Allgemein\nFundamente\nHolzbau\nDach\nFassade"}
+          />
+          <div className="flex justify-end">
+            <button type="button" className="kb-btn kb-btn-primary-green flex items-center gap-1.5" onClick={saveKapitel} disabled={savingKapitel}>
+              <Save className="h-4 w-4" /> Kapitel speichern
+            </button>
+          </div>
+        </div>
+      </div>
+
       {/* Betriebsdaten */}
       <div className="kb-panel">
         <div className="border-b px-4 py-2.5 text-sm font-bold">Allgemeine Betriebsdaten (globale Standardwerte)</div>
