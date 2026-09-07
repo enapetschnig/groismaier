@@ -160,6 +160,14 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   /** Kategorie-Filter oben (Kundenwunsch 3.2): eine Kategorie wählen statt
    *  durch alle zu scrollen. */
   const [katFilter, setKatFilter] = useState<string>("alle");
+  /**
+   * Kategorien zugeklappt (Kundenwunsch 07.09.2026: „wie in einer Kalkulation
+   * die Kategorien zuklappen — erst nach dem Aufklappen alle Artikel sehen").
+   * Standard: zu. Eine per Filter gewählte Kategorie ist immer offen.
+   */
+  const [katOffen, setKatOffen] = useState<Record<string, boolean>>({});
+  const istKatOffen = (id: string) => katOffen[id] === true || katFilter === id;
+  const toggleKat = (id: string) => setKatOffen((alt) => ({ ...alt, [id]: !istKatOffen(id) }));
   /** Lack-Sätze standardmäßig zugeklappt — sie gehören nicht zum Alltag. */
   const [lackOffen, setLackOffen] = useState(false);
   /** Artikel, dessen Kalkulieren-Dialog offen ist (Kundenwunsch 2026-08-19). */
@@ -277,6 +285,30 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
       const { error } = await katTable().delete().eq("id", kat.id);
       if (error) { fehler(error.message); return; }
     }
+    katalog.reload();
+  };
+
+  /**
+   * Ganze Kategorie nach oben/unten (Kundenwunsch 07.09.2026: „ganze
+   * Kategorien in der Reihenfolge verschieben"). Die Reihenfolge gilt überall:
+   * hier, in der Kategorie-Auswahl der Kalkulation und im Filter. Nach dem
+   * Tausch werden alle Kategorien des Typs sauber auf 10, 20, 30 … gesetzt —
+   * gleiche sort-Werte aus dem Altbestand blieben sonst „kleben".
+   */
+  const verschiebeKategorie = async (kat: KatalogKategorie, richtung: -1 | 1) => {
+    const liste = katalog.kategorien.filter((k) => k.typ === kat.typ);
+    const idx = liste.findIndex((k) => k.id === kat.id);
+    const ziel = idx + richtung;
+    if (idx < 0 || ziel < 0 || ziel >= liste.length) return;
+    const neu = [...liste];
+    [neu[idx], neu[ziel]] = [neu[ziel], neu[idx]];
+    const schreiben = neu
+      .map((k, i) => ({ k, sort: (i + 1) * 10 }))
+      .filter(({ k, sort }) => k.sort !== sort)
+      .map(({ k, sort }) => katTable().update({ sort }).eq("id", k.id));
+    const ergebnisse = await Promise.all(schreiben);
+    const err = ergebnisse.find((r: any) => r?.error)?.error;
+    if (err) { fehler(err.message); return; }
     katalog.reload();
   };
 
@@ -661,16 +693,38 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
             <div className="border-b px-4 py-2.5 text-sm font-bold">{block.titel}</div>
             <div className="space-y-4 p-4">
               <p className="text-xs text-muted-foreground">{block.hinweis}</p>
-              {kats.map((kat) => (
+              {kats.map((kat) => {
+                const offen = istKatOffen(kat.id);
+                const alleTyp = katalog.kategorien.filter((k) => k.typ === block.typ);
+                const posTyp = alleTyp.findIndex((k) => k.id === kat.id);
+                return (
                 <div key={kat.id} className={`min-w-0 rounded border ${kategorieFarbe(kat.name).split(" ")[1]}`}>
-                  <div className={`flex items-center gap-2 border-b px-2 py-1.5 ${kategorieFarbe(kat.name)}`}>
+                  <div className={`flex items-center gap-2 ${offen ? "border-b" : ""} px-2 py-1.5 ${kategorieFarbe(kat.name)}`}>
+                    <button
+                      type="button"
+                      className="flex h-11 w-11 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-black/5 sm:h-7 sm:w-7"
+                      onClick={() => toggleKat(kat.id)}
+                      title={offen ? "Artikel einklappen" : "Artikel anzeigen"}
+                      aria-expanded={offen}
+                    >{offen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
                     <BlurInput
                       value={kat.name}
                       onCommit={(v) => renameKategorie(kat, v)}
                       className="kb-input h-11 min-h-0 min-w-0 max-w-xs px-2 py-1 text-sm font-semibold sm:h-7"
                     />
+                    {!offen && (
+                      <span className="shrink-0 text-xs text-muted-foreground">{kat.artikel.length} Artikel</span>
+                    )}
                     <span className="flex-1" />
-                    <button type="button" className="kb-btn h-11 min-h-0 shrink-0 px-3 py-1 text-xs sm:h-7 sm:px-2" onClick={() => addArtikel(kat)}>
+                    {/* Reihenfolge der Kategorie (Kundenwunsch 07.09.2026) */}
+                    <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-black/5 disabled:opacity-30 sm:h-7 sm:w-7"
+                      disabled={posTyp <= 0} onClick={() => verschiebeKategorie(kat, -1)} title="Kategorie nach oben">
+                      <ArrowUp className="h-3.5 w-3.5" /></button>
+                    <button type="button" className="flex h-11 w-11 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-black/5 disabled:opacity-30 sm:h-7 sm:w-7"
+                      disabled={posTyp < 0 || posTyp >= alleTyp.length - 1} onClick={() => verschiebeKategorie(kat, 1)} title="Kategorie nach unten">
+                      <ArrowDown className="h-3.5 w-3.5" /></button>
+                    <button type="button" className="kb-btn h-11 min-h-0 shrink-0 px-3 py-1 text-xs sm:h-7 sm:px-2"
+                      onClick={() => { setKatOffen((alt) => ({ ...alt, [kat.id]: true })); void addArtikel(kat); }}>
                       <Plus className="h-3.5 w-3.5 text-kb-green" /> Artikel
                     </button>
                     <button
@@ -680,6 +734,7 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                       title="Kategorie löschen"
                     ><Trash2 className="h-3.5 w-3.5" /></button>
                   </div>
+                  {offen && (
                   <div className="overflow-x-auto">
                   <table className="w-full min-w-[420px] text-xs">
                     <thead>
@@ -824,8 +879,10 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
                     </tbody>
                   </table>
                   </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
               <div className="flex items-center gap-2">
                 <input
                   className="kb-input h-11 min-h-0 min-w-0 max-w-xs px-2 py-1 text-sm sm:h-8"
