@@ -224,9 +224,14 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
       if (seq !== seqRef.current) return;
 
       const nextUrl = URL.createObjectURL(blob);
-      if (urlRef.current) URL.revokeObjectURL(urlRef.current);
+      const alteUrl = urlRef.current;
       urlRef.current = nextUrl;
       setPdfUrl(nextUrl);
+      // Die alte Blob-URL erst freigeben, wenn der Viewer die neue sicher
+      // geladen hat (Meldung 06.09.2026: „ausgeblendete Zeilen bleiben in der
+      // Vorschau stehen" — ein sofortiges Revoke kann im PDF-Viewer mancher
+      // Browser dazu führen, dass der alte Stand hängen bleibt).
+      if (alteUrl) window.setTimeout(() => URL.revokeObjectURL(alteUrl), 15000);
     } catch (err: any) {
       console.error("Live-Vorschau Fehler:", err);
       if (seq === seqRef.current) setError(err?.message || "Vorschau konnte nicht erstellt werden");
@@ -559,6 +564,9 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
               </div>
             )}
             <iframe
+              /* key = URL: jedes neue PDF bekommt ein frisches iframe — der
+                 Viewer kann so nie einen alten Stand weiterzeigen. */
+              key={pdfUrl}
               /* view=Fit: ganze Seite sichtbar statt auf Breite skaliert und unten
                abgeschnitten — der Beleg soll „als ganzes Dokument" lesbar sein. */
             src={`${pdfUrl}#toolbar=0&navpanes=0&view=Fit`}

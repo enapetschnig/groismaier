@@ -57,8 +57,11 @@ export function InvoicePdfPreview({
   formDataRef.current = formData;
   itemsRef.current = items;
 
+  // Alte Blob-URL erst verzögert freigeben — der Viewer soll die neue sicher
+  // geladen haben, bevor die alte verschwindet (06.09.2026, siehe
+  // InvoiceLivePreview).
   useEffect(() => {
-    return () => { if (pdfUrl) URL.revokeObjectURL(pdfUrl); };
+    return () => { if (pdfUrl) window.setTimeout(() => URL.revokeObjectURL(pdfUrl), 15000); };
   }, [pdfUrl]);
 
   useEffect(() => {
@@ -135,7 +138,6 @@ export function InvoicePdfPreview({
         layout
       );
 
-      if (pdfUrl) URL.revokeObjectURL(pdfUrl);
       setPdfUrl(URL.createObjectURL(blob));
     } catch (err: any) {
       console.error("PDF error:", err);
@@ -218,7 +220,7 @@ export function InvoicePdfPreview({
             </div>
           ) : pdfUrl ? (
             <div className="relative w-full h-full">
-              <iframe src={pdfUrl} className="w-full h-full border-0" title="PDF Preview" />
+              <iframe key={pdfUrl} src={pdfUrl} className="w-full h-full border-0" title="PDF Preview" />
               {!saved && (
                 <div className="absolute inset-0 pointer-events-none flex items-center justify-center" aria-hidden="true">
                   <span
