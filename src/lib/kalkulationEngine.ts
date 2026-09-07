@@ -133,6 +133,14 @@ export interface KalkModule {
    *   sonst      die gewählte Einheit mit der Fläche als Menge
    */
   angebotEinheit?: "auto" | "pauschal" | "m²" | "lfm" | "m³" | "Stk.";
+  /**
+   * Kapitel für das Angebot (Kundenwunsch 06.09.2026: „gleich in einer
+   * Kalkulation die Kapitel vergeben — wie beim Anbot Knapp, wo die
+   * Kalkulationsnamen die Kapitelnamen sind"). Aufbauten mit gleichem
+   * Kapitel stehen im Angebot unter einer gemeinsamen Überschrift
+   * („Bereich: …") mit Zwischensumme. "" = kein Kapitel.
+   */
+  kapitel?: string;
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1203,7 +1211,9 @@ const kurzZahl = (n: number): string => fmt(n).replace(/,00$/, "").replace(/(,\d
  * ungruppierte Nebenkosten-Pauschale angehängt.
  */
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
-  const items: AngebotItem[] = [];
+  // Je Aufbau ein eigener Zeilenblock — erst am Ende werden die Blöcke nach
+  // Kapiteln geordnet (Kundenwunsch 06.09.2026), siehe ordneNachKapiteln().
+  const bloecke: { kapitel: string; items: AngebotItem[] }[] = [];
   const faktor = projekt.faktor;
   const vergebeneGruppen = new Set<string>();
 
@@ -1212,6 +1222,8 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     if (gesamt <= 0) return;
     const m = z.module;
     const erg = z.ergebnis;
+    const items: AngebotItem[] = [];
+    bloecke.push({ kapitel: (m.kapitel || "").trim(), items });
     // Optionale Aufbauten (Kundenwunsch 28.08.2026): Im Angebot steht vorne
     // "INFOPOSITION", und die Sammelzeile zählt NICHT in die Belegsumme
     // (ist_info — der Betrag bleibt an der Zeile sichtbar).
@@ -1357,6 +1369,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     detail("Sonstige Kosten", num(m.miscCosts) * faktor);
   });
 
+  const items = ordneNachKapiteln(bloecke);
   const projektGesamt = round2(projekt.totalGesamt);
   const summe = items.reduce((s, i) => s + i.gesamtpreis, 0);
   const nebenkosten = round2(projektGesamt - summe);
@@ -1369,6 +1382,60 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
   }
   return { items, projektGesamt };
 }
+
+/** Präfix der Kapitel-/Bereichs-Überschrift (reine Textzeile im Angebot). */
+export const BEREICH_PRAEFIX = "Bereich: ";
+
+/** Überschrift eines Kapitels — Textzeile ohne Menge, Einheit und Preis. */
+export const kapitelUeberschrift = (kapitel: string): AngebotItem => ({
+  beschreibung: `${BEREICH_PRAEFIX}${kapitel}`,
+  menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
+  gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
+  bereich: kapitel,
+});
+
+/** Ist die Zeile eine Kapitel-/Bereichs-Überschrift aus der Kalkulation? */
+export const istKapitelUeberschrift = (it: Pick<AngebotItem, "beschreibung" | "gruppe" | "menge" | "gesamtpreis">): boolean =>
+  String(it.beschreibung || "").startsWith(BEREICH_PRAEFIX) && !it.gruppe
+  && !(Number(it.menge) || 0) && !(Number(it.gesamtpreis) || 0);
+
+/**
+ * Aufbau-Blöcke nach Kapiteln ordnen (Kundenwunsch 06.09.2026).
+ *
+ * Ohne Kapitel: Reihenfolge wie in der Kalkulation, keine Überschriften —
+ * exakt wie bisher. Mit Kapiteln: Aufbauten OHNE Kapitel zuerst
+ * (unverändert, sie gehören zu keinem Block), danach je Kapitel in der
+ * Reihenfolge des ersten Auftretens eine Überschrift „Bereich: <Kapitel>"
+ * und darunter die Aufbauten dieses Kapitels. Jede Zeile trägt das Kapitel
+ * als `bereich` — so bilden PDF und Editor Zwischensummen und Blöcke genau
+ * wie beim Sammelangebot aus mehreren Kalkulationen.
+ */
+export function ordneNachKapiteln(bloecke: { kapitel: string; items: AngebotItem[] }[]): AngebotItem[] {
+  if (!bloecke.some((b) => b.kapitel)) return bloecke.flatMap((b) => b.items);
+  const out: AngebotItem[] = [];
+  for (const b of bloecke) if (!b.kapitel) out.push(...b.items);
+  const reihenfolge: string[] = [];
+  for (const b of bloecke) if (b.kapitel && !reihenfolge.includes(b.kapitel)) reihenfolge.push(b.kapitel);
+  for (const kapitel of reihenfolge) {
+    out.push(kapitelUeberschrift(kapitel));
+    for (const b of bloecke) {
+      if (b.kapitel === kapitel) out.push(...b.items.map((it) => ({ ...it, bereich: kapitel })));
+    }
+  }
+  return out;
+}
+
+/**
+ * Für das SAMMELANGEBOT (mehrere Kalkulationen = Bereiche): Ein Kapitel aus
+ * der einzelnen Kalkulation wird dort zum Unterkapitel — eine fette
+ * Textzeile mit dem Kapitelnamen, aber KEINE eigene Bereichs-Überschrift
+ * (der Bereich ist die Kalkulation). Der Aufrufer setzt `bereich` danach
+ * auf den Kalkulationsnamen.
+ */
+export const alsUnterkapitel = (it: AngebotItem): AngebotItem =>
+  istKapitelUeberschrift(it)
+    ? { ...it, beschreibung: String(it.beschreibung).slice(BEREICH_PRAEFIX.length).trim() }
+    : it;
 
 // ----------------------------------------------------------------------------
 // Factories & Konverter für Alt-Daten
@@ -1393,7 +1460,7 @@ export function newMaterialRow(): MaterialRow {
 
 export function newModule(id: number): KalkModule {
   return {
-    id, name: "", aufbauKategorie: "", note: "", vortext: "", nachtext: "", angebotEinheit: "auto",
+    id, name: "", aufbauKategorie: "", note: "", vortext: "", nachtext: "", angebotEinheit: "auto", kapitel: "",
     area: 0, wallHeight: 0,
     insulationThickness: 20, isOptional: false, collapsed: false,
     materialRows: Array.from({ length: INITIAL_MATERIAL_ROWS }, newMaterialRow),
@@ -1499,6 +1566,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         nachtext: typeof m.nachtext === "string" ? m.nachtext : "",
         angebotEinheit: ["auto", "pauschal", "m²", "lfm", "m³", "Stk."].includes(m.angebotEinheit)
           ? m.angebotEinheit : "auto",
+        kapitel: typeof m.kapitel === "string" ? m.kapitel : "",
         area: num(m.area),
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,

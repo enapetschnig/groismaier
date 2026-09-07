@@ -156,6 +156,16 @@ export function AufbauKarte({
                 <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.note}
                   onChange={(e) => onPatch({ note: e.target.value })} />
               </Feld>
+              {/* Kapitel für das Angebot (Kundenwunsch 06.09.2026): Aufbauten mit
+                  gleichem Kapitel stehen im Angebot unter einer Überschrift mit
+                  Zwischensumme — wie die Bereiche eines Sammelangebots. */}
+              <Feld label="Kapitel im Angebot (gleiches Kapitel = gemeinsame Überschrift mit Zwischensumme)">
+                <input className={`kb-input ${FELD_H} min-h-0 px-2 py-1 text-sm`} value={m.kapitel || ""}
+                  list="kalk-kapitel-vorschlaege" autoComplete="off"
+                  placeholder="z. B. Rohbau, Dach, Fassade — leer = ohne Kapitel"
+                  title="Aufbauten ohne Kapitel stehen im Angebot vor dem ersten Kapitel."
+                  onChange={(e) => onPatch({ kapitel: e.target.value })} />
+              </Feld>
               {/* Kundenwunsch 25.08.2026: kleiner Text, der im Angebot VOR dem
                   Aufbau steht — im Beleg per Auge ausblendbar. */}
               <Feld label="Einleitungstext (erscheint im Angebot unter der Position, vor den Artikeln)">

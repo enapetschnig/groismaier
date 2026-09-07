@@ -11,6 +11,7 @@ import {
   istVolumenEinheit, DEFAULT_BETRIEBSDATEN, round2, calcRiegelPreisProM2,
   zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
   buildAngebotItems, calcProjekt, materialBezeichnung, newEmptyState, newMaterialRow, newModule,
+  kapitelUeberschrift, istKapitelUeberschrift, alsUnterkapitel, normalizeKalkulationState,
   type MaterialRow, type Betriebsdaten,
 } from "./kalkulationEngine";
 
@@ -432,5 +433,74 @@ describe("Dämmstärke im Schichtnamen (Kundenwunsch 31.08.2026)", () => {
     const { items } = buildAngebotItems(calcProjekt(st, DEFAULT_BETRIEBSDATEN));
     const detail = items.find((i) => i.beschreibung.startsWith("Riegelkonstruktion"));
     expect(detail?.beschreibung).toBe("Riegelkonstruktion 6/24");
+  });
+});
+
+describe("Kapitel je Aufbau (Kundenwunsch 06.09.2026)", () => {
+  const modul = (id: number, name: string, kapitel: string) => {
+    const m = newModule(id);
+    m.name = name; m.area = 10; m.kapitel = kapitel;
+    m.materialRows = [{ ...newMaterialRow(), category: "Platten", product: "OSB", ekPrice: 10, vkPrice: 13.5 }];
+    return m;
+  };
+
+  it("ohne Kapitel: keine Überschriften, Reihenfolge wie bisher", () => {
+    const st = newEmptyState();
+    st.modules = [modul(1, "Wand", ""), modul(2, "Dach", "")];
+    const { items } = buildAngebotItems(calcProjekt(st, DEFAULT_BETRIEBSDATEN));
+    expect(items.some((x) => x.beschreibung.startsWith("Bereich: "))).toBe(false);
+    const sammel = items.filter((x) => x.ist_gruppensumme).map((x) => x.gruppe);
+    expect(sammel).toEqual(["Wand", "Dach"]);
+    expect(items.every((x) => x.bereich === undefined)).toBe(true);
+  });
+
+  it("mit Kapiteln: Überschrift je Kapitel, Aufbauten gebündelt, ohne Kapitel zuerst", () => {
+    const st = newEmptyState();
+    st.modules = [
+      modul(1, "Baustelle einrichten", ""),
+      modul(2, "Außenwand", "Rohbau"),
+      modul(3, "Flachdach", "Dach"),
+      modul(4, "Innenwand", "Rohbau"),
+    ];
+    const projekt = calcProjekt(st, DEFAULT_BETRIEBSDATEN);
+    const { items } = buildAngebotItems(projekt);
+    const titel = items.filter((x) => x.beschreibung.startsWith("Bereich: "));
+    expect(titel.map((x) => x.beschreibung)).toEqual(["Bereich: Rohbau", "Bereich: Dach"]);
+    // Überschrift = reine Textzeile, trägt das Kapitel als Bereich
+    for (const t of titel) {
+      expect(t.menge).toBe(0); expect(t.einheit).toBe(""); expect(t.gesamtpreis).toBe(0);
+      expect(t.gruppe).toBeUndefined(); expect(t.auf_pdf).toBe(true);
+      expect(t.bereich).toBe(t.beschreibung.slice("Bereich: ".length));
+    }
+    const sammel = items.filter((x) => x.ist_gruppensumme).map((x) => x.gruppe);
+    expect(sammel).toEqual(["Baustelle einrichten", "Außenwand", "Innenwand", "Flachdach"]);
+    // Bereich je Zeile: ohne Kapitel → undefined, sonst das Kapitel
+    expect(items.find((x) => x.gruppe === "Baustelle einrichten")!.bereich).toBeUndefined();
+    expect(items.find((x) => x.gruppe === "Innenwand")!.bereich).toBe("Rohbau");
+    expect(items.find((x) => x.gruppe === "Flachdach")!.bereich).toBe("Dach");
+    // Die Überschrift steht VOR dem ersten Aufbau ihres Kapitels
+    const iRohbau = items.findIndex((x) => x.beschreibung === "Bereich: Rohbau");
+    const iAussenwand = items.findIndex((x) => x.gruppe === "Außenwand");
+    const iDach = items.findIndex((x) => x.beschreibung === "Bereich: Dach");
+    expect(iRohbau).toBeLessThan(iAussenwand);
+    expect(iAussenwand).toBeLessThan(iDach);
+    // Summe unverändert — Überschriften kosten nichts
+    const summe = items.reduce((s, x) => s + x.gesamtpreis, 0);
+    expect(round2(summe)).toBeCloseTo(round2(projekt.totalGesamt), 1);
+  });
+
+  it("Sammelangebot: Kapitel wird zum Unterkapitel (Textzeile ohne Bereichs-Präfix)", () => {
+    const t = kapitelUeberschrift("Rohbau");
+    expect(istKapitelUeberschrift(t)).toBe(true);
+    expect(alsUnterkapitel(t).beschreibung).toBe("Rohbau");
+    const normal = { ...t, beschreibung: "Bereich: X", gruppe: "Dach", menge: 1, gesamtpreis: 5 };
+    expect(istKapitelUeberschrift(normal)).toBe(false);
+    expect(alsUnterkapitel(normal)).toBe(normal);
+  });
+
+  it("normalize: Kapitel bleibt erhalten, Fremdwerte werden zu leer", () => {
+    const st = normalizeKalkulationState({ modules: [{ ...newModule(1), kapitel: "Dach" }, { ...newModule(2), kapitel: 7 }] });
+    expect(st.modules[0].kapitel).toBe("Dach");
+    expect(st.modules[1].kapitel).toBe("");
   });
 });

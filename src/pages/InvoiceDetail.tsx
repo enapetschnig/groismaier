@@ -27,6 +27,7 @@ import {
   buildAngebotItems, calcMargeProzent, calcProjekt, margeAmpel,
   normalizeKalkulationState, resolveBetriebsdaten,
   type AngebotItem, type ProjektErgebnis,
+  alsUnterkapitel,
 } from "@/lib/kalkulationEngine";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
@@ -1603,7 +1604,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
             gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
             bereich,
           } as AngebotItem);
-          for (const it of mitSelbstkosten(rohItems, projekt)) {
+          for (const it of mitSelbstkosten(rohItems, projekt).map(alsUnterkapitel)) {
             neu.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe, bereich });
           }
         } else {

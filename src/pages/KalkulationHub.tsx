@@ -30,6 +30,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   AngebotItem, ProjektErgebnis, buildAngebotItems, calcProjekt,
   normalizeKalkulationState, resolveBetriebsdaten, round2,
+  alsUnterkapitel,
 } from "@/lib/kalkulationEngine";
 
 // Hinweis: Die Tabelle `kalkulationen` (inkl. Spalte `ist_vorlage`, siehe
@@ -194,7 +195,9 @@ export default function KalkulationHub() {
         // "Dach" in verschiedenen Bereichen fielen sonst zusammen). Suffix statt
         // Präfix: so trägt die Sammelzeile den Gruppennamen weiterhin und die
         // PDF-Kapitellogik druckt keine doppelte Überschrift.
-        for (const it of mitSelbstkosten(items, projekt)) {
+        // Kapitel innerhalb der Kalkulation (06.09.2026) werden hier zu
+        // Unterkapiteln: fette Textzeile, der Bereich bleibt die Kalkulation.
+        for (const it of mitSelbstkosten(items, projekt).map(alsUnterkapitel)) {
           alleItems.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${r.name}` : it.gruppe, bereich: r.name });
         }
       }

@@ -228,6 +228,9 @@ export function ProjektUebersicht({ projekt }: { projekt: ProjektErgebnis }) {
             <div key={z.module.id} className={`rounded border p-2 ${z.module.isOptional ? "border-dashed bg-muted/20" : ""}`}>
               <div className="mb-1 flex items-baseline justify-between gap-2">
                 <span className="min-w-0 truncate text-sm font-semibold">
+                  {z.module.kapitel?.trim() && (
+                    <span className="mr-1 rounded bg-muted px-1 text-[10px] font-normal text-muted-foreground">{z.module.kapitel.trim()}</span>
+                  )}
                   {z.module.name || `Aufbau ${i + 1}`}{z.module.isOptional ? " (optional)" : ""}
                 </span>
                 <span className="whitespace-nowrap text-sm font-bold tabular-nums">{fmtEuro(z.gesamtAdj)}</span>
@@ -280,7 +283,12 @@ export function ProjektUebersicht({ projekt }: { projekt: ProjektErgebnis }) {
             )}
             {projekt.zeilen.map((z, i) => (
               <tr key={z.module.id} className={`border-b last:border-b-0 ${z.module.isOptional ? "italic text-muted-foreground" : ""}`}>
-                <td className="px-3 py-1.5">{z.module.name || `Aufbau ${i + 1}`}{z.module.isOptional ? " (optional)" : ""}</td>
+                <td className="px-3 py-1.5">
+                  {z.module.kapitel?.trim() && (
+                    <span className="mr-1 rounded bg-muted px-1 text-[10px] text-muted-foreground" title="Kapitel im Angebot">{z.module.kapitel.trim()}</span>
+                  )}
+                  {z.module.name || `Aufbau ${i + 1}`}{z.module.isOptional ? " (optional)" : ""}
+                </td>
                 <td className="px-3 py-1.5 text-muted-foreground">{z.module.note}</td>
                 <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">{fmtEuro(z.materialAdj)}</td>
                 <td className="whitespace-nowrap px-3 py-1.5 text-right tabular-nums">{fmtEuro(z.laborAdj)}</td>

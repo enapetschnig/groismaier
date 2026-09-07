@@ -1143,6 +1143,14 @@ export default function KalkulationEditor() {
           <div className="space-y-4">
             <ProjektUebersicht projekt={projekt} />
 
+            {/* Vorschläge für das Kapitel-Feld der Aufbau-Karten: alle bereits
+                vergebenen Kapitel dieser Kalkulation (Tippfehler-Schutz). */}
+            <datalist id="kalk-kapitel-vorschlaege">
+              {Array.from(new Set(state.modules.map((m) => (m.kapitel || "").trim()).filter(Boolean))).map((k) => (
+                <option key={k} value={k} />
+              ))}
+            </datalist>
+
             {projekt.zeilen.map((z, index) => (
               <AufbauKarte
                 key={z.module.id}
