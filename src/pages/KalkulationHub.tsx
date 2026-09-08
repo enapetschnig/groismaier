@@ -31,6 +31,7 @@ import {
   AngebotItem, ProjektErgebnis, buildAngebotItems, calcProjekt,
   normalizeKalkulationState, resolveBetriebsdaten, round2,
   alsUnterkapitel,
+  bereichsZeilen,
 } from "@/lib/kalkulationEngine";
 
 // Hinweis: Die Tabelle `kalkulationen` (inkl. Spalte `ist_vorlage`, siehe
@@ -56,21 +57,6 @@ const kalkTable = () => (supabase.from("kalkulationen" as never) as any);
 const fmtEuro = (n: number) =>
   new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(n || 0);
 
-/**
- * Sammelzeilen um die echten Selbstkosten ihres Aufbaus ergänzen (für den
- * internen Verdienst-Block im Beleg-Editor). Bewusst dupliziert wie in
- * KalkulationEditor.tsx/InvoiceDetail.tsx — Zuordnung über die Reihenfolge.
- */
-function mitSelbstkosten(items: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] {
-  const zeilenMitBetrag = projekt.zeilen.filter((z) => round2(z.gesamtAdj) > 0);
-  let k = 0;
-  return items.map((it) => {
-    if (!it.ist_gruppensumme) return it;
-    const zeile = zeilenMitBetrag[k];
-    k += 1;
-    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
-  });
-}
 
 /** Gemeinsamer Namens-Anfang der gewählten Kalkulationen ("Knapp - …" → "Knapp"). */
 function gemeinsamerPraefix(namen: string[]): string {
@@ -183,23 +169,9 @@ export default function KalkulationHub() {
         const projekt = calcProjekt(st, bd);
         const { items } = buildAngebotItems(projekt);
         if (items.length === 0) { leere.push(r.name); continue; }
-        // Bereichs-Überschrift: reine Textzeile (menge 0, keine Einheit, kein
-        // Preis) — druckt nur den Text, siehe istTextzeile() in invoiceHtml.
-        alleItems.push({
-          beschreibung: `Bereich: ${r.name}`,
-          menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
-          gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
-          bereich: r.name,
-        } as AngebotItem);
-        // Gruppen müssen über das GANZE Angebot eindeutig sein (zwei Aufbauten
-        // "Dach" in verschiedenen Bereichen fielen sonst zusammen). Suffix statt
-        // Präfix: so trägt die Sammelzeile den Gruppennamen weiterhin und die
-        // PDF-Kapitellogik druckt keine doppelte Überschrift.
-        // Kapitel innerhalb der Kalkulation (06.09.2026) werden hier zu
-        // Unterkapiteln: fette Textzeile, der Bereich bleibt die Kalkulation.
-        for (const it of mitSelbstkosten(items, projekt).map(alsUnterkapitel)) {
-          alleItems.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${r.name}` : it.gruppe, bereich: r.name });
-        }
+        // Überschrift + eindeutige Gruppennamen + bereich + Kapitel als
+        // Unterüberschrift — alles in bereichsZeilen() (kalkulationEngine).
+        alleItems.push(...bereichsZeilen(items, r.name));
       }
       if (!alleItems.some((it) => it.ist_gruppensumme)) {
         toast({ variant: "destructive", title: "Nichts zu übernehmen", description: "Keine der gewählten Kalkulationen enthält Aufbauten mit Betrag." });

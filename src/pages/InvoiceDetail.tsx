@@ -12,7 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { belegzeileAusKalk, istInfoTextOhneKennzeichen, type KalkZeile } from "@/lib/kalkZuBeleg";
+import { belegzeileAusKalk, istInfoTextOhneKennzeichen, istKalkulationsZeile, type KalkZeile } from "@/lib/kalkZuBeleg";
 import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2, ClipboardList, Info,
 } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
@@ -29,6 +29,8 @@ import {
   normalizeKalkulationState, resolveBetriebsdaten,
   type AngebotItem, type ProjektErgebnis,
   alsUnterkapitel,
+  NEBENKOSTEN_TEXT,
+  bereichsZeilen,
 } from "@/lib/kalkulationEngine";
 import { usePermissions } from "@/hooks/usePermissions";
 import { ImportMaterialsDialog } from "@/components/ImportMaterialsDialog";
@@ -244,25 +246,6 @@ const selbstkostenVon = (it: InvoiceItem): number => {
     return round2(kosten * (Number(it.menge) || 0));
   }
   return 0;
-};
-
-/**
- * Ergänzt frisch gebaute Angebots-Positionen um die Selbstkosten je Aufbau
- * (siehe selbstkostenVon, Fall 1). Zuordnung über die Reihenfolge:
- * buildAngebotItems erzeugt je Aufbau mit Betrag > 0 genau eine Sammelzeile.
- *
- * (Identische Funktion in KalkulationEditor.tsx — bewusst dupliziert, damit
- * kalkulationEngine.ts unangetastet bleibt.)
- */
-const mitSelbstkosten = (angebotItems: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] => {
-  const zeilenMitBetrag = projekt.zeilen.filter(z => round2(z.gesamtAdj) > 0);
-  let k = 0;
-  return angebotItems.map(it => {
-    if (!it.ist_gruppensumme) return it;
-    const zeile = zeilenMitBetrag[k];
-    k += 1;
-    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
-  });
 };
 
 const GRUPPEN_SPALTEN = ["gruppe", "auf_pdf", "ist_gruppensumme", "bereich", "ist_info"] as const;
@@ -1400,35 +1383,18 @@ Beleg: /invoices/${invoiceId || id || ""}`,
     const projekt = calcProjekt(state, bd);
     const { items: rohItems } = buildAngebotItems(projekt);
     const bereich = String((kalk as any).name || "");
-    if (rohItems.length === 0) return { name: bereich, items: [] };
-    const out: AngebotItem[] = [{
-      beschreibung: `Bereich: ${bereich}`,
-      menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
-      gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
-    } as AngebotItem];
-    for (const it of mitSelbstkosten(rohItems, projekt)) {
-      out.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe });
-    }
-    return { name: bereich, items: out };
+    return { name: bereich, items: bereichsZeilen(rohItems, bereich) };
   };
 
-  /** AngebotItem → InvoiceItem (Positionsnummern vergibt der Aufrufer). */
+  /**
+   * AngebotItem → InvoiceItem (Positionsnummern vergibt der Aufrufer).
+   * Läuft über dieselbe Umwandlung wie die anderen Wege (kalkZuBeleg.ts) —
+   * diese Stelle hatte ist_info und bereich verloren (Audit 08.09.2026):
+   * die Infopositionen einer nachträglich eingefügten Kalkulation zählten
+   * mit, und ihr Bereichs-Block fiel im PDF auseinander.
+   */
   const alsBelegPositionen = (quelle: AngebotItem[]): InvoiceItem[] =>
-    quelle.map((n, i) => ({
-      position: i + 1,
-      beschreibung: n.beschreibung,
-      kurztext: n.beschreibung,
-      langtext: "",
-      menge: Number(n.menge) || 0,
-      einheit: n.einheit === "" ? "" : (n.einheit || "Stk."),
-      einzelpreis: Number(n.einzelpreis) || 0,
-      rabatt_prozent: 0,
-      gesamtpreis: Number(n.gesamtpreis) || 0,
-      gruppe: n.gruppe ? String(n.gruppe) : null,
-      auf_pdf: n.auf_pdf !== false,
-      ist_gruppensumme: !!n.ist_gruppensumme,
-      ek_preis: Number(n.ek_preis) || 0,
-    })) as InvoiceItem[];
+    quelle.map((n, i) => belegzeileAusKalk(n as KalkZeile, i + 1) as unknown as InvoiceItem);
 
   /**
    * Weitere Kalkulation an den bestehenden Beleg heften (Kundenwunsch
@@ -1599,17 +1565,9 @@ Beleg: /invoices/${invoiceId || id || ""}`,
         if (rohItems.length === 0) continue;
         const bereich = String((kalk as any).name || "");
         if (istSammel) {
-          neu.push({
-            beschreibung: `Bereich: ${bereich}`,
-            menge: 0, einheit: "", einzelpreis: 0, gesamtpreis: 0,
-            gruppe: undefined, auf_pdf: true, ist_gruppensumme: false,
-            bereich,
-          } as AngebotItem);
-          for (const it of mitSelbstkosten(rohItems, projekt).map(alsUnterkapitel)) {
-            neu.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe, bereich });
-          }
+          neu.push(...bereichsZeilen(rohItems, bereich));
         } else {
-          neu.push(...mitSelbstkosten(rohItems, projekt));
+          neu.push(...rohItems);
         }
       }
       if (!neu.some((it) => it.ist_gruppensumme)) {
@@ -1643,7 +1601,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
         neu.filter(n => !n.gruppe).map(n => (n.beschreibung || "").trim())
       );
       const istKalkZeile = (it: InvoiceItem): boolean =>
-        !!gruppeVon(it) || neueUngruppierteTexte.has((it.beschreibung || "").trim());
+        istKalkulationsZeile(it as any, neueUngruppierteTexte, NEBENKOSTEN_TEXT);
 
       // Dieselbe Umwandlung wie beim ersten Übernehmen (kalkZuBeleg.ts) —
       // getrennte Zuordnungen hatten die INFOPOSITION verloren (08.09.2026).

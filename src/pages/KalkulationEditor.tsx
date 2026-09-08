@@ -75,33 +75,6 @@ type TabId = "aufbau" | "lack" | "einstellungen";
 /** Ziel-Kategorie im Übernahme-Dialog: „die eingetippte neu anlegen". */
 const NEUE_KATEGORIE = "__neu__";
 
-/**
- * Ergänzt die Angebots-Positionen um die SELBSTKOSTEN je Aufbau.
- *
- * buildAngebotItems liefert reine Verkaufszahlen: die Sammelzeile trägt den
- * Betrag, den der Kunde zahlt, die Detailzeilen dessen Aufschlüsselung (ihre
- * ek_preis-Beträge summieren sich exakt zur Sammelzeile — daraus lässt sich
- * KEIN Deckungsbeitrag rechnen). Für den internen Verdienst-Block im
- * Beleg-Editor bekommt deshalb jede Sammelzeile die echten Selbstkosten ihres
- * Aufbaus in ek_preis (das Feld ist auf Sammelzeilen sonst ungenutzt).
- *
- * Zuordnung über die Reihenfolge: buildAngebotItems erzeugt je Aufbau mit
- * Betrag > 0 genau eine Sammelzeile, in der Reihenfolge von projekt.zeilen.
- *
- * (Dieselbe Funktion steht in InvoiceDetail.tsx für „Positionen neu
- * übernehmen" — bewusst dupliziert, damit kalkulationEngine.ts unangetastet
- * bleibt.)
- */
-function mitSelbstkosten(items: AngebotItem[], projekt: ProjektErgebnis): AngebotItem[] {
-  const zeilenMitBetrag = projekt.zeilen.filter((z) => round2(z.gesamtAdj) > 0);
-  let k = 0;
-  return items.map((it) => {
-    if (!it.ist_gruppensumme) return it;
-    const zeile = zeilenMitBetrag[k];
-    k += 1;
-    return { ...it, ek_preis: round2(zeile?.verdienst.selbstkosten ?? 0) };
-  });
-}
 
 /** Eine Zeile des Übernahme-Dialogs (Vorschlag aus der Kalkulation, editierbar). */
 interface UebernahmeZeile extends FreiePosition {
@@ -916,7 +889,7 @@ export default function KalkulationEditor() {
       customer_id: customerId,
       // Herkunft: das Angebot merkt sich, aus welcher Kalkulation es stammt.
       kalkulation_id: id ?? null,
-      items: mitSelbstkosten(rohItems, projekt),
+      items: rohItems,
     }));
     // Kundenwunsch: VOR dem Wechsel ins Angebot fragen, ob neu angelegte
     // Positionen in den Katalog übernommen werden sollen. Danach (Übernahme

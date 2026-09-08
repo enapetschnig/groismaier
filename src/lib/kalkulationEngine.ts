@@ -1215,6 +1215,13 @@ const kurzZahl = (n: number): string => fmt(n).replace(/,00$/, "").replace(/(,\d
  * Eine Differenz zur Projektsumme > 0,50 € wird — wie bisher — als
  * ungruppierte Nebenkosten-Pauschale angehängt.
  */
+/**
+ * Text der ungruppierten Nebenkosten-Pauschale. Als Konstante, weil das
+ * Neu-Übernehmen im Beleg sie daran wiedererkennen muss — sonst bliebe die
+ * alte Zeile samt Betrag stehen, wenn beim neuen Durchlauf keine mehr anfällt.
+ */
+export const NEBENKOSTEN_TEXT = "Transport, Kran & sonstige Nebenkosten (lt. Kalkulation)";
+
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
   // Je Aufbau ein eigener Zeilenblock — erst am Ende werden die Blöcke nach
   // Kapiteln geordnet (Kundenwunsch 06.09.2026), siehe ordneNachKapiteln().
@@ -1239,6 +1246,13 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     for (let n = 2; vergebeneGruppen.has(gruppe); n += 1) gruppe = `${name} (${n})`;
     vergebeneGruppen.add(gruppe);
     const mitNotiz = (titel: string) => (m.note ? `${titel}\n${m.note}` : titel);
+    /**
+     * Selbstkosten dieses Aufbaus — gehören AN die Sammelzeile (ek_preis).
+     * Früher hängten die Seiten sie nachträglich über die Reihenfolge an;
+     * seit die Kapitel die Reihenfolge ändern (07.09.2026), traf das den
+     * falschen Aufbau. Hier kann nichts mehr verrutschen.
+     */
+    const selbstkosten = round2(z.verdienst.selbstkosten ?? 0);
 
     // --- a) Sammelzeile (Betrag unverändert wie bisher) ---------------------
     // Einheit wie in der Kalkulation festgelegt (Kundenwunsch 26.08.2026).
@@ -1251,6 +1265,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         einzelpreis: aufteilung.einzelpreis, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
         ist_info: m.isOptional || undefined,
+        ek_preis: selbstkosten,
       });
     } else {
       // Als Pauschale ausweisen — die Fläche bleibt trotzdem im Positionstext
@@ -1264,6 +1279,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
         menge: 1, einheit: "Pauschale", einzelpreis: gesamt, gesamtpreis: gesamt,
         gruppe, auf_pdf: true, ist_gruppensumme: true,
         ist_info: m.isOptional || undefined,
+        ek_preis: selbstkosten,
       });
     }
 
@@ -1380,7 +1396,7 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
   const nebenkosten = round2(projektGesamt - summe);
   if (nebenkosten > 0.5) {
     items.push({
-      beschreibung: "Transport, Kran & sonstige Nebenkosten (lt. Kalkulation)",
+      beschreibung: NEBENKOSTEN_TEXT,
       menge: 1, einheit: "Pauschale", einzelpreis: nebenkosten, gesamtpreis: nebenkosten,
       auf_pdf: true, ist_gruppensumme: false,
     });
@@ -1437,6 +1453,27 @@ export function ordneNachKapiteln(bloecke: { kapitel: string; items: AngebotItem
  * (der Bereich ist die Kalkulation). Der Aufrufer setzt `bereich` danach
  * auf den Kalkulationsnamen.
  */
+/**
+ * Die Zeilen EINER Kalkulation als Bereich eines Sammelangebots:
+ * Überschrift „Bereich: <Name>", darunter alle Positionen mit
+ *   - eindeutigem Gruppennamen (Suffix „ — <Name>"; zwei Kalkulationen mit
+ *     einem Aufbau „Dach" fielen sonst in eine Gruppe),
+ *   - `bereich` auf jeder Zeile (steuert Zwischensumme und Block im PDF),
+ *   - Kapiteln als Unterüberschrift statt als zweiter Bereichs-Ebene.
+ *
+ * Diese drei Schritte standen an drei Stellen leicht verschieden im Code —
+ * beim nachträglichen „Kalkulation einfügen" fehlten `bereich` und die
+ * Kapitel-Behandlung (Audit 08.09.2026).
+ */
+export function bereichsZeilen(items: AngebotItem[], bereich: string): AngebotItem[] {
+  if (items.length === 0) return [];
+  const out: AngebotItem[] = [{ ...kapitelUeberschrift(bereich), beschreibung: `${BEREICH_PRAEFIX}${bereich}` }];
+  for (const it of items.map(alsUnterkapitel)) {
+    out.push({ ...it, gruppe: it.gruppe ? `${it.gruppe} — ${bereich}` : it.gruppe, bereich });
+  }
+  return out;
+}
+
 export const alsUnterkapitel = (it: AngebotItem): AngebotItem =>
   istKapitelUeberschrift(it)
     ? { ...it, beschreibung: String(it.beschreibung).slice(BEREICH_PRAEFIX.length).trim() }

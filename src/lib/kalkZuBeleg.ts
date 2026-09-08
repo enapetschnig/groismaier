@@ -111,6 +111,33 @@ export function belegzeileAusKalk(
 export const INFO_PRAEFIX = "INFOPOSITION:";
 
 /**
+ * Stammt die Belegzeile aus der Kalkulation? Beim „Positionen neu übernehmen"
+ * werden genau diese Zeilen ersetzt, alles andere (von Hand ergänzt) bleibt.
+ *
+ * Zeilen MIT Gruppe sind eindeutig. Ungruppiert erzeugt die Kalkulation nur
+ * zweierlei: Bereichs-/Kapitelüberschriften („Bereich: …") und die
+ * Nebenkosten-Pauschale. Die wurden früher allein über den Text des NEUEN
+ * Durchlaufs erkannt — fiel die Nebenkosten-Pauschale weg oder wurde ein
+ * Kapitel umbenannt, blieb die alte Zeile als „von Hand ergänzt" stehen:
+ * eine doppelte Überschrift, im Fall der Pauschale sogar ein doppelter Betrag.
+ */
+export function istKalkulationsZeile(
+  it: { gruppe?: string | null; beschreibung?: string | null },
+  neueUngruppierteTexte: Set<string>,
+  nebenkostenText: string,
+): boolean {
+  if (String(it?.gruppe || "").trim()) return true;
+  const text = String(it?.beschreibung || "").trim();
+  if (!text) return false;
+  return neueUngruppierteTexte.has(text)
+    || text.startsWith(BEREICH_PRAEFIX)
+    || text === nebenkostenText;
+}
+
+/** Präfix der Bereichs-/Kapitelüberschrift (siehe kalkulationEngine). */
+export const BEREICH_PRAEFIX = "Bereich: ";
+
+/**
  * Zeile trägt den Infopositions-Text, ist aber nicht als solche gekennzeichnet
  * — Altbestand aus der Zeit vor dem Fix. Der Beleg weist darauf hin, statt
  * still die Summe zu ändern: ein ausgestelltes Angebot darf seinen Preis nicht
