@@ -46,7 +46,7 @@ export type Worker = {
   nachname: string;
 };
 
-async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<Blob> {
+async function baueRegieberichtPdf(d: Disturbance, workers: Worker[], inDoc?: any): Promise<Blob> {
   const [{ default: jsPDF }, { default: autoTable }, { loadDocumentLayout }, { loadInvoiceLogo }, letterhead] =
     await Promise.all([
       import("jspdf"),
@@ -62,7 +62,15 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
 
   // compress: true — sonst wird das PDF durch Logo + Unterschrift mehrere MB
   // groß, was am Handy/Baustellennetz spürbar ist.
-  const pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
+  // Sammel-PDF (Kundenwunsch 07.09.2026): wird ein Dokument mitgegeben, kommt
+  // dieser Bericht als weitere Seiten hinein statt in eine eigene Datei.
+  let pdf: any;
+  if (inDoc) {
+    pdf = inDoc;
+    if (pdf.__ersteSeiteFrei) pdf.__ersteSeiteFrei = false; else pdf.addPage();
+  } else {
+    pdf = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
+  }
   const ml = LETTERHEAD_MARGIN.left;
   const mr = LETTERHEAD_MARGIN.right;
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -307,6 +315,7 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
   );
 
   drawFooter(pdf, layout);
+  if (inDoc) return new Blob([], { type: "application/pdf" });
   return pdf.output("blob");
 }
 
@@ -315,6 +324,35 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[]): Promise<B
  * nur die ID haben (Listen-Druck, Mailversand einer Rechnung).
  */
 export async function regieberichtPdfNachId(id: string): Promise<{ blob: Blob; bericht: Disturbance } | null> {
+  const geladen = await ladeBerichtMitMitarbeitern(id);
+  if (!geladen) return null;
+  const blob = await baueRegieberichtPdf(geladen.bericht, geladen.workers);
+  return { blob, bericht: geladen.bericht };
+}
+
+/**
+ * Mehrere Regieberichte als EIN PDF (Kundenwunsch 07.09.2026: „25 Regieberichte
+ * zu einer Rechnung zusammengefasst — wie bekomme ich alle Berichte gesammelt
+ * in ein PDF als Anhang?"). Reihenfolge: nach Datum, dann Anlage.
+ */
+export async function regieberichteSammelPdf(ids: string[]): Promise<{ blob: Blob; anzahl: number } | null> {
+  const berichte: { bericht: Disturbance; workers: Worker[] }[] = [];
+  for (const id of ids) {
+    const g = await ladeBerichtMitMitarbeitern(id);
+    if (g) berichte.push(g);
+  }
+  if (berichte.length === 0) return null;
+  berichte.sort((a, b) =>
+    String(a.bericht.datum || "").localeCompare(String(b.bericht.datum || ""))
+    || String((a.bericht as any).created_at || "").localeCompare(String((b.bericht as any).created_at || "")));
+  const { default: jsPDF } = await import("jspdf");
+  const doc: any = new jsPDF({ orientation: "p", unit: "mm", format: "a4", compress: true });
+  doc.__ersteSeiteFrei = true;
+  for (const g of berichte) await baueRegieberichtPdf(g.bericht, g.workers, doc);
+  return { blob: doc.output("blob"), anzahl: berichte.length };
+}
+
+async function ladeBerichtMitMitarbeitern(id: string): Promise<{ bericht: Disturbance; workers: Worker[] } | null> {
   const { data: bericht } = await supabase
     .from("disturbances").select("*").eq("id", id).maybeSingle();
   if (!bericht) return null;
@@ -331,8 +369,7 @@ export async function regieberichtPdfNachId(id: string): Promise<{ blob: Blob; b
       return { user_id: w.user_id, is_main: w.is_main, vorname: p.vorname || "", nachname: p.nachname || "" };
     });
   }
-  const blob = await baueRegieberichtPdf(bericht as Disturbance, workers);
-  return { blob, bericht: bericht as Disturbance };
+  return { bericht: bericht as Disturbance, workers };
 }
 
 export { baueRegieberichtPdf };

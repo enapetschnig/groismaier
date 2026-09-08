@@ -141,6 +141,11 @@ export interface KalkModule {
    * („Bereich: …") mit Zwischensumme. "" = kein Kapitel.
    */
   kapitel?: string;
+  /**
+   * Verweis auf die LV-Position, wenn dieser Aufbau eine Ausschreibungs-
+   * Position bepreist (07.09.2026, siehe lvKalkulation.ts). undefined sonst.
+   */
+  lvPositionId?: string;
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1567,6 +1572,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         angebotEinheit: ["auto", "pauschal", "m²", "lfm", "m³", "Stk."].includes(m.angebotEinheit)
           ? m.angebotEinheit : "auto",
         kapitel: typeof m.kapitel === "string" ? m.kapitel : "",
+        lvPositionId: typeof m.lvPositionId === "string" && m.lvPositionId ? m.lvPositionId : undefined,
         area: num(m.area),
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,

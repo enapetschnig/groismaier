@@ -1,12 +1,12 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt, Folder, FolderOpen, ChevronDown, ChevronRight , Printer} from "lucide-react";
+import { Zap, Plus, Calendar, Clock, User, MapPin, Filter, Search, Briefcase, Receipt, Folder, FolderOpen, ChevronDown, ChevronRight , Printer, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { regieberichtPdfNachId } from "@/lib/regieberichtPdf";
+import { regieberichtPdfNachId, regieberichteSammelPdf } from "@/lib/regieberichtPdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
@@ -67,6 +67,25 @@ const Disturbances = () => {
    * Jeder Bericht wird ein eigenes Dokument — so bleibt er das Original,
    * das man einzeln an eine Rechnung hängen kann.
    */
+  /** Alle gewählten Berichte als EIN PDF (Kundenwunsch 07.09.2026). */
+  const berichteSammelPdf = async () => {
+    const ids = [...selectedIds];
+    if (ids.length === 0) return;
+    setPdfLaeuft(true);
+    try {
+      const erg = await regieberichteSammelPdf(ids);
+      if (!erg) throw new Error("Keine Berichte gefunden");
+      const url = URL.createObjectURL(erg.blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      toast({ title: "Sammel-PDF erzeugt", description: `${erg.anzahl} Regieberichte in einer Datei.` });
+    } catch (e) {
+      toast({ variant: "destructive", title: "PDF fehlgeschlagen", description: (e as Error).message });
+    } finally {
+      setPdfLaeuft(false);
+    }
+  };
+
   const berichtePdf = async () => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
@@ -542,6 +561,14 @@ const Disturbances = () => {
                 <Printer className="h-4 w-4" />
                 {pdfLaeuft ? "Erzeugt…" : selectedIds.size === 1 ? "PDF öffnen" : `${selectedIds.size} PDFs öffnen`}
               </Button>
+        {/* Alle gewählten Berichte als EIN PDF (Kundenwunsch 07.09.2026) */}
+        {selectedIds.size > 1 && (
+          <Button size="sm" variant="outline" className="h-9 gap-1.5" onClick={() => void berichteSammelPdf()} disabled={pdfLaeuft}
+            title="Alle gewählten Regieberichte in einer PDF-Datei — z. B. als ein Anhang zur Rechnung">
+            <FileText className="h-4 w-4" />
+            Als ein PDF ({selectedIds.size})
+          </Button>
+        )}
               <Button size="sm" variant="ghost" className="h-10" onClick={() => setSelectedIds(new Set())}>
                 Auswahl aufheben
               </Button>

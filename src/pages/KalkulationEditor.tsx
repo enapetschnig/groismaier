@@ -246,6 +246,23 @@ export default function KalkulationEditor() {
    * das Feature still deaktiviert, statt eine Fehlermeldung zu werfen).
    */
   const [bestehendesAngebot, setBestehendesAngebot] = useState<{ id: string; nummer: string; typ: string } | null>(null);
+  /** Ausschreibung, die diese Kalkulation bepreist (07.09.2026). */
+  const [lv, setLv] = useState<{ id: string; name: string } | null>(null);
+  const [lvSchreibt, setLvSchreibt] = useState(false);
+  const preiseInsLv = async () => {
+    if (!id || !lv || lvSchreibt) return;
+    setLvSchreibt(true);
+    try {
+      await persistRef.current({ silent: true });
+      const { schreibePreiseInsLv } = await import("@/lib/lvKalkulation");
+      const { anzahl } = await schreibePreiseInsLv(id);
+      toast({ title: "Preise ins LV übernommen", description: `${anzahl} LV-Positionen bepreist (Lohn/Sonstiges aus Gesamt ÷ Menge).` });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Übernahme fehlgeschlagen", description: (e as Error).message });
+    } finally {
+      setLvSchreibt(false);
+    }
+  };
   const [angebotWarnOpen, setAngebotWarnOpen] = useState(false);
 
   // Katalog-Übernahme
@@ -272,8 +289,16 @@ export default function KalkulationEditor() {
     (async () => {
       if (!id) return;
       const { data } = await kalkTable()
-        .select("id, name, customer_id, data, summe, updated_at").eq("id", id).maybeSingle();
+        .select("id, name, customer_id, data, summe, updated_at, lv_id").eq("id", id).maybeSingle();
       if (cancelled) return;
+      // Gehört die Kalkulation zu einer Ausschreibung? (07.09.2026)
+      if ((data as any)?.lv_id) {
+        const { data: lvRow } = await (supabase.from("lv_ausschreibungen" as never) as any)
+          .select("id, name, vorhaben").eq("id", (data as any).lv_id).maybeSingle();
+        if (!cancelled) setLv(lvRow ? { id: lvRow.id, name: lvRow.vorhaben || lvRow.name } : null);
+      } else {
+        setLv(null);
+      }
       if (!data) {
         toast({ variant: "destructive", title: "Nicht gefunden", description: "Kalkulation existiert nicht (mehr)." });
         navigate("/auftragskalkulation");
@@ -1084,6 +1109,28 @@ export default function KalkulationEditor() {
             <Button size="sm" variant="outline" className="h-9"
               onClick={() => { persist({ silent: true }); navigate(`/invoices/${bestehendesAngebot.id}`); }}>
               {getDocConfig(bestehendesAngebot.typ).label} öffnen
+            </Button>
+          </div>
+        )}
+
+        {/* Diese Kalkulation bepreist eine Ausschreibung (07.09.2026): je LV-
+            Position ein Aufbau — die Preise gehen per Knopf zurück ins LV. */}
+        {lv && (
+          <div className="flex flex-wrap items-center gap-2.5 rounded border-2 border-amber-300/70 bg-amber-50 px-4 py-3 text-sm">
+            <FileCheck2 className="h-5 w-5 shrink-0 text-amber-700" />
+            <div className="min-w-0 flex-1">
+              <div className="font-bold text-amber-900">Bepreist die Ausschreibung „{lv.name}"</div>
+              <div className="mt-0.5 text-xs text-amber-900/80">
+                Je LV-Position ein Aufbau (Fläche/Menge = LV-Menge). Kalkuliere wie gewohnt — „Preise ins LV übernehmen"
+                rechnet Gesamt ÷ Menge je Aufbau und schreibt Lohn- und Sonstiges-Anteil in die LV-Positionen.
+              </div>
+            </div>
+            <Button size="sm" className="h-9" onClick={() => void preiseInsLv()} disabled={lvSchreibt}>
+              {lvSchreibt ? "Übernimmt…" : "Preise ins LV übernehmen"}
+            </Button>
+            <Button size="sm" variant="outline" className="h-9"
+              onClick={() => { persist({ silent: true }); navigate(`/ausschreibungen?lv=${lv.id}`); }}>
+              Ausschreibung öffnen
             </Button>
           </div>
         )}

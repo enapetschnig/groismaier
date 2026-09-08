@@ -19,7 +19,7 @@
  *     Datei ablehnt). Das Original-XML liegt dafür unverändert in der DB.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
@@ -27,6 +27,7 @@ import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { parseDecimal, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
 import { erkenneSpalten, baueLvAusZellen, LvExcelFehler, type Zellen, type SpaltenZuordnung } from "@/lib/lvExcel";
+import { baueKalkulationAusLv, schreibePreiseInsLv } from "@/lib/lvKalkulation";
 import { belegSummen } from "@/lib/belegSummen";
 import {
   parseOnlv, lvSummen, positionspreis, epGesamt, istBepreisbar,
@@ -40,7 +41,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import {
-  Plus, Trash2, FileUp, ChevronDown, ChevronRight, FileText, Printer, AlertTriangle, Receipt,
+  Plus, Trash2, FileUp, ChevronDown, ChevronRight, FileText, Printer, AlertTriangle, Receipt, Calculator, RefreshCw,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
@@ -58,6 +59,8 @@ interface LvKopf {
   status: string;
   import_fertig?: boolean;
   invoice_id?: string | null;
+  /** Kalkulation, in der dieses LV bepreist wird (07.09.2026). */
+  kalkulation_id?: string | null;
   created_at: string;
 }
 
@@ -154,7 +157,7 @@ export default function Ausschreibungen() {
     setLoading(true);
     const [koepfeRes, posRes] = await Promise.all([
       ladeAlleZeilen((von) => (supabase.from("lv_ausschreibungen" as never) as any)
-        .select("id, name, vorhaben, lvbezeichnung, auftraggeber_name, auftraggeber_adresse, waehrung, schema_version, datei_name, status, import_fertig, vorbemerkungen, invoice_id, created_at")
+        .select("id, name, vorhaben, lvbezeichnung, auftraggeber_name, auftraggeber_adresse, waehrung, schema_version, datei_name, status, import_fertig, vorbemerkungen, invoice_id, kalkulation_id, created_at")
         .order("created_at", { ascending: false }).order("id")),
       ladeAlleZeilen((von) => (supabase.from("lv_positionen" as never) as any)
         .select("lv_id, positionsart, menge, einheit, ep_lohn, ep_sonstiges")
@@ -206,6 +209,59 @@ export default function Ausschreibungen() {
     setLangtextOffen(new Set());
     setNurUnbepreiste(false);
     fetchPositionen(id);
+  };
+
+  // ?lv=<id> — Rücksprung aus der Kalkulation direkt in die Bepreisung.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const lvParam = searchParams.get("lv");
+    if (loading || !lvParam) return;
+    if (lvs.some((l) => l.id === lvParam)) oeffneLv(lvParam);
+    setSearchParams({}, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, searchParams]);
+
+  // ── Mit der Auftragskalkulation bepreisen (Kundenwunsch 07.09.2026) ──
+  const [kalkLaeuft, setKalkLaeuft] = useState(false);
+  const inKalkulationBepreisen = async () => {
+    if (!offenesLv || kalkLaeuft) return;
+    if (offenesLv.kalkulation_id) { navigate(`/auftragskalkulation/${offenesLv.kalkulation_id}`); return; }
+    const st = baueKalkulationAusLv(positionen);
+    if (st.modules.length === 0) {
+      toast({ variant: "destructive", title: "Nichts zu kalkulieren", description: "Das LV enthält keine Positionen mit Menge und Einheit." });
+      return;
+    }
+    setKalkLaeuft(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      const name = `LV ${offenesLv.vorhaben || offenesLv.name}`;
+      const { data: kalk, error } = await (supabase.from("kalkulationen" as never) as any)
+        .insert({ user_id: user?.id, name, customer_id: null, project_id: null, data: { ...st, projectName: name }, summe: 0, lv_id: offenesLv.id })
+        .select("id").single();
+      if (error || !kalk) throw new Error(error?.message || "Kalkulation konnte nicht angelegt werden");
+      const { error: linkErr } = await (supabase.from("lv_ausschreibungen" as never) as any)
+        .update({ kalkulation_id: kalk.id }).eq("id", offenesLv.id);
+      if (linkErr) throw new Error(linkErr.message);
+      toast({ title: "Kalkulation angelegt", description: `${st.modules.length} Aufbauten — je LV-Position einer. Preise kommen mit „Preise ins LV übernehmen" zurück.` });
+      navigate(`/auftragskalkulation/${kalk.id}`);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Kalkulation fehlgeschlagen", description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setKalkLaeuft(false);
+    }
+  };
+  const preiseAusKalkulation = async () => {
+    if (!offenesLv?.kalkulation_id || kalkLaeuft) return;
+    setKalkLaeuft(true);
+    try {
+      const { anzahl } = await schreibePreiseInsLv(offenesLv.kalkulation_id);
+      toast({ title: "Preise übernommen", description: `${anzahl} Positionen aus der Kalkulation bepreist.` });
+      await fetchPositionen(offenesLv.id);
+    } catch (err) {
+      toast({ variant: "destructive", title: "Übernahme fehlgeschlagen", description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setKalkLaeuft(false);
+    }
   };
 
   // ── Datei einlesen → Vorschau ──
@@ -633,6 +689,25 @@ export default function Ausschreibungen() {
               : "Bepreiste Normalpositionen in ein Angebot übernehmen — von dort geht es wie gewohnt weiter bis zur Rechnung"}
             onClick={() => offenesLv.invoice_id ? navigate(`/invoices/${offenesLv.invoice_id}`) : void alsAngebotUebernehmen()}
           />
+          {/* Mit der vertrauten Kalkulationsmaske bepreisen (07.09.2026) */}
+          <KBToolbarButton
+            icon={Calculator}
+            label={offenesLv.kalkulation_id ? "Kalkulation öffnen" : "In Kalkulation bepreisen"}
+            disabled={kalkLaeuft}
+            title={offenesLv.kalkulation_id
+              ? "Zur Kalkulation dieses LVs wechseln (je LV-Position ein Aufbau)"
+              : "Aus dem LV eine Auftragskalkulation anlegen — je Position ein Aufbau mit Menge und Einheit; dort mit Stammdaten, Material und Arbeitszeit kalkulieren"}
+            onClick={() => void inKalkulationBepreisen()}
+          />
+          {offenesLv.kalkulation_id && (
+            <KBToolbarButton
+              icon={RefreshCw}
+              label={kalkLaeuft ? "Übernimmt…" : "Preise aus Kalkulation"}
+              disabled={kalkLaeuft}
+              title="Einheitspreise (Lohn/Sonstiges) aus der Kalkulation in die LV-Positionen schreiben"
+              onClick={() => void preiseAusKalkulation()}
+            />
+          )}
           <KBToolbarButton icon={Printer} label="Drucken" onClick={() => window.print()} />
           <KBToolbarButton
             icon={FileUp}

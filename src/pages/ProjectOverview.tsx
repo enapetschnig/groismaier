@@ -498,6 +498,42 @@ const ProjectOverview = () => {
 
   const [projectInvoices, setProjectInvoices] = useState<{id: string; nummer: string; typ: string; datum: string; brutto_summe: number; kunde_name: string; status: string}[]>([]);
 
+  /**
+   * Bestehenden Beleg (Angebot/Rechnung) diesem Projekt zuordnen (Kundenwunsch
+   * 07.09.2026: „neues Projekt erstellt — wie weise ich diesem das
+   * dazugehörige Anbot zu?"). Zeigt Belege ohne Projekt zuerst.
+   */
+  const [zuordnenOpen, setZuordnenOpen] = useState(false);
+  const [zuordnenSuche, setZuordnenSuche] = useState("");
+  const [zuordnenKandidaten, setZuordnenKandidaten] = useState<{ id: string; nummer: string; typ: string; datum: string; betreff: string | null; kunde_name: string; brutto_summe: number; project_id: string | null }[]>([]);
+  const [zuordnenLaeuft, setZuordnenLaeuft] = useState(false);
+  const oeffneZuordnen = async () => {
+    setZuordnenOpen(true);
+    setZuordnenSuche("");
+    const { data } = await supabase
+      .from("invoices")
+      .select("id, nummer, typ, datum, betreff, kunde_name, brutto_summe, project_id")
+      .in("typ", ["angebot", "auftragsbestaetigung", "rechnung", "teilrechnung", "schlussrechnung", "anzahlungsrechnung"])
+      .order("datum", { ascending: false })
+      .limit(300);
+    const liste = ((data as any[]) || []).filter((b) => b.project_id !== projectId);
+    liste.sort((a, b) => (a.project_id ? 1 : 0) - (b.project_id ? 1 : 0));
+    setZuordnenKandidaten(liste);
+  };
+  const belegZuordnen = async (belegId: string) => {
+    if (!projectId || zuordnenLaeuft) return;
+    setZuordnenLaeuft(true);
+    const { error } = await supabase.from("invoices").update({ project_id: projectId }).eq("id", belegId);
+    setZuordnenLaeuft(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Zuordnung fehlgeschlagen", description: error.message });
+      return;
+    }
+    toast({ title: "Beleg zugeordnet", description: "Der Beleg gehört jetzt zu diesem Projekt." });
+    setZuordnenOpen(false);
+    fetchInvoiceCount();
+  };
+
   const fetchInvoiceCount = async () => {
     if (!projectId) return;
     const { data, count } = await supabase
@@ -696,6 +732,53 @@ const ProjectOverview = () => {
               <FileDown className="h-4 w-4" />Neue Rechnung
             </Button>
           )}
+          {isAdmin && (
+            <Button variant="outline" className="h-11 gap-1.5" onClick={() => void oeffneZuordnen()}
+              title="Ein bestehendes Angebot oder eine Rechnung diesem Projekt zuordnen">
+              <FileText className="h-4 w-4" />Beleg zuordnen
+            </Button>
+          )}
+          {/* Beleg zuordnen (Kundenwunsch 07.09.2026) */}
+          <Dialog open={zuordnenOpen} onOpenChange={setZuordnenOpen}>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Beleg diesem Projekt zuordnen</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-2">
+                <Input value={zuordnenSuche} onChange={(e) => setZuordnenSuche(e.target.value)}
+                  placeholder="Nummer, Betreff oder Kunde suchen …" className="h-11" autoFocus />
+                <p className="text-xs text-muted-foreground">
+                  Belege ohne Projekt stehen oben. Alternativ im Beleg selbst unter „1. Allgemein → Projekt zuordnen".
+                </p>
+                <div className="max-h-[50vh] divide-y overflow-y-auto rounded border">
+                  {zuordnenKandidaten
+                    .filter((b) => {
+                      const q = zuordnenSuche.trim().toLowerCase();
+                      return !q || [b.nummer, b.betreff, b.kunde_name].some((t) => (t || "").toLowerCase().includes(q));
+                    })
+                    .slice(0, 80)
+                    .map((b) => (
+                      <button key={b.id} type="button" disabled={zuordnenLaeuft}
+                        className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-accent"
+                        onClick={() => void belegZuordnen(b.id)}>
+                        <span className="w-24 shrink-0 font-mono text-xs">{b.nummer || "Entwurf"}</span>
+                        <span className="min-w-0 flex-1 truncate">
+                          {b.betreff || "—"}
+                          <span className="block text-xs text-muted-foreground">
+                            {b.kunde_name} · {b.datum ? new Date(b.datum).toLocaleDateString("de-AT") : ""}
+                            {b.project_id ? " · bereits anderem Projekt zugeordnet" : ""}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs tabular-nums">{Number(b.brutto_summe || 0).toLocaleString("de-AT", { style: "currency", currency: "EUR" })}</span>
+                      </button>
+                    ))}
+                  {zuordnenKandidaten.length === 0 && (
+                    <p className="px-3 py-4 text-center text-sm text-muted-foreground">Keine Belege gefunden.</p>
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
           <Button variant="outline" className="h-11 gap-1.5" onClick={() => navigate(`/disturbances?new=${projectId}`)}>
             <FileText className="h-4 w-4" />Neuer Regiebericht
           </Button>

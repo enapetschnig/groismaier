@@ -141,21 +141,28 @@ export function BelegMailDialog({
           typ: "application/xml",
         });
       }
-      // Regieberichte als eigene PDFs anhängen — jeder Bericht bleibt ein
-      // eigenständiges Original.
+      // Regieberichte als EIN Sammel-PDF anhängen (Kundenwunsch 07.09.2026:
+      // „25 Regieberichte … alle Berichte gesammelt in ein PDF als Anhang").
+      // Ein einzelner Bericht heißt weiterhin „Regiebericht <Datum>.pdf".
       if (regieMitschicken && (regieberichtIds?.length || 0) > 0) {
-        const { regieberichtPdfNachId } = await import("@/lib/regieberichtPdf");
-        for (const id of regieberichtIds!) {
-          const ergebnis = await regieberichtPdfNachId(id);
-          if (!ergebnis) continue;
-          const datum = ergebnis.bericht.datum
-            ? new Date(ergebnis.bericht.datum).toLocaleDateString("de-AT").replace(/\./g, "-")
-            : id.slice(0, 8);
-          anhaenge.push({
-            name: `Regiebericht ${datum}.pdf`,
-            inhaltBase64: await alsBase64(ergebnis.blob),
-            typ: "application/pdf",
-          });
+        const { regieberichteSammelPdf, regieberichtPdfNachId } = await import("@/lib/regieberichtPdf");
+        if (regieberichtIds!.length === 1) {
+          const ergebnis = await regieberichtPdfNachId(regieberichtIds![0]);
+          if (ergebnis) {
+            const datum = ergebnis.bericht.datum
+              ? new Date(ergebnis.bericht.datum).toLocaleDateString("de-AT").replace(/\./g, "-")
+              : regieberichtIds![0].slice(0, 8);
+            anhaenge.push({ name: `Regiebericht ${datum}.pdf`, inhaltBase64: await alsBase64(ergebnis.blob), typ: "application/pdf" });
+          }
+        } else {
+          const sammel = await regieberichteSammelPdf(regieberichtIds!);
+          if (sammel) {
+            anhaenge.push({
+              name: `Regieberichte (${sammel.anzahl}).pdf`,
+              inhaltBase64: await alsBase64(sammel.blob),
+              typ: "application/pdf",
+            });
+          }
         }
       }
 
@@ -319,7 +326,9 @@ export function BelegMailDialog({
                     {regieberichtIds!.length} Regiebericht{regieberichtIds!.length === 1 ? "" : "e"} im Original anhängen
                   </span>
                   <span className="text-muted-foreground">
-                    Jeder Bericht geht als eigenes PDF mit — so sieht der Kunde, was verrechnet wird.
+                    {regieberichtIds!.length === 1
+                      ? "Der Bericht geht als eigenes PDF mit — so sieht der Kunde, was verrechnet wird."
+                      : "Alle Berichte gesammelt in EINER PDF-Datei (nach Datum sortiert) — so sieht der Kunde, was verrechnet wird."}
                   </span>
                 </span>
               </label>
