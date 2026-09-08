@@ -230,6 +230,12 @@ export default function Invoices() {
   const [createProjectDefaults, setCreateProjectDefaults] = useState({ name: "", customerName: "", customerId: null as string | null, adresse: "", plz: "", ort: "", email: "", telefon: "", uidNummer: "", anrede: "", titel: "" });
   // Projekt-Namen (id → name) für die Projekt-Spalte im Lieferscheine-Tab.
   const [projectNames, setProjectNames] = useState<Record<string, string>>({});
+  /**
+   * ?project=<id> — von der Projektseite („Alle anzeigen") kommend zeigt die
+   * Liste NUR die Belege dieses Projekts. Der Parameter wurde bisher ignoriert,
+   * dadurch landete man in der vollen Liste ohne Projektbezug (07.09.2026).
+   */
+  const [projektFilter, setProjektFilter] = useState<string | null>(searchParams.get("project"));
   const [invoiceLayout, setInvoiceLayout] = useState<InvoiceLayoutSettings>(DEFAULT_LAYOUT);
 
   // Payment dialog for status change to teilbezahlt/bezahlt
@@ -619,6 +625,8 @@ export default function Invoices() {
       i.brutto_summe.toFixed(2).includes(searchQuery);
     const matchArchive = showArchive ? true : !i.archiviert;
     const matchJahr = filterJahr === "alle" || (i.datum || "").startsWith(filterJahr);
+    const matchProjekt = !projektFilter || i.project_id === projektFilter;
+    if (!matchProjekt) return false;
 
     // Tab "storno" → NUR stornierte Rechnungen
     if (filterTyp === "storno") {
@@ -962,6 +970,17 @@ export default function Invoices() {
             </button>
 
             <div className={`${filtersOpen ? "flex" : "hidden"} lg:flex flex-col gap-3 mt-3 lg:mt-0`}>
+              {/* Projekt-Filter sichtbar machen — sonst wüsste niemand, warum
+                  die Liste kürzer ist als sonst (07.09.2026). */}
+              {projektFilter && (
+                <div className="flex items-center gap-2 rounded border border-kb-blue/40 bg-[hsl(210_60%_97%)] px-2 py-1.5 text-xs">
+                  <span className="min-w-0 flex-1 truncate">
+                    Nur Belege des Projekts <b>{projectNames[projektFilter] || "…"}</b>
+                  </span>
+                  <button type="button" className="kb-btn h-7 min-h-0 shrink-0 px-2 py-0"
+                    onClick={() => setProjektFilter(null)}>Filter aufheben</button>
+                </div>
+              )}
               {/* Suche */}
               <input
                 type="search"

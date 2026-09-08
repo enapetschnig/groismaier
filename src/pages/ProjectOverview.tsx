@@ -732,13 +732,8 @@ const ProjectOverview = () => {
               <FileDown className="h-4 w-4" />Neue Rechnung
             </Button>
           )}
-          {isAdmin && (
-            <Button variant="outline" className="h-11 gap-1.5" onClick={() => void oeffneZuordnen()}
-              title="Ein bestehendes Angebot oder eine Rechnung diesem Projekt zuordnen">
-              <FileText className="h-4 w-4" />Beleg zuordnen
-            </Button>
-          )}
-          {/* Beleg zuordnen (Kundenwunsch 07.09.2026) */}
+          {/* Beleg zuordnen (Kundenwunsch 07.09.2026) — der Knopf dazu steht
+              unten bei „Angebote & Rechnungen", also dort, wo man ihn sucht. */}
           <Dialog open={zuordnenOpen} onOpenChange={setZuordnenOpen}>
             <DialogContent className="sm:max-w-lg">
               <DialogHeader>
@@ -748,7 +743,9 @@ const ProjectOverview = () => {
                 <Input value={zuordnenSuche} onChange={(e) => setZuordnenSuche(e.target.value)}
                   placeholder="Nummer, Betreff oder Kunde suchen …" className="h-11" autoFocus />
                 <p className="text-xs text-muted-foreground">
-                  Belege ohne Projekt stehen oben. Alternativ im Beleg selbst unter „1. Allgemein → Projekt zuordnen".
+                  Belege ohne Projekt stehen oben. Ein Klick auf die Zeile ordnet den Beleg diesem Projekt zu.
+                  Andere Wege: im Beleg unter „1. Allgemein → Projekt zuordnen", oder ein Angebot auf
+                  „angenommen" setzen — dann wird das Projekt automatisch angelegt und verknüpft.
                 </p>
                 <div className="max-h-[50vh] divide-y overflow-y-auto rounded border">
                   {zuordnenKandidaten
@@ -1214,9 +1211,15 @@ const ProjectOverview = () => {
                     <FileText className="h-5 w-5 text-primary shrink-0" />
                     Angebote & Rechnungen
                   </CardTitle>
-                  <Button variant="outline" className="h-11 shrink-0" onClick={() => navigate(`/invoices?project=${projectId}`)}>
-                    Alle anzeigen
-                  </Button>
+                  <div className="flex shrink-0 gap-2">
+                    <Button variant="outline" className="h-11" onClick={() => void oeffneZuordnen()}
+                      title="Ein weiteres bestehendes Angebot oder eine Rechnung diesem Projekt zuordnen">
+                      Beleg zuordnen
+                    </Button>
+                    <Button variant="outline" className="h-11" onClick={() => navigate(`/invoices?project=${projectId}`)}>
+                      Alle anzeigen
+                    </Button>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent className="space-y-1">
@@ -1250,13 +1253,20 @@ const ProjectOverview = () => {
             </Card>
           )}
           {isAdmin && projectInvoices.length === 0 && (
-            <Card className="cursor-pointer hover:shadow-md transition-shadow" onClick={() => navigate(`/invoices?project=${projectId}`)}>
-              <CardContent className="flex items-center gap-3 p-4">
-                <FileText className="h-5 w-5 text-primary" />
-                <div className="flex-1">
+            <Card>
+              <CardContent className="flex flex-wrap items-center gap-3 p-4">
+                <FileText className="h-5 w-5 shrink-0 text-primary" />
+                <div className="min-w-0 flex-1">
                   <p className="font-medium">Angebote & Rechnungen</p>
-                  <p className="text-xs text-muted-foreground">Keine zugeordneten Dokumente</p>
+                  <p className="text-xs text-muted-foreground">
+                    Noch nichts zugeordnet. Ein bestehendes Angebot gehört dazu? Mit „Beleg zuordnen"
+                    verknüpfen. Wird ein Angebot auf „angenommen" gesetzt, entsteht das Projekt sonst
+                    automatisch.
+                  </p>
                 </div>
+                <Button className="h-11 shrink-0" onClick={() => void oeffneZuordnen()}>
+                  Beleg zuordnen
+                </Button>
               </CardContent>
             </Card>
           )}
