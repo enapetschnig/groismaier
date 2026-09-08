@@ -52,17 +52,31 @@ export interface Belegzeile {
 }
 
 /**
+ * Was der Chef am Beleg bereits entschieden hatte — beim Neu-Übernehmen darf
+ * das nicht von der Kalkulation überfahren werden.
+ */
+export interface BisherigeWahl {
+  /** Auge: sieht der Kunde die Zeile? undefined = Vorschlag der Kalkulation. */
+  auf_pdf?: boolean;
+  /**
+   * War die Zeile am Beleg als Infoposition gekennzeichnet? Sie BLEIBT es
+   * dann — auch wenn die Kalkulation den Aufbau nicht als optional führt
+   * (z. B. von Hand über den „i"-Schalter gesetzt, Kundenhinweis 08.09.2026).
+   * Aufheben geht nur bewusst über denselben Schalter.
+   */
+  ist_info?: boolean;
+}
+
+/**
  * Eine Kalkulationszeile als Belegzeile.
  *
  * @param position 1-basierte Positionsnummer im Beleg
- * @param sichtbarVorgabe Beim Neu-Übernehmen gewinnt die bisherige Auswahl
- *        des Chefs (Auge je Detailzeile) vor dem Vorschlag der Kalkulation.
- *        undefined = Vorschlag der Kalkulation verwenden.
+ * @param bisher Entscheidungen, die am Beleg schon getroffen waren.
  */
 export function belegzeileAusKalk(
   n: KalkZeile,
   position: number,
-  sichtbarVorgabe?: boolean,
+  bisher?: BisherigeWahl,
 ): Belegzeile {
   const beschreibung = String(n.beschreibung || "");
   // menge 0 + einheit "" NICHT auf 1/"Stk." zwingen: reine Textzeilen
@@ -83,10 +97,12 @@ export function belegzeileAusKalk(
     bereich: n.bereich ? String(n.bereich) : null,
     // Sammelzeilen sieht der Kunde immer; sonst zählt die Vorgabe, sonst der
     // Vorschlag der Kalkulation (Detailzeilen kommen mit auf_pdf=false).
-    auf_pdf: n.ist_gruppensumme ? true : (sichtbarVorgabe ?? n.auf_pdf !== false),
+    auf_pdf: n.ist_gruppensumme ? true : (bisher?.auf_pdf ?? n.auf_pdf !== false),
     ist_gruppensumme: !!n.ist_gruppensumme,
     // Der Betrag steht am Beleg, zählt aber NICHT in die Belegsumme.
-    ist_info: !!n.ist_info,
+    // ODER-Verknüpfung: Die Kalkulation kann eine Infoposition NEU setzen,
+    // eine am Beleg vorhandene geht dabei nie verloren.
+    ist_info: !!n.ist_info || !!bisher?.ist_info,
     ek_preis: Number(n.ek_preis) || 0,
   };
 }

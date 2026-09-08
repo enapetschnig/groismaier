@@ -1617,12 +1617,21 @@ Beleg: /invoices/${invoiceId || id || ""}`,
         return;
       }
 
-      // Bisherige Sichtbarkeits-Einstellungen merken.
+      // Bisherige Einstellungen des Chefs merken: Sichtbarkeit (Auge) UND
+      // Infoposition („i"-Schalter) — beides darf die Kalkulation nicht
+      // überfahren (Kundenhinweis 08.09.2026).
       const sichtbarKeyExakt = new Map<string, boolean>();
       const sichtbarKeyText = new Map<string, boolean>();
+      const infoKeyExakt = new Map<string, boolean>();
+      const infoKeyText = new Map<string, boolean>();
       for (const it of items) {
         if (!gruppeVon(it)) continue;
-        const text = (it.beschreibung || "").trim();
+        const t = (it.beschreibung || "").trim();
+        if (it.ist_info) {
+          infoKeyExakt.set(gruppeSchluessel(gruppeVon(it), t), true);
+          infoKeyText.set(t, true);
+        }
+        const text = t;
         sichtbarKeyExakt.set(gruppeSchluessel(gruppeVon(it), text), istSichtbar(it));
         if (!sichtbarKeyText.has(text)) sichtbarKeyText.set(text, istSichtbar(it));
       }
@@ -1643,7 +1652,10 @@ Beleg: /invoices/${invoiceId || id || ""}`,
         const alt = n.gruppe
           ? sichtbarKeyExakt.get(gruppeSchluessel(String(n.gruppe), text)) ?? sichtbarKeyText.get(text)
           : undefined;
-        return belegzeileAusKalk(n as KalkZeile, i + 1, alt) as unknown as InvoiceItem;
+        const warInfo = n.gruppe
+          ? infoKeyExakt.get(gruppeSchluessel(String(n.gruppe), text)) ?? infoKeyText.get(text)
+          : undefined;
+        return belegzeileAusKalk(n as KalkZeile, i + 1, { auf_pdf: alt, ist_info: warInfo }) as unknown as InvoiceItem;
       });
 
       let eingefuegt = false;

@@ -37,7 +37,7 @@ describe("Kalkulation → Beleg: Infoposition überlebt jeden Weg", () => {
     const info = zeilen.find((z) => z.beschreibung.includes("INFOPOSITION:"))!;
     expect(info.ist_info).toBe(true);
     // Neu-Übernehmen mit erhaltener Sichtbarkeits-Vorgabe: ist_info bleibt.
-    const nochmal = items.map((n, i) => belegzeileAusKalk(n as KalkZeile, i + 1, true));
+    const nochmal = items.map((n, i) => belegzeileAusKalk(n as KalkZeile, i + 1, { auf_pdf: true }));
     const infoNochmal = nochmal.find((z) => z.beschreibung.includes("INFOPOSITION:"))!;
     expect(infoNochmal.ist_info).toBe(true);
     // Alle Kennzeichen gleich, nur die Sichtbarkeit darf abweichen.
@@ -58,6 +58,22 @@ describe("Kalkulation → Beleg: Infoposition überlebt jeden Weg", () => {
     expect(summenKaputt.nettoSumme - summen.nettoSumme).toBeCloseTo(info.gesamtpreis, 2);
     // Der Betrag bleibt an der Zeile stehen (er wird nur nicht addiert).
     expect(info.gesamtpreis).toBeGreaterThan(0);
+  });
+
+  it("von Hand gesetzter i-Schalter überlebt das Neu-Übernehmen", () => {
+    // Der Chef kennzeichnet eine Zeile selbst, die Kalkulation kennt sie nicht
+    // als optional (ist_info false). Beim Neu-Übernehmen bleibt sie Infoposition.
+    const normal = items.find((i) => i.ist_gruppensumme && !i.ist_info)! as KalkZeile;
+    const wieder = belegzeileAusKalk(normal, 1, { ist_info: true });
+    expect(wieder.ist_info).toBe(true);
+    const summen = belegSummen([wieder] as any, { mwst_satz: 20 } as any);
+    expect(summen.nettoSumme).toBe(0);           // zählt nicht mit
+    expect(wieder.gesamtpreis).toBeGreaterThan(0); // Betrag bleibt an der Zeile
+    // Umgekehrt: ohne Vorgabe bleibt es eine normale Position.
+    expect(belegzeileAusKalk(normal, 1).ist_info).toBe(false);
+    // Und die Kalkulation darf eine Infoposition weiterhin NEU setzen.
+    const info = items.find((i) => i.ist_info)! as KalkZeile;
+    expect(belegzeileAusKalk(info, 1).ist_info).toBe(true);
   });
 
   it("Altbestand wird erkannt: INFOPOSITION im Text, aber Kennzeichen fehlt", () => {
