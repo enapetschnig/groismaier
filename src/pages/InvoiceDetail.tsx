@@ -12,7 +12,8 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
-import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2, ClipboardList,
+import { belegzeileAusKalk, istInfoTextOhneKennzeichen, type KalkZeile } from "@/lib/kalkZuBeleg";
+import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Package, Ban, FileDown, TrendingUp, Eye, EyeOff, Import, FileText, Printer, Star, ChevronUp, ChevronDown, ChevronRight, Layers, X, Pencil, Undo2, MapPin, Calculator, RefreshCw, CheckCircle2, Type, User, Percent, Link2, Search, RotateCcw , FileCheck2, ClipboardList, Info,
 } from "lucide-react";
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
@@ -1635,31 +1636,14 @@ Beleg: /invoices/${invoiceId || id || ""}`,
       const istKalkZeile = (it: InvoiceItem): boolean =>
         !!gruppeVon(it) || neueUngruppierteTexte.has((it.beschreibung || "").trim());
 
+      // Dieselbe Umwandlung wie beim ersten Übernehmen (kalkZuBeleg.ts) —
+      // getrennte Zuordnungen hatten die INFOPOSITION verloren (08.09.2026).
       const neuItems: InvoiceItem[] = neu.map((n, i) => {
         const text = (n.beschreibung || "").trim();
         const alt = n.gruppe
           ? sichtbarKeyExakt.get(gruppeSchluessel(String(n.gruppe), text)) ?? sichtbarKeyText.get(text)
           : undefined;
-        return {
-          position: i + 1,
-          beschreibung: n.beschreibung,
-          kurztext: n.beschreibung,
-          langtext: "",
-          menge: Number(n.menge) || 0,
-          // Leere Einheit NICHT auf "Stk." zwingen — die Bereichs-Überschriften
-          // des Sammelangebots sind reine Textzeilen (menge 0, einheit "").
-          einheit: n.einheit === "" ? "" : (n.einheit || "Stk."),
-          einzelpreis: Number(n.einzelpreis) || 0,
-          rabatt_prozent: 0,
-          gesamtpreis: Number(n.gesamtpreis) || 0,
-          gruppe: n.gruppe ? String(n.gruppe) : null,
-          bereich: (n as any).bereich ? String((n as any).bereich) : null,
-          // Sammelzeilen sind immer sichtbar; für Detailzeilen gewinnt die
-          // bisherige Auswahl des Chefs vor dem Vorschlag der Kalkulation.
-          auf_pdf: n.ist_gruppensumme ? true : (alt ?? n.auf_pdf !== false),
-          ist_gruppensumme: !!n.ist_gruppensumme,
-          ek_preis: Number(n.ek_preis) || 0,
-        };
+        return belegzeileAusKalk(n as KalkZeile, i + 1, alt) as unknown as InvoiceItem;
       });
 
       let eingefuegt = false;
@@ -2053,28 +2037,9 @@ Beleg: /invoices/${invoiceId || id || ""}`,
           const data = JSON.parse(raw);
           sessionStorage.removeItem("kalkulation_to_angebot");
           if (Array.isArray(data.items) && data.items.length > 0) {
-            setItems(data.items.map((it: any, idx: number) => ({
-              position: idx + 1,
-              beschreibung: String(it.beschreibung || ""),
-              // menge 0 + einheit "" NICHT auf 1/"Stk." zwingen: reine
-              // Textzeilen (Bereichs-Überschriften des Sammelangebots aus
-              // mehreren Kalkulationen) drucken sonst "1 Stk. 0,00 €".
-              menge: it.menge === 0 ? 0 : Number(it.menge) || 1,
-              einheit: it.einheit === "" ? "" : String(it.einheit || "Stk."),
-              einzelpreis: Number(it.einzelpreis) || 0,
-              gesamtpreis: Number(it.gesamtpreis) || 0,
-              // Gruppen/Sichtbarkeit aus der Kalkulation unverändert übernehmen.
-              // Detailzeilen kommen mit auf_pdf=false herein — der Chef sieht
-              // sie im Editor, der Kunde erst nach dem Einschalten.
-              gruppe: it.gruppe ? String(it.gruppe) : null,
-              auf_pdf: it.auf_pdf !== false,
-              ist_gruppensumme: !!it.ist_gruppensumme,
-              ist_info: !!(it as any).ist_info,
-              // Interner Wert der Detailzeilen (Material-EK, Lohn, Fahrt …) —
-              // steht in ek_preis, damit die Belegsumme unberührt bleibt.
-              ek_preis: Number(it.ek_preis) || 0,
-              bereich: it.bereich ? String(it.bereich) : null,
-            })));
+            // EINE gemeinsame Umwandlung für beide Wege (siehe kalkZuBeleg.ts)
+            setItems(data.items.map((it: any, idx: number) =>
+              belegzeileAusKalk(it as KalkZeile, idx + 1) as unknown as InvoiceItem));
           }
           if (data.betreff) {
             setForm(prev => ({ ...prev, betreff: prev.betreff || String(data.betreff) }));
@@ -2778,6 +2743,22 @@ Beleg: /invoices/${invoiceId || id || ""}`,
 
   // ── Gruppen: Sichtbarkeit im Kundendokument ───────────────────────────────
   /** Auge-Schalter einer Zeile: "Kunde sieht diese Zeile" an/aus. */
+  /**
+   * Infoposition an/aus (Kundenwunsch 08.09.2026). Der Betrag bleibt an der
+   * Zeile stehen, zählt aber nicht in die Belegsumme — und im Kundendokument
+   * bleibt die Summenspalte leer.
+   */
+  const toggleInfoposition = (index: number) => {
+    setItemsDirty(prev => prev.map((it, i) =>
+      i === index ? { ...it, ist_info: !it.ist_info } : it));
+  };
+
+  /** Alle Altzeilen „INFOPOSITION: …" ohne Kennzeichen nachtragen. */
+  const infopositionenNachtragen = () => {
+    setItemsDirty(prev => prev.map(it =>
+      istInfoTextOhneKennzeichen(it as any) ? { ...it, ist_info: true } : it));
+  };
+
   const toggleZeileSichtbar = (index: number) => {
     setItemsDirty(prev => prev.map((it, i) =>
       i === index ? { ...it, auf_pdf: !istSichtbar(it) } : it));
@@ -7297,6 +7278,28 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                       Materialien
                     </Button>
                   )}
+                  {/* Altbestand (Kundenmeldung 08.09.2026): Zeile heißt
+                      „INFOPOSITION: …", ist aber nicht gekennzeichnet — ihr
+                      Betrag steckt in der Summe. Der Beleg weist darauf hin,
+                      statt still den Preis zu ändern. */}
+                  {(() => {
+                    const offen = items.filter(it => istInfoTextOhneKennzeichen(it as any));
+                    if (offen.length === 0 || isLocked) return null;
+                    const betrag = offen.reduce((s, it) => s + (Number(it.gesamtpreis) || 0), 0);
+                    return (
+                      <div data-testid="info-nachtragen" className="mb-2 flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
+                        <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
+                        <span className="min-w-0 flex-1 text-amber-900">
+                          <b>{offen.length} Infoposition{offen.length === 1 ? "" : "en"}</b> {offen.length === 1 ? "ist" : "sind"} nicht gekennzeichnet —{" "}
+                          {eur(betrag)} zählen derzeit in die Belegsumme.
+                        </span>
+                        <Button size="sm" variant="outline" className="h-9 border-amber-400 bg-white"
+                          onClick={infopositionenNachtragen}>
+                          Jetzt kennzeichnen
+                        </Button>
+                      </div>
+                    );
+                  })()}
                   {items.some(it => it.ist_kalkuliert && it.kalkulation_template_id) && (
                     <Button onClick={refreshKalkulationFromCatalog} disabled={kalkRefreshing} variant="outline" size="sm"
                       className={`gap-1 ${staleKalkCount > 0 ? "border-amber-400 text-amber-700" : ""}`}
@@ -7619,7 +7622,33 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                       </Button>
                     );
 
-                    return { item, idx, isExempt, inGruppe, istSumme, istDetail, sichtbar, beschreibungFeld, mengeFeld, einheitFeld, preisFeld, rabattFeld, kalkButton, moveButtons, deleteButton, eyeButton };
+                    /* „i" = Infoposition: Betrag steht am Beleg, zählt nicht
+                       zur Summe. Nur für preistragende Hauptpositionen sinnvoll
+                       — Detailzeilen und Textzeilen tragen ohnehin keinen
+                       Betrag (Kundenwunsch 08.09.2026). */
+                    const istInfo = !!item.ist_info;
+                    const infoMoeglich = !istDetail && (istSumme || traegtBetrag(item));
+                    const infoButton = infoMoeglich ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        data-testid="pos-infoposition"
+                        data-info={istInfo ? "1" : "0"}
+                        className={`h-11 w-11 md:h-8 md:w-8 ${istInfo ? "text-amber-600" : "text-muted-foreground/50"}`}
+                        disabled={isLocked}
+                        title={istInfo
+                          ? "Infoposition — Betrag steht am Beleg, zählt NICHT zur Summe. Klicken, um sie normal mitzurechnen."
+                          : "Als Infoposition kennzeichnen — der Betrag zählt dann nicht zur Belegsumme, und rechts bleibt die Summenspalte leer."}
+                        aria-label="Infoposition"
+                        aria-pressed={istInfo}
+                        onClick={() => toggleInfoposition(idx)}
+                      >
+                        <Info className="w-4 h-4" />
+                      </Button>
+                    ) : null;
+
+                    return { item, idx, isExempt, inGruppe, istSumme, istDetail, sichtbar, beschreibungFeld, mengeFeld, einheitFeld, preisFeld, rabattFeld, kalkButton, moveButtons, deleteButton, eyeButton, infoButton };
                   });
 
                   /* ══ GRUPPEN-BLÖCKE ═══════════════════════════════════════
@@ -7716,6 +7745,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                           )}
                           <div className="ml-auto flex flex-wrap items-center justify-end">
                             {r.eyeButton}
+                            {r.infoButton}
                             {r.kalkButton}
                             {r.moveButtons}
                             {r.deleteButton}
@@ -7926,6 +7956,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                       <TableCell>
                         <div className="flex items-center gap-0.5">
                           {r.eyeButton}
+                          {r.infoButton}
                           {r.kalkButton}
                           {r.moveButtons}
                           {r.deleteButton}

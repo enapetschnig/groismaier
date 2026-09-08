@@ -762,12 +762,12 @@ ${(() => {
           : e.detail
             ? `<td></td><td></td><td style="text-align:right;color:#555;">${mengeText}</td><td></td>`
             : (item as any).ist_info
-              /* INFOPOSITION (Kundenwunsch 28.08.2026): Betrag in Klammern —
-                 steht am Beleg, zählt aber nicht in die Belegsumme. */
+              /* INFOPOSITION: Summenspalte bleibt leer (Kundenwunsch
+                 08.09.2026) — der Betrag zählt nicht in die Belegsumme. */
               ? `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:#bbb;">—</td>
       <td style="text-align:right;">${mengeText}</td>
-      <td style="text-align:right;font-weight:600;">(${fmtCurrency(Number(item.gesamtpreis))})</td>`
+      <td></td>`
               : `<td style="text-align:right;">${fmtCurrency(Number(item.einzelpreis))}</td>
       <td style="text-align:right;color:${itemRabattProz > 0 ? accent : "#bbb"};">${itemRabattProz > 0 ? `${itemRabattProz}%` : "—"}</td>
       <td style="text-align:right;">${mengeText}</td>

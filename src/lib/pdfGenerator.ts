@@ -701,10 +701,13 @@ export async function generateInvoicePdf(
       if (hatRabattSpalte) row.push("");
       row.push(mengeText, "");
     } else if ((item as any).ist_info) {
-      // INFOPOSITION: Betrag in Klammern — steht am Beleg, zählt nicht mit.
+      // INFOPOSITION: Die Summenspalte bleibt LEER (Kundenwunsch 08.09.2026:
+      // „ganz rechts bei den Summen soll gar nichts mehr stehen"). Der
+      // Einheitspreis bleibt — der Kunde soll ja sehen, was die Variante
+      // kostet; nur mitgerechnet wird sie nicht.
       row.push(fmtCurrency(p.einzelpreis));
       if (hatRabattSpalte) row.push("—");
-      row.push(mengeText, `(${fmtCurrency(p.infoWert)})`);
+      row.push(mengeText, "");
     } else {
       row.push(fmtCurrency(p.einzelpreis));
       if (hatRabattSpalte) row.push(p.rabattProz > 0 ? `${p.rabattProz}%` : "—");
