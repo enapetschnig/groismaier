@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
-import { kostenstelleIcon, kostenstelleLabel } from "@/lib/kostenstellen";
+import { kostenstelleIcon, kostenstelleLabel, projektMoeglich, projektFeldLabel, projektFeldHinweis } from "@/lib/kostenstellen";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -132,7 +132,7 @@ export default function HoursReport() {
   const [editEntry, setEditEntry] = useState<TimeEntry | null>(null);
   // pause_minutes als Rohtext (parseDecimal beim Speichern) — „30" wie bisher,
   // aber auch „30,0" oder Leereingabe brechen nichts mehr.
-  const [editForm, setEditForm] = useState({ start_time: "", end_time: "", pause_minutes: "0", stunden: 0, taetigkeit: "", location_type: "", project_id: "" });
+  const [editForm, setEditForm] = useState({ start_time: "", end_time: "", pause_minutes: "0", stunden: 0, taetigkeit: "", location_type: "", kostenstelle: "", project_id: "" });
   const [editSaving, setEditSaving] = useState(false);
 
   // Admin-Dialog (voller Editor + Nachtrag)
@@ -471,6 +471,7 @@ export default function HoursReport() {
       stunden: entry.stunden,
       taetigkeit: entry.taetigkeit || "",
       location_type: entry.location_type || "baustelle",
+      kostenstelle: entry.kostenstelle || "baustelle",
       project_id: entry.project_id || "",
     });
   };
@@ -504,7 +505,13 @@ export default function HoursReport() {
       stunden,
       taetigkeit: editForm.taetigkeit,
       location_type: editForm.location_type,
-      project_id: editForm.project_id || null,
+      // Die Kostenstelle wurde bisher NICHT mitgespeichert: Wer hier auf
+      // „Firma" stellte, aenderte nur den Arbeitsort — in der Kostenstellen-
+      // Auswertung blieb der Eintrag auf Baustelle stehen (09.09.2026).
+      kostenstelle: editForm.kostenstelle || null,
+      // Projekt haengt an der Kostenstelle, nicht am Arbeitsort: Werkstattzeit
+      // fuer ein Bauvorhaben ist Projektzeit.
+      project_id: projektMoeglich(editForm.kostenstelle) ? (editForm.project_id || null) : null,
     }).eq("id", editEntry.id);
     setEditSaving(false);
     if (error) {
@@ -1684,27 +1691,44 @@ export default function HoursReport() {
                 </div>
               </div>
               <div>
-                <Label>Ort</Label>
-                <Select value={editForm.location_type} onValueChange={(v) => setEditForm(f => ({ ...f, location_type: v }))}>
+                <Label>Kostenstelle</Label>
+                <Select
+                  value={editForm.kostenstelle || "baustelle"}
+                  onValueChange={(v) => setEditForm(f => ({
+                    ...f,
+                    kostenstelle: v,
+                    // Fuhrpark/Maschinen: das Geraet traegt die Stunden.
+                    project_id: projektMoeglich(v) ? f.project_id : "",
+                    // Arbeitsort grob nachziehen, „Regie" bleibt unberuehrt.
+                    location_type: f.location_type === "regie"
+                      ? f.location_type
+                      : (v === "baustelle" ? "baustelle" : "werkstatt"),
+                  }))}
+                >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="baustelle">Baustelle</SelectItem>
-                    <SelectItem value="werkstatt">Firma</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Projekt</Label>
-                <Select value={editForm.project_id || "none"} onValueChange={(v) => setEditForm(f => ({ ...f, project_id: v === "none" ? "" : v }))}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Kein Projekt</SelectItem>
-                    {Object.values(projects).map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    {ksOptions.map((ks) => (
+                      <SelectItem key={ks.wert} value={ks.wert}>{kostenstelleIcon(ks.wert)} {ks.label}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
+                <p className="mt-1 text-xs text-muted-foreground">Steuert die Kostenstellen-Auswertung.</p>
               </div>
+              {projektMoeglich(editForm.kostenstelle) && (
+                <div>
+                  <Label>{projektFeldLabel(editForm.kostenstelle)}</Label>
+                  <Select value={editForm.project_id || "none"} onValueChange={(v) => setEditForm(f => ({ ...f, project_id: v === "none" ? "" : v }))}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Kein Projekt</SelectItem>
+                      {Object.values(projects).map(p => (
+                        <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">{projektFeldHinweis(editForm.kostenstelle)}</p>
+                </div>
+              )}
               <div>
                 <Label>Tätigkeit</Label>
                 <Input value={editForm.taetigkeit} onChange={(e) => setEditForm(f => ({ ...f, taetigkeit: e.target.value }))} />

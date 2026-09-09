@@ -67,3 +67,46 @@ export const kostenstelleAnzeige = (
     : locationType === "werkstatt" ? "🏢" : "🏗️";
   return `${icon} ${label}`;
 };
+
+// ----------------------------------------------------------------------------
+// Wann gehört eine Buchung zu einem Projekt? (Kundenwunsch 09.09.2026)
+//
+// „bei der Stundenauswertung muss man auch speichern können, dass die Männer
+//  Zeit in der Werkstatt für ein Projekt gearbeitet haben."
+//
+// Vorher war die Projektzuordnung an den ARBEITSORT gekoppelt (location_type
+// baustelle/werkstatt) — wer Werkstatt wählte, verlor das Projekt. Das sind
+// aber drei verschiedene Dinge:
+//   project_id     → für welches Projekt wurde gearbeitet (Auswertung, Abrechnung)
+//   kostenstelle   → auf welche Stelle laufen die Stunden (Kostenstellen-Bericht)
+//   location_type  → Arbeitsort, historisch für Taggeld gedacht
+// Vorgefertigt in der Werkstatt ist genauso Projektzeit wie Montage vor Ort.
+// ----------------------------------------------------------------------------
+
+/**
+ * Kostenstellen, bei denen ein GERÄT die Stunden trägt und kein Projekt:
+ * Fuhrpark- und Maschinenstunden würden sonst in der Projekt-Nachkalkulation
+ * auftauchen, obwohl sie auf das Fahrzeug bzw. die Maschine laufen.
+ */
+export const GERAETE_KOSTENSTELLEN = ["fuhrpark", "maschinen"] as const;
+
+/** Darf/soll diese Buchung einem Projekt zugeordnet werden? */
+export const projektMoeglich = (kostenstelle: string | null | undefined): boolean =>
+  !GERAETE_KOSTENSTELLEN.includes(String(kostenstelle || "") as typeof GERAETE_KOSTENSTELLEN[number]);
+
+/**
+ * Ist das Projekt Pflicht? Nur auf der Baustelle — dort gibt es keine Stunde
+ * ohne Bauvorhaben. Werkstatt, Lager & Co. dürfen, müssen aber nicht.
+ */
+export const projektPflicht = (kostenstelle: string | null | undefined): boolean =>
+  String(kostenstelle || "") === "baustelle";
+
+/** Beschriftung des Projektfelds je Kostenstelle. */
+export const projektFeldLabel = (kostenstelle: string | null | undefined): string =>
+  projektPflicht(kostenstelle) ? "Projekt *" : "Projekt (optional)";
+
+/** Erklärung unter dem Projektfeld — je nach Kostenstelle. */
+export const projektFeldHinweis = (kostenstelle: string | null | undefined): string =>
+  projektPflicht(kostenstelle)
+    ? "Auf der Baustelle gehört jede Stunde zu einem Bauvorhaben."
+    : "Auch Zeit in der Werkstatt oder im Lager kann auf ein Projekt laufen — sie zählt dann in der Projektauswertung und bei „Baustelle abrechnen\" mit.";

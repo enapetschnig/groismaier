@@ -1,0 +1,12 @@
+-- ============================================================================
+--  Werkstattzeit auf ein Projekt buchen (Kundenwunsch 09.09.2026)
+-- ============================================================================
+-- Keine Daten werden geaendert - der Fehler lag allein in den Formularen.
+
+UPDATE public.aenderungswuensche SET status = 'umgesetzt', antwort =
+  'Erledigt. Der Grund war, dass die Projektzuordnung am ARBEITSORT hing: Sobald "Firma/Werkstatt" gewaehlt war, blendete die Maske das Projektfeld aus und loeschte beim Speichern eine schon gesetzte Zuordnung. Das sind aber drei verschiedene Dinge - fuer welches Projekt gearbeitet wurde, auf welche Kostenstelle die Stunden laufen, und wo gearbeitet wurde. Jetzt gilt an allen drei Stellen dieselbe Regel: Das Projekt ist bei der Kostenstelle Baustelle Pflicht, bei Werkstatt, Lager und Buero freiwillig moeglich, und nur bei Fuhrpark/Maschinen faellt es weg (dort tragen Fahrzeug bzw. Maschine die Stunden). Geaendert in: (1) Stundenauswertung - beim Bearbeiten eines Eintrags laesst sich jetzt auch die Kostenstelle umstellen; sie wurde vorher gar nicht mitgespeichert, "Firma" aenderte nur den Arbeitsort. (2) Nachtrag durch den Chef - das Projektfeld bleibt sichtbar und die Zuordnung erhalten. (3) Zeiterfassung der Mitarbeiter - mit dem Hinweis, dass auch Werkstattzeit einem Bauvorhaben zugeordnet werden kann. Die Auswertungen mussten nicht angefasst werden: Projekt-Stundenabgleich, Projekt-Stundenbericht und "Baustelle abrechnen" gehen ohnehin ueber das Projekt, nicht ueber den Ort - eine zugeordnete Werkstattstunde zaehlt dort ab sofort mit. Zum Stand heute: 8 Werkstatt-Eintraege (37,5 h) haengen bereits an einem Projekt, 11 weitere (29,5 h) an keinem - die kannst du in der Stundenauswertung nachtragen.'
+WHERE id::text LIKE '247b5126%';
+
+INSERT INTO public.neuerungen (titel, text) VALUES
+  ('Werkstattzeit fuer ein Projekt buchen',
+   'Zeit in der Werkstatt, im Lager oder im Buero laesst sich jetzt einem Bauvorhaben zuordnen - beim Erfassen, beim Nachtragen und beim Bearbeiten in der Stundenauswertung. Die Stunden zaehlen dann im Projekt und bei "Baustelle abrechnen" mit. Auf der Baustelle bleibt das Projekt Pflicht; bei Fuhrpark und Maschinen tragen weiterhin Fahrzeug bzw. Maschine die Stunden. Neu ist ausserdem, dass sich beim Bearbeiten eines Eintrags die Kostenstelle aendern laesst - bisher wurde sie nicht mitgespeichert.');

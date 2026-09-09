@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { projektMoeglich, projektPflicht, projektFeldLabel, projektFeldHinweis } from "@/lib/kostenstellen";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -219,8 +220,8 @@ export function AdminTimeEntryDialog({
       toast({ variant: "destructive", title: "Tätigkeit fehlt" });
       return;
     }
-    if (form.location_type === "baustelle" && !form.project_id) {
-      toast({ variant: "destructive", title: "Projekt fehlt", description: "Bei Baustelle ist ein Projekt erforderlich." });
+    if (projektPflicht(form.kostenstelle) && !form.project_id) {
+      toast({ variant: "destructive", title: "Projekt fehlt", description: "Bei der Kostenstelle Baustelle ist ein Projekt erforderlich." });
       return;
     }
     if ((form.kostenstelle === "fuhrpark" || form.kostenstelle === "maschinen") && !geraetId) {
@@ -280,7 +281,9 @@ export function AdminTimeEntryDialog({
 
       const payload: any = {
         datum: form.datum,
-        project_id: form.location_type === "baustelle" ? (form.project_id || null) : null,
+        // Projekt hängt an der KOSTENSTELLE, nicht am Arbeitsort: Werkstatt-
+        // stunden für ein Bauvorhaben sind Projektzeit (09.09.2026).
+        project_id: projektMoeglich(form.kostenstelle) ? (form.project_id || null) : null,
         // Ohne dieses Feld greift der DB-Default „baustelle" — jeder Nachtrag
         // wäre in der Kostenstellen-Auswertung als Baustelle gelandet.
         kostenstelle: form.kostenstelle,
@@ -422,7 +425,12 @@ export function AdminTimeEntryDialog({
                     } else if (ks === "baustelle") {
                       ks = kostenstellen.find(k => k.wert !== "baustelle")?.wert || ks;
                     }
-                    return { ...f, location_type: v as any, kostenstelle: ks, project_id: v !== "baustelle" ? "" : f.project_id };
+                    // Das Projekt bleibt beim Ortswechsel stehen: Werkstattzeit
+                    // gehört genauso zu einem Bauvorhaben wie Montagezeit
+                    // (Kundenwunsch 09.09.2026). Nur bei Fuhrpark/Maschinen
+                    // trägt das Gerät die Stunden, dort fällt es weg.
+                    const projekt = projektMoeglich(ks) ? f.project_id : "";
+                    return { ...f, location_type: v as any, kostenstelle: ks, project_id: projekt };
                   })}
                   disabled={isAbsence}
                 >
@@ -432,9 +440,9 @@ export function AdminTimeEntryDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {form.location_type === "baustelle" && (
+              {projektMoeglich(form.kostenstelle) && (
                 <div>
-                  <Label>Projekt *</Label>
+                  <Label>{projektFeldLabel(form.kostenstelle)}</Label>
                   <Select
                     value={form.project_id || "_"}
                     onValueChange={(v) => setForm(f => ({ ...f, project_id: v === "_" ? "" : v }))}
@@ -446,6 +454,7 @@ export function AdminTimeEntryDialog({
                       {projects.map(p => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">{projektFeldHinweis(form.kostenstelle)}</p>
                 </div>
               )}
               <div>
@@ -455,12 +464,13 @@ export function AdminTimeEntryDialog({
                   onValueChange={(v) => { setGeraetId(""); setForm(f => ({
                     ...f,
                     kostenstelle: v,
+                    // Fuhrpark/Maschinen: das Gerät trägt die Stunden.
+                    project_id: projektMoeglich(v) ? f.project_id : "",
                     // Grobe Einordnung nachziehen (Baustelle vs. Firma) —
                     // „Regie / Büro" bleibt unberührt.
                     location_type: f.location_type === "regie"
                       ? f.location_type
                       : (v === "baustelle" ? "baustelle" : "werkstatt"),
-                    project_id: v === "baustelle" ? f.project_id : "",
                   })); }}
                   disabled={isAbsence}
                 >

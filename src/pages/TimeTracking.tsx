@@ -26,7 +26,7 @@ import {
   getTotalWorkingHours
 } from "@/lib/workingHours";
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
-import { KOSTENSTELLEN_ICONS } from "@/lib/kostenstellen";
+import { KOSTENSTELLEN_ICONS, projektMoeglich, projektPflicht } from "@/lib/kostenstellen";
 import { heuteISO } from "@/lib/datum";
 import { istLenkzeitPflichtig, lenkzeitMinutenProTag, lenkzeitText } from "@/lib/lenkzeit";
 
@@ -707,7 +707,7 @@ const TimeTracking = () => {
 
       // Projekt ist nur bei Kostenstelle "Baustelle" Pflicht — bei allen
       // anderen Kostenstellen (Werkstatt, Lager, …) ist es optional.
-      if (block.kostenstelle === "baustelle" && !block.projectId) {
+      if (projektPflicht(block.kostenstelle) && !block.projectId) {
         toast({ variant: "destructive", title: "Fehler", description: `Block ${blockNum}: Bitte ein Projekt auswählen` });
         setSaving(false);
         return;
@@ -828,7 +828,9 @@ const TimeTracking = () => {
       // Fuhrpark/Maschinen: das Gerät ersetzt das Projekt — ein evtl. noch im
       // Zustand hängendes Projekt darf NICHT mitgespeichert werden, sonst
       // tauchen Fuhrparkstunden in der Projekt-Nachkalkulation auf.
-      const geraeteKostenstelle = block.kostenstelle === "fuhrpark" || block.kostenstelle === "maschinen";
+      // Fuhrpark/Maschinen: das Gerät trägt die Stunden, nicht ein Projekt
+      // (gemeinsame Regel in lib/kostenstellen.ts).
+      const geraeteKostenstelle = !projektMoeglich(block.kostenstelle);
       const projectIdVal = block.locationType === "regie" || geraeteKostenstelle
         ? null
         : (block.projectId || null);
@@ -1185,7 +1187,7 @@ const TimeTracking = () => {
                                     // Bei Fuhrpark/Maschinen ersetzt das Gerät das Projekt —
                                     // ein zuvor gewähltes Projekt darf nicht unsichtbar
                                     // mitgespeichert werden (Review-Befund).
-                                    ...(ks.wert === "fuhrpark" || ks.wert === "maschinen" ? { projectId: "" } : {}),
+                                    ...(projektMoeglich(ks.wert) ? {} : { projectId: "" }),
                                     // location_type ist per DB-CHECK auf
                                     // 'baustelle'/'werkstatt' begrenzt und bleibt
                                     // die grobe Einordnung. Die feine Zuordnung
@@ -1215,14 +1217,20 @@ const TimeTracking = () => {
                           <div className="space-y-2">
                             <Label>
                               Projekt{" "}
-                              {block.kostenstelle === "baustelle" ? (
+                              {projektPflicht(block.kostenstelle) ? (
                                 <span className="text-primary">*</span>
                               ) : (
                                 <span className="text-muted-foreground font-normal">(optional)</span>
                               )}
                             </Label>
+                            {!projektPflicht(block.kostenstelle) && (
+                              <p className="mb-1 text-xs text-muted-foreground">
+                                Auch Werkstatt- oder Lagerzeit für ein Bauvorhaben hier zuordnen —
+                                die Stunden zählen dann beim Projekt mit.
+                              </p>
+                            )}
                             <Select
-                              value={block.projectId || (block.kostenstelle === "baustelle" ? "" : "none")}
+                              value={block.projectId || (projektPflicht(block.kostenstelle) ? "" : "none")}
                               onValueChange={(value) => {
                                 if (value === "new") {
                                   setPendingBlockIdForNewProject(block.id);
@@ -1234,7 +1242,7 @@ const TimeTracking = () => {
                             >
                               <SelectTrigger className="h-12"><SelectValue placeholder="Projekt auswählen" /></SelectTrigger>
                               <SelectContent>
-                                {block.kostenstelle !== "baustelle" && (
+                                {!projektPflicht(block.kostenstelle) && (
                                   <SelectItem value="none">Kein Projekt</SelectItem>
                                 )}
                                 {projects.map((p) => (
