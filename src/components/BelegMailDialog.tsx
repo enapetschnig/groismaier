@@ -233,11 +233,15 @@ export function BelegMailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      {/* Der Dialog ist länger als ein kleiner Bildschirm hoch (Anhang-Optionen,
+          Entwurfs-Hinweis, Regieberichte) — deshalb scrollt der INHALT, während
+          Titel und die Knöpfe „Abbrechen/Senden" immer sichtbar bleiben.
+          Kundenmeldung 09.09.2026: „ich kann nicht runterscrollen". */}
+      <DialogContent className="flex max-h-[92vh] max-w-lg flex-col gap-0 p-0">
+        <DialogHeader className="shrink-0 border-b px-6 py-4">
           <DialogTitle>{belegBezeichnung} {belegNummer} per E-Mail senden</DialogTitle>
         </DialogHeader>
-        <div className="space-y-3">
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto px-6 py-4">
           <div className="space-y-1">
             <Label>Absender</Label>
             <select
@@ -323,9 +327,8 @@ export function BelegMailDialog({
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  <span className="block font-medium">Das ist ein Entwurf</span>
-                  Das PDF trägt quer über jeder Seite „ENTWURF" und noch keine endgültige Belegnummer.
-                  Für die fertige Rechnung zuerst „Rechnung erstellen".
+                  <b>Das ist ein Entwurf.</b> Das PDF trägt „ENTWURF" und noch keine endgültige
+                  Belegnummer — für die fertige Rechnung zuerst „Rechnung erstellen".
                 </span>
               </div>
             )}
@@ -374,13 +377,13 @@ export function BelegMailDialog({
               )}
             </div>
           </div>
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
-            <Button onClick={senden} disabled={sendet || !pdfBlob}>
-              {sendet ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
-              Senden
-            </Button>
-          </div>
+        </div>
+        <div className="flex shrink-0 justify-end gap-2 border-t bg-background px-6 py-3">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>Abbrechen</Button>
+          <Button onClick={senden} disabled={sendet || !pdfBlob}>
+            {sendet ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Send className="mr-1.5 h-4 w-4" />}
+            Senden
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
