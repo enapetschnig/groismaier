@@ -18,8 +18,7 @@ import { formatForInput, parseDecimal } from "@/lib/num";
 import { KalkKatalog, KatalogArtikel, KatalogKategorie, artTable, katTable, mengenEinheit } from "./useKalkKatalog";
 import { ArtikelKalkulationDialog } from "./ArtikelKalkulationDialog";
 import { EinheitSelect } from "@/components/EinheitSelect";
-import { ladeRegieSaetze, type RegieSatz } from "@/lib/regieSaetze";
-import { regieSaetzeVergessen } from "@/lib/documentTextsLoader";
+import { RegieSaetzeEditor } from "@/components/admin/RegieSaetzeEditor";
 
 const ALLGEMEINE_FELDER: { key: string; label: string; hinweis?: string }[] = [
   { key: "kalk_mittellohn", label: "Mittellohn (€/h)" },
@@ -135,63 +134,6 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
   const { toast } = useToast();
   const [werte, setWerte] = useState<Record<string, string>>({});
   const [savingBd, setSavingBd] = useState(false);
-  /**
-   * Regie-Sätze (Kundenwunsch 09.09.2026). Sie stehen am Ende jedes Angebots
-   * und dienen als Vorschlag beim Abrechnen von Regieberichten — eine Liste,
-   * die überall gilt.
-   */
-  const [regie, setRegie] = useState<RegieSatz[]>([]);
-  const [regieRoh, setRegieRoh] = useState<Record<string, string>>({});
-  const [savingRegie, setSavingRegie] = useState(false);
-  const ladeRegie = async () => setRegie(await ladeRegieSaetze(false));
-  useEffect(() => { void ladeRegie(); }, []);
-  const regieAendern = (id: string, patch: Partial<RegieSatz>) =>
-    setRegie((alt) => alt.map((r) => (r.id === id ? { ...r, ...patch } : r)));
-  const regieNeu = (gruppe: "personal" | "fahrzeug") => {
-    const maxSort = Math.max(0, ...regie.filter((r) => r.gruppe === gruppe).map((r) => r.sort));
-    setRegie((alt) => [...alt, {
-      id: `neu-${Date.now()}`, gruppe, bezeichnung: "", betrag: 0,
-      einheit: gruppe === "personal" ? "Std" : "km", sort: maxSort + 10, aktiv: true,
-    }]);
-  };
-  const regieSpeichern = async () => {
-    const leer = regie.filter((r) => !r.bezeichnung.trim());
-    if (leer.length > 0) { fehler("Bitte bei jedem Satz eine Bezeichnung eintragen (oder die Zeile löschen)."); return; }
-    setSavingRegie(true);
-    const tab = () => (supabase.from("regie_saetze" as never) as any);
-    const neue = regie.filter((r) => r.id.startsWith("neu-"));
-    const alte = regie.filter((r) => !r.id.startsWith("neu-"));
-    const fehlerListe: string[] = [];
-    for (const r of alte) {
-      const { error } = await tab().update({
-        gruppe: r.gruppe, bezeichnung: r.bezeichnung.trim(), betrag: r.betrag,
-        einheit: r.einheit, sort: r.sort, aktiv: r.aktiv, updated_at: new Date().toISOString(),
-      }).eq("id", r.id);
-      if (error) fehlerListe.push(error.message);
-    }
-    if (neue.length > 0) {
-      const { error } = await tab().insert(neue.map((r) => ({
-        gruppe: r.gruppe, bezeichnung: r.bezeichnung.trim(), betrag: r.betrag,
-        einheit: r.einheit, sort: r.sort, aktiv: r.aktiv,
-      })));
-      if (error) fehlerListe.push(error.message);
-    }
-    setSavingRegie(false);
-    if (fehlerListe.length > 0) { fehler(`Speichern fehlgeschlagen (nur Administratoren): ${fehlerListe[0]}`); return; }
-    // Der Angebots-Schlusstext hält die Sätze zwischengespeichert.
-    regieSaetzeVergessen();
-    setRegieRoh({});
-    await ladeRegie();
-    toast({ title: "Gespeichert", description: "Die Regie-Sätze stehen ab sofort in jedem neuen Angebot." });
-  };
-  const regieLoeschen = async (r: RegieSatz) => {
-    if (r.id.startsWith("neu-")) { setRegie((alt) => alt.filter((x) => x.id !== r.id)); return; }
-    const { error } = await (supabase.from("regie_saetze" as never) as any).delete().eq("id", r.id);
-    if (error) { fehler(error.message); return; }
-    regieSaetzeVergessen();
-    await ladeRegie();
-  };
-
   // Kapitel-Vorlagen für das Angebot (Kundenwunsch 07.09.2026): eine Zeile je
   // Kapitel, gespeichert als JSON-Liste in app_settings.kalk_kapitel_vorlagen.
   const [kapitelText, setKapitelText] = useState("");
@@ -647,82 +589,8 @@ export function EinstellungenTab({ katalog }: { katalog: KalkKatalog }) {
 
   return (
     <div className="space-y-6">
-      {/* Regie-Sätze (Kundenwunsch 09.09.2026) */}
-      <div className="kb-panel">
-        <div className="border-b px-4 py-2.5 text-sm font-bold">Sätze für Regiearbeiten</div>
-        <div className="space-y-3 p-4">
-          <p className="text-xs text-muted-foreground">
-            Diese Sätze stehen am Ende jedes Angebots und dienen als Vorschlag beim Abrechnen von
-            Regieberichten. Änderst du hier einen Betrag, gilt er überall.
-          </p>
-          {(["personal", "fahrzeug"] as const).map((gruppe) => (
-            <div key={gruppe}>
-              <div className="mb-1 flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  {gruppe === "personal" ? "Personal (je Stunde)" : "Fahrzeuge (je Kilometer)"}
-                </span>
-                <button type="button" className="kb-btn h-8 min-h-0 px-2 text-xs" onClick={() => regieNeu(gruppe)}>
-                  <Plus className="h-3.5 w-3.5 text-kb-green" /> Satz
-                </button>
-              </div>
-              <div className="space-y-1">
-                {regie.filter((r) => r.gruppe === gruppe).sort((a, b) => a.sort - b.sort).map((r) => (
-                  <div key={r.id} className={`flex flex-wrap items-center gap-2 rounded border px-2 py-1.5 ${r.aktiv ? "" : "opacity-50"}`}>
-                    <input
-                      className="kb-input h-9 min-h-0 min-w-0 flex-1 px-2 py-1 text-sm"
-                      value={r.bezeichnung}
-                      placeholder={gruppe === "personal" ? "z. B. Vorarbeiter" : "z. B. Montagebus"}
-                      onChange={(e) => regieAendern(r.id, { bezeichnung: e.target.value })}
-                    />
-                    <div className="relative w-28 shrink-0">
-                      <input
-                        className="kb-input h-9 min-h-0 w-full px-2 py-1 pr-6 text-right text-sm"
-                        inputMode="decimal"
-                        value={regieRoh[r.id] ?? formatForInput(r.betrag)}
-                        onChange={(e) => {
-                          setRegieRoh((alt) => ({ ...alt, [r.id]: e.target.value }));
-                          const z = parseDecimal(e.target.value);
-                          if (z !== null) regieAendern(r.id, { betrag: z });
-                        }}
-                        onBlur={() => setRegieRoh((alt) => { const n = { ...alt }; delete n[r.id]; return n; })}
-                      />
-                      <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">€</span>
-                    </div>
-                    <select
-                      className="kb-input h-9 min-h-0 w-20 shrink-0 px-1 py-1 text-sm"
-                      value={r.einheit}
-                      onChange={(e) => regieAendern(r.id, { einheit: e.target.value })}
-                    >
-                      <option value="Std">/Std</option>
-                      <option value="km">/km</option>
-                      <option value="Tag">/Tag</option>
-                      <option value="Einsatz">/Einsatz</option>
-                    </select>
-                    <label className="flex shrink-0 cursor-pointer items-center gap-1 text-xs text-muted-foreground">
-                      <input type="checkbox" className="h-3.5 w-3.5" checked={r.aktiv}
-                        onChange={(e) => regieAendern(r.id, { aktiv: e.target.checked })} />
-                      im Angebot
-                    </label>
-                    <button type="button" title="Satz löschen"
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                      onClick={() => void regieLoeschen(r)}>
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
-                ))}
-                {regie.filter((r) => r.gruppe === gruppe).length === 0 && (
-                  <p className="px-2 py-2 text-xs text-muted-foreground">Noch kein Satz angelegt.</p>
-                )}
-              </div>
-            </div>
-          ))}
-          <div className="flex justify-end">
-            <button type="button" className="kb-btn kb-btn-primary-green flex items-center gap-1.5" onClick={regieSpeichern} disabled={savingRegie}>
-              <Save className="h-4 w-4" /> Sätze speichern
-            </button>
-          </div>
-        </div>
-      </div>
+      {/* Dieselben Sätze wie unter Einstellungen — eine Liste, ein Editor. */}
+      <RegieSaetzeEditor />
 
       {/* Kapitel-Vorlagen (Kundenwunsch 07.09.2026) */}
       <div className="kb-panel">

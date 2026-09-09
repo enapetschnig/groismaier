@@ -29,6 +29,7 @@ import { AenderungswuenscheListe } from "@/components/aenderungswunsch/Aenderung
 import { NeuerungenPflege } from "@/components/neuerungen/NeuerungenPflege";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
+import { RegieSaetzeEditor } from "@/components/admin/RegieSaetzeEditor";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
 import { MahnungSettings } from "@/components/admin/MahnungSettings";
 import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings";
@@ -1326,6 +1327,7 @@ export default function Admin() {
 
           {/* ===== TAB 3: RECHNUNGS-LAYOUT ===== */}
           <TabsContent value="rechnung" className="space-y-6">
+            <RegieSaetzeEditor />
             <DocumentTextsEditor />
             <InvoiceLayoutEditor />
           </TabsContent>
