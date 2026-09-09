@@ -4,8 +4,7 @@ import { baueRegieberichtPdf } from "@/lib/regieberichtPdf";
 import { useZurueck } from "@/hooks/useZurueck";
 import {
   Zap, Calendar, Clock, User, Mail, Phone, MapPin, Edit, Trash2, Plus, PenLine,
-  Users, Receipt, Lock, Unlock, CheckCircle2, FileDown, Loader2, Briefcase,
-} from "lucide-react";
+  Users, Receipt, Lock, Unlock, CheckCircle2, FileDown, Loader2, Briefcase, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -560,17 +559,24 @@ const DisturbanceDetail = () => {
             {/* Aktionen für Admin: Verrechnung / Rechnung */}
             {isAdmin && disturbance.status !== "offen" && (
               <div className="flex flex-wrap gap-2 pt-1">
-                {!disturbance.is_verrechnet && (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="gap-1 h-10"
-                    onClick={() => navigate(`/invoices/new?typ=rechnung&disturbance_id=${disturbance.id}`)}
-                  >
-                    <Receipt className="h-4 w-4" />
-                    Rechnung erstellen
-                  </Button>
-                )}
+                {/* „Rechnung erstellen" war bisher nur sichtbar, solange der
+                    Bericht NICHT als verrechnet markiert war. Wer den Haken von
+                    Hand gesetzt hatte, kam nicht mehr weiter — der Knopf war
+                    schlicht weg (Kundenmeldung 09.09.2026: „kann ich leider
+                    nicht als Rechnung übernehmen"). Jetzt bleibt er da; ob
+                    schon verrechnet wurde, sagt der Hinweis darunter. */}
+                <Button
+                  variant={disturbance.is_verrechnet ? "outline" : "default"}
+                  size="sm"
+                  className="gap-1 h-10"
+                  title={disturbance.is_verrechnet
+                    ? "Der Bericht ist als verrechnet markiert — du kannst ihn trotzdem in eine Rechnung übernehmen."
+                    : "Aus diesem Bericht eine Rechnung erstellen"}
+                  onClick={() => navigate(`/invoices/new?typ=rechnung&disturbance_id=${disturbance.id}`)}
+                >
+                  <Receipt className="h-4 w-4" />
+                  Rechnung erstellen
+                </Button>
                 <Button
                   variant={disturbance.is_verrechnet ? "secondary" : "outline"}
                   size="sm"
@@ -579,6 +585,20 @@ const DisturbanceDetail = () => {
                 >
                   {disturbance.is_verrechnet ? "✓ Verrechnet" : "Als verrechnet markieren"}
                 </Button>
+              </div>
+            )}
+
+            {/* Als verrechnet markiert, aber ohne Beleg — meist ein von Hand
+                gesetzter Haken. Ohne diesen Hinweis sieht man nur „✓ Verrechnet"
+                und findet keine Rechnung dazu (Kundenmeldung 09.09.2026). */}
+            {isAdmin && disturbance.is_verrechnet && !verrechnetBeleg && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <b>Als verrechnet markiert, aber keiner Rechnung zugeordnet.</b> Entweder wurde der
+                  Haken von Hand gesetzt oder die zugehörige Rechnung wurde gelöscht. Du kannst den
+                  Bericht trotzdem in eine Rechnung übernehmen oder den Haken oben wieder entfernen.
+                </span>
               </div>
             )}
 
