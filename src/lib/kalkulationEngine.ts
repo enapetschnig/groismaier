@@ -1229,6 +1229,18 @@ export const NEBENKOSTEN_TEXT = "Transport, Kran & sonstige Nebenkosten (lt. Kal
  */
 export const OPTIONAL_PRAEFIX = "OPTIONAL:";
 
+/**
+ * „(Kopie)" aus dem Aufbaunamen entfernen (Kundenfrage 09.09.2026: „warum
+ * steht da Kopie dabei beim Angebot — das soll im Angebot ja nie stehen").
+ *
+ * Beim Duplizieren in der Kalkulation ist der Vermerk nützlich, damit man die
+ * beiden Aufbauten auseinanderhält. Im Angebot ist er ein Arbeitsartefakt und
+ * hat beim Kunden nichts verloren. Die Zeilen bleiben trotzdem unterscheidbar:
+ * Gleiche Gruppennamen bekommen weiter unten automatisch ein „ (2)".
+ */
+export const ohneKopieVermerk = (name: string | null | undefined): string =>
+  String(name || "").replace(/\s*\((?:Kopie|Copy)(?:\s*\d+)?\)/gi, "").replace(/\s{2,}/g, " ").trim();
+
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
   // Je Aufbau ein eigener Zeilenblock — erst am Ende werden die Blöcke nach
   // Kapiteln geordnet (Kundenwunsch 06.09.2026), siehe ordneNachKapiteln().
@@ -1248,7 +1260,8 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     // Blick verstehen, was gemeint ist; so steht es auch im Schlusstext),
     // und die Sammelzeile zählt NICHT in die Belegsumme
     // (ist_info — der Betrag bleibt an der Zeile sichtbar).
-    const name = (m.isOptional ? `${OPTIONAL_PRAEFIX} ` : "") + (m.name || `Aufbau ${i + 1}`);
+    const reinerName = ohneKopieVermerk(m.name) || `Aufbau ${i + 1}`;
+    const name = (m.isOptional ? `${OPTIONAL_PRAEFIX} ` : "") + reinerName;
     // Zwei gleichnamige Aufbauten dürfen nicht in EINER Gruppe landen (dort
     // gäbe es sonst zwei Sammelzeilen). Der Gruppenname wird eindeutig gemacht.
     let gruppe = name;

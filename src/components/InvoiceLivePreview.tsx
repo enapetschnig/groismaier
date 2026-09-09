@@ -679,14 +679,19 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
               : (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")}
           />
         )}
+        {/* Mail-Versand: als EINZIGE Ausgabe auch für einen gespeicherten
+            Entwurf freigegeben (Kundenwunsch 09.09.2026). Das PDF trägt dann
+            „ENTWURF" quer über jeder Seite. */}
         <KBButton
           className="w-full"
           icon={Mail}
-          label="Per E-Mail senden"
+          label={!belegGespeichert && entwurfVersandErlaubt ? "Entwurf per E-Mail senden" : "Per E-Mail senden"}
           onClick={handleEmail}
-          disabled={!belegGespeichert || (!onSendMail && !kundeEmail)}
+          disabled={(!belegGespeichert && !entwurfVersandErlaubt) || (!onSendMail && !kundeEmail)}
           title={!belegGespeichert
-            ? (sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")
+            ? (entwurfVersandErlaubt
+              ? "Entwurf verschicken — das PDF trägt »ENTWURF« und noch keine endgültige Belegnummer"
+              : sperrGrund === "entwurf" ? `Erst nach „${aktionLabel || "Erstellen"}" möglich` : "Erst nach dem Speichern möglich")
             : kundeEmail ? `Beleg per E-Mail an ${kundeEmail} senden` : "Beleg per E-Mail senden"}
         />
       </div>
