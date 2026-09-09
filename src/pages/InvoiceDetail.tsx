@@ -18,7 +18,7 @@ import { Plus, Trash2, Save, Download, Copy, ArrowRightLeft, AlertTriangle, Pack
 import { KBToolbar, KBToolbarButton, KBButton, KBSubTabs } from "@/components/kingbill";
 import { InvoicePdfPreview } from "@/components/InvoicePdfPreview";
 import { InvoiceLivePreview } from "@/components/InvoiceLivePreview";
-import { istEntwurfBeleg, hatPlatzhalterNummer, darfPlatzhalterNummerTragen, darfAusgegebenWerden as belegDarfRaus } from "@/lib/belegEntwurf";
+import { istEntwurfBeleg, hatPlatzhalterNummer, darfPlatzhalterNummerTragen, darfAusgegebenWerden as belegDarfRaus, darfAlsEntwurfGesendetWerden as entwurfDarfGesendetWerden } from "@/lib/belegEntwurf";
 import { BelegMailDialog } from "@/components/BelegMailDialog";
 import { EinheitSelect } from "@/components/EinheitSelect";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
@@ -1030,6 +1030,9 @@ Beleg: /invoices/${invoiceId || id || ""}`,
   const darfAusgegebenWerden = belegDarfRaus({
     istNeu: isNew, istGeaendert: isDirty, typ: form.typ, status: form.status, nummer: form.nummer,
   });
+  /** Entwurf per Mail verschicken (Kundenwunsch 09.09.2026) — nur gespeichert
+   *  und unverändert; das PDF trägt dann „ENTWURF". */
+  const darfEntwurfRaus = entwurfDarfGesendetWerden({ istNeu: isNew, istGeaendert: isDirty });
   /**
    * WARUM ist die Ausgabe gesperrt? (Kundenmeldung 25.08.2026: „bleibt
    * weiterhin ausgegraut" — der pauschale Hinweis „Noch nicht gespeichert"
@@ -8332,6 +8335,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
              in der Datenbank steht UND seither nichts geändert wurde — sonst
              ginge ein Beleg mit vorläufiger Nummer bzw. veraltetem Stand raus. */
           belegGespeichert={darfAusgegebenWerden}
+          entwurfVersandErlaubt={darfEntwurfRaus}
           sperrGrund={ausgabeSperrGrund || "ungespeichert"}
           aktionLabel={`${typLabel} erstellen`}
           onSpeichern={async () => { const ok = await handleSave(); if (ok) toast({ title: "Gespeichert" }); }}
@@ -8596,6 +8600,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
              Dokument gewinnt — genau so, wie der Beleg "getauft" wurde. */
           belegBezeichnung={(form.dokument_bezeichnung || "").trim() || typLabel}
           belegNummer={form.nummer || ""}
+          istEntwurf={!darfAusgegebenWerden}
           kundeAnrede={(form as any).kunde_anrede || ""}
           kundeName={form.kunde_name || ""}
           /* Sendeprotokoll (Kundenwunsch 27.08.2026): jeder Versand landet als

@@ -1656,6 +1656,28 @@ export async function generateInvoicePdf(
     }
   }
 
+  // ── ENTWURF quer über jede Seite ─────────────────────────────────────────
+  // Ein Entwurf darf seit 09.09.2026 per Mail raus (Kundenwunsch). Dann muss
+  // man dem Blatt aber ansehen, dass es noch keine ausgestellte Rechnung ist —
+  // die Belegnummer wird erst beim Erstellen vergeben.
+  if ((invoice as any)._entwurf) {
+    for (let i = 1; i <= totalPages; i++) {
+      pdf.setPage(i);
+      pdf.saveGraphicsState();
+      // Hell genug, dass der Text darunter lesbar bleibt; dunkel genug, dass
+      // niemand das Wort übersieht.
+      const gs = (pdf as any).GState ? new (pdf as any).GState({ opacity: 0.12 }) : null;
+      if (gs) (pdf as any).setGState(gs);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(80);
+      pdf.setTextColor(120, 120, 120);
+      pdf.text("ENTWURF", pageWidth / 2, pageHeight / 2, { align: "center", angle: 35 });
+      pdf.restoreGraphicsState();
+    }
+    pdf.setPage(totalPages);
+    pdf.setTextColor(0, 0, 0);
+  }
+
   return pdf.output("blob");
 }
 

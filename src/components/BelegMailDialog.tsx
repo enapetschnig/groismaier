@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { FileCode2, Loader2, Paperclip, Send } from "lucide-react";
+import { AlertTriangle, FileCode2, Loader2, Paperclip, Send } from "lucide-react";
 
 /** Absender-Postfächer (identisch zur Allowlist der Edge Function). */
 const POSTFAECHER = [
@@ -56,6 +56,12 @@ interface Props {
   /** Nach erfolgreichem Versand (z. B. Nachfrage-Termin anbieten). */
   onGesendet?: () => void;
   /**
+   * Der Beleg ist noch ein ENTWURF (Kundenwunsch 09.09.2026: Entwürfe dürfen
+   * per Mail raus). Der Dialog sagt das deutlich — das PDF trägt „ENTWURF"
+   * und noch keine endgültige Belegnummer.
+   */
+  istEntwurf?: boolean;
+  /**
    * Regieberichte, die in diesem Beleg verrechnet sind — ihre Original-PDFs
    * können mitgeschickt werden (Kundenwunsch 01.09.2026: „Regieberichte
    * müssen im Original an die Rechnung angehängt … oder als eigenes PDF
@@ -67,7 +73,7 @@ interface Props {
 export function BelegMailDialog({
   open, onOpenChange, pdfBlob, dateiname, xmlBlob, xmlDateiname, xmlFehler,
   empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll, onGesendet,
-  regieberichtIds,
+  istEntwurf = false, regieberichtIds,
 }: Props) {
   const { toast } = useToast();
   const [von, setVon] = useState(POSTFAECHER[0].adresse);
@@ -311,6 +317,18 @@ export function BelegMailDialog({
                 )}
               </div>
             ) : null}
+
+            {/* Entwurf: unmissverständlich sagen, was der Empfänger bekommt. */}
+            {istEntwurf && (
+              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                <span>
+                  <span className="block font-medium">Das ist ein Entwurf</span>
+                  Das PDF trägt quer über jeder Seite „ENTWURF" und noch keine endgültige Belegnummer.
+                  Für die fertige Rechnung zuerst „Rechnung erstellen".
+                </span>
+              </div>
+            )}
 
             {/* Regieberichte im Original mitschicken (Kundenwunsch 01.09.2026) */}
             {(regieberichtIds?.length || 0) > 0 && (

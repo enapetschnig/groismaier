@@ -69,6 +69,23 @@ export function nummerFuerAnzeige(
  * Darf der Beleg ausgegeben werden (drucken, exportieren, senden)?
  * Nur wenn er gespeichert, ausgestellt und seither unverändert ist.
  */
+/**
+ * Darf der Beleg als ENTWURF per E-Mail raus? (Kundenwunsch 09.09.2026:
+ * „eine Entwurfsrechnung auch per E-Mail senden").
+ *
+ * Erlaubt ist das nur für einen gespeicherten, unveränderten Beleg — die
+ * Nummer wird zwar erst beim Erstellen vergeben, aber der Empfänger sieht
+ * am PDF deutlich „ENTWURF" und statt einer Nummer den Hinweis darauf.
+ * Drucken, Export, E-Rechnung und die Ablage im Projektordner bleiben
+ * gesperrt: Ein Entwurf ist kein Steuerdokument.
+ */
+export function darfAlsEntwurfGesendetWerden(opts: {
+  istNeu: boolean;
+  istGeaendert: boolean;
+}): boolean {
+  return !opts.istNeu && !opts.istGeaendert;
+}
+
 export function darfAusgegebenWerden(opts: {
   istNeu: boolean;
   istGeaendert: boolean;

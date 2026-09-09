@@ -75,6 +75,13 @@ interface InvoiceLivePreviewProps {
    */
   belegGespeichert?: boolean;
   /**
+   * Ausnahme für den Mail-Versand: Ein gespeicherter ENTWURF darf verschickt
+   * werden (Kundenwunsch 09.09.2026) — das PDF trägt dann „ENTWURF" quer über
+   * jeder Seite. Drucken, Export und E-Rechnung bleiben gesperrt, ein Entwurf
+   * ist kein Steuerdokument.
+   */
+  entwurfVersandErlaubt?: boolean;
+  /**
    * Warum darf der Beleg (noch) nicht raus? Steuert die Beschriftung:
    * "entwurf" = muss erst erstellt werden (Rechnung bekommt dabei ihre
    * Nummer), "ungespeichert" = einfach noch nicht gespeichert.
@@ -90,7 +97,7 @@ interface InvoiceLivePreviewProps {
 const eur = (n: number) =>
   n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail, belegGespeichert = true, sperrGrund = "ungespeichert", aktionLabel, onSpeichern, speichertGerade }: InvoiceLivePreviewProps) {
+export function InvoiceLivePreview({ formData, items, netto, brutto, internProfit, fileName, onSendMail, belegGespeichert = true, entwurfVersandErlaubt = false, sperrGrund = "ungespeichert", aktionLabel, onSpeichern, speichertGerade }: InvoiceLivePreviewProps) {
   const { toast } = useToast();
   const [open, setOpen] = useState<boolean>(() => {
     try {
@@ -209,7 +216,9 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
 
       const blob = await generateInvoicePdf(
         // _hideTotals blendet den Summenblock aus, wenn „Summe" abgehakt ist.
-        { ...invoiceWithTexts, _hideTotals: !showSummary } as typeof invoiceWithTexts,
+        // _entwurf legt „ENTWURF" über jede Seite — solange der Beleg nicht
+        // ausgestellt ist, muss man ihm das ansehen (auch beim Mailversand).
+        { ...invoiceWithTexts, _hideTotals: !showSummary, _entwurf: !belegGespeichert } as typeof invoiceWithTexts,
         its,
         settingsRef.current.bank,
         // „Logo"-Häkchen: ohne Häkchen kein Logo im PDF (Präsenz des Logos ist
@@ -390,8 +399,10 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
    * anderen Beleg gehen, und der versendete Beleg wäre in der App nicht
    * auffindbar.
    */
-  const darfRaus = (aktion: string): boolean => {
+  const darfRaus = (aktion: string, alsEntwurfErlaubt = false): boolean => {
     if (belegGespeichert) return true;
+    // Entwurf per Mail: ausdrücklich freigegeben, das PDF trägt „ENTWURF".
+    if (alsEntwurfErlaubt && entwurfVersandErlaubt) return true;
     toast({
       variant: "destructive",
       title: sperrGrund === "entwurf" ? `${aktionLabel || "Beleg erstellen"} — dann geht es` : "Beleg zuerst speichern",
@@ -415,7 +426,7 @@ export function InvoiceLivePreview({ formData, items, netto, brutto, internProfi
   };
 
   const handleEmail = async () => {
-    if (!darfRaus("Der Mail-Versand")) return;
+    if (!darfRaus("Der Mail-Versand", true)) return;
     if (onSendMail) {
       const blob = await pdfBlobHolen();
       if (blob) {
