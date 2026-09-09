@@ -54,6 +54,21 @@ export function fristInText(text: string, frist: ReturnType<typeof zahlungsfrist
 }
 
 /** Lädt alle Textbausteine für (typ, sprache) aus der document_texts-Tabelle. */
+/**
+ * Regie-Sätze, die beim Laden der Textbausteine mitkommen — damit der
+ * Platzhalter {{regiesaetze}} an EINER Stelle ersetzt wird und nicht in
+ * jedem der fünf Aufrufer (Vorschau, PDF, Mail, Export, Liste) einzeln.
+ */
+let regieSaetzeCache: import("./regieSaetze").RegieSatz[] | null = null;
+export async function loadRegieSaetze(): Promise<import("./regieSaetze").RegieSatz[]> {
+  if (regieSaetzeCache) return regieSaetzeCache;
+  const { ladeRegieSaetze } = await import("./regieSaetze");
+  regieSaetzeCache = await ladeRegieSaetze();
+  return regieSaetzeCache;
+}
+/** Nach dem Ändern der Sätze aufrufen, damit die Vorschau sie sofort zeigt. */
+export function regieSaetzeVergessen(): void { regieSaetzeCache = null; }
+
 export async function loadDocumentTexts(typ: string, sprache = "de"): Promise<DocumentTexts> {
   if (!typ) return {};
   const { data } = await supabase
@@ -65,6 +80,12 @@ export async function loadDocumentTexts(typ: string, sprache = "de"): Promise<Do
   for (const row of ((data as any[]) || [])) {
     const inhalt = (row.inhalt || "").toString().trim();
     if (inhalt) (out as any)[row.feld] = inhalt;
+  }
+  // {{regiesaetze}} sofort durch die aktuellen Stammdaten ersetzen — so
+  // bekommt jeder Aufrufer denselben, immer aktuellen Block.
+  if (out.closing && /\{\{\s*regiesaetze\s*\}\}/i.test(out.closing)) {
+    const { setzeRegieSaetzeEin } = await import("./regieSaetze");
+    out.closing = setzeRegieSaetzeEin(out.closing, await loadRegieSaetze());
   }
   return out;
 }
