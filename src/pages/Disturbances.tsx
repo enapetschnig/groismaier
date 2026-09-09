@@ -34,6 +34,8 @@ type Disturbance = {
   notizen: string | null;
   status: string;
   is_verrechnet: boolean;
+  /** Rechnung, die den Bericht deckt. Leer + is_verrechnet = von Hand abgegolten. */
+  verrechnet_in_invoice_id?: string | null;
   created_at: string;
   user_id: string;
   project_id: string | null;
@@ -315,8 +317,14 @@ const Disturbances = () => {
     return <Badge variant="outline">{d.status}</Badge>;
   };
 
+  /** Siehe DisturbanceDetail: von Hand abhaken heißt „abgegolten", nicht „verrechnet". */
   const handleToggleVerrechnet = async (e: React.MouseEvent, disturbanceId: string, currentValue: boolean) => {
     e.stopPropagation();
+    if (!currentValue && !window.confirm(
+      "Diesen Bericht als abgegolten abhaken?\n\n"
+      + "Er verschwindet damit aus den offenen Berichten, OHNE dass eine Rechnung entsteht — "
+      + "gedacht für Stunden, die in einer Pauschale enthalten sind oder nicht verrechnet werden."
+    )) return;
 
     // Beim Umschalten von Hand auch den Beleg-Verweis löschen — sonst zeigt
     // ein wieder geöffneter Bericht auf eine Rechnung, die ihn nicht (mehr)
@@ -635,7 +643,11 @@ const Disturbances = () => {
                       <div className="flex flex-col items-end gap-1 shrink-0">
                         {getStatusBadge(disturbance)}
                         {disturbance.is_verrechnet && (
-                          <Badge className="bg-emerald-600 text-white">Verrechnet</Badge>
+                          <Badge className={disturbance.verrechnet_in_invoice_id
+                            ? "bg-emerald-600 text-white"
+                            : "bg-amber-600 text-white"}>
+                            {disturbance.verrechnet_in_invoice_id ? "Verrechnet" : "Abgegolten"}
+                          </Badge>
                         )}
                       </div>
                     </div>
@@ -673,7 +685,9 @@ const Disturbances = () => {
                           className="h-10"
                           onClick={(e) => handleToggleVerrechnet(e, disturbance.id, disturbance.is_verrechnet)}
                         >
-                          {disturbance.is_verrechnet ? "✓ Verrechnet" : "Verrechnen"}
+                          {disturbance.is_verrechnet
+                            ? (disturbance.verrechnet_in_invoice_id ? "✓ Verrechnet" : "✓ Abgegolten")
+                            : "Nicht verrechnen"}
                         </Button>
                       </div>
                     )}

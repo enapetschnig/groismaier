@@ -417,8 +417,24 @@ const DisturbanceDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [(disturbance as any)?.verrechnet_in_invoice_id]);
 
+  /**
+   * „Nicht verrechnen (abgegolten)" — der einzige Grund, einen Bericht von
+   * Hand abzuhaken: Die Stunden stecken in einer Pauschale oder werden aus
+   * Kulanz nicht verrechnet. Für alles andere entsteht die Markierung
+   * automatisch, sobald der Bericht in einer Rechnung landet.
+   *
+   * Bis 09.09.2026 hieß der Knopf „Als verrechnet markieren" — dadurch stand
+   * ein Bericht als verrechnet da, ohne dass es je eine Rechnung gab, und der
+   * Weg zur Rechnung war versperrt (Kundenmeldung 09.09.2026).
+   */
   const handleToggleVerrechnet = async () => {
     if (!disturbance) return;
+    if (!disturbance.is_verrechnet && !window.confirm(
+      "Diesen Bericht als abgegolten abhaken?\n\n"
+      + "Er verschwindet damit aus den offenen Berichten, OHNE dass eine Rechnung entsteht — "
+      + "gedacht für Stunden, die in einer Pauschale enthalten sind oder nicht verrechnet werden.\n\n"
+      + "Soll eine Rechnung daraus werden, brich hier ab und nimm »Rechnung erstellen«."
+    )) return;
 
     // Hand-Umschalten löscht auch den Beleg-Verweis (verrechnet_in_invoice_id)
     // — sonst bleibt ein Verweis auf eine Rechnung stehen, die den Bericht
@@ -570,7 +586,7 @@ const DisturbanceDetail = () => {
                   size="sm"
                   className="gap-1 h-10"
                   title={disturbance.is_verrechnet
-                    ? "Der Bericht ist als verrechnet markiert — du kannst ihn trotzdem in eine Rechnung übernehmen."
+                    ? "Der Bericht ist bereits abgehakt — du kannst ihn trotzdem in eine Rechnung übernehmen."
                     : "Aus diesem Bericht eine Rechnung erstellen"}
                   onClick={() => navigate(`/invoices/new?typ=rechnung&disturbance_id=${disturbance.id}`)}
                 >
@@ -583,7 +599,9 @@ const DisturbanceDetail = () => {
                   className="h-10"
                   onClick={handleToggleVerrechnet}
                 >
-                  {disturbance.is_verrechnet ? "✓ Verrechnet" : "Als verrechnet markieren"}
+                  {disturbance.is_verrechnet
+                    ? (verrechnetBeleg ? "✓ Verrechnet" : "✓ Abgegolten")
+                    : "Nicht verrechnen (abgegolten)"}
                 </Button>
               </div>
             )}
@@ -595,9 +613,10 @@ const DisturbanceDetail = () => {
               <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
-                  <b>Als verrechnet markiert, aber keiner Rechnung zugeordnet.</b> Entweder wurde der
-                  Haken von Hand gesetzt oder die zugehörige Rechnung wurde gelöscht. Du kannst den
-                  Bericht trotzdem in eine Rechnung übernehmen oder den Haken oben wieder entfernen.
+                  <b>Abgegolten — für diesen Bericht wurde keine Rechnung gestellt.</b> Die Stunden
+                  gelten damit als erledigt (z. B. in einer Pauschale enthalten). Soll doch eine
+                  Rechnung daraus werden: einfach „Rechnung erstellen" drücken. Mit dem Knopf
+                  „✓ Abgegolten" machst du die Markierung wieder rückgängig.
                 </span>
               </div>
             )}
