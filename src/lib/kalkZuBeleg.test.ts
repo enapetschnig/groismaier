@@ -28,17 +28,17 @@ describe("Kalkulation → Beleg: Infoposition überlebt jeden Weg", () => {
   it("die Kalkulation kennzeichnet den optionalen Aufbau", () => {
     const info = items.find((i) => i.ist_gruppensumme && i.ist_info);
     expect(info).toBeDefined();
-    expect(info!.beschreibung).toContain("INFOPOSITION:");
+    expect(info!.beschreibung).toContain("OPTIONAL:");
     expect(info!.gesamtpreis).toBeGreaterThan(0);
   });
 
   it("Weg 1 und Weg 2 erzeugen dieselbe Zeile — inklusive ist_info", () => {
     const zeilen = items.map((n, i) => belegzeileAusKalk(n as KalkZeile, i + 1));
-    const info = zeilen.find((z) => z.beschreibung.includes("INFOPOSITION:"))!;
+    const info = zeilen.find((z) => z.beschreibung.includes("OPTIONAL:"))!;
     expect(info.ist_info).toBe(true);
     // Neu-Übernehmen mit erhaltener Sichtbarkeits-Vorgabe: ist_info bleibt.
     const nochmal = items.map((n, i) => belegzeileAusKalk(n as KalkZeile, i + 1, { auf_pdf: true }));
-    const infoNochmal = nochmal.find((z) => z.beschreibung.includes("INFOPOSITION:"))!;
+    const infoNochmal = nochmal.find((z) => z.beschreibung.includes("OPTIONAL:"))!;
     expect(infoNochmal.ist_info).toBe(true);
     // Alle Kennzeichen gleich, nur die Sichtbarkeit darf abweichen.
     for (const [a, b] of zeilen.map((z, i) => [z, nochmal[i]] as const)) {
@@ -76,9 +76,12 @@ describe("Kalkulation → Beleg: Infoposition überlebt jeden Weg", () => {
     expect(belegzeileAusKalk(info, 1).ist_info).toBe(true);
   });
 
-  it("Altbestand wird erkannt: INFOPOSITION im Text, aber Kennzeichen fehlt", () => {
+  it("Fehlendes Kennzeichen wird erkannt - beim neuen UND beim alten Vorspann", () => {
+    expect(istInfoTextOhneKennzeichen({ beschreibung: "OPTIONAL: Flachdach", ist_info: false })).toBe(true);
+    expect(istInfoTextOhneKennzeichen({ beschreibung: "OPTIONAL: Flachdach", ist_info: true })).toBe(false);
+    // Belege von vor dem 09.09.2026 tragen noch den alten Vorspann.
     expect(istInfoTextOhneKennzeichen({ beschreibung: "INFOPOSITION: Flachdach", ist_info: false })).toBe(true);
-    expect(istInfoTextOhneKennzeichen({ beschreibung: "INFOPOSITION: Flachdach", ist_info: true })).toBe(false);
+    expect(istInfoTextOhneKennzeichen({ beschreibung: "infoposition: klein geschrieben", ist_info: false })).toBe(true);
     expect(istInfoTextOhneKennzeichen({ beschreibung: "Flachdach", ist_info: false })).toBe(false);
     expect(istInfoTextOhneKennzeichen({ beschreibung: null })).toBe(false);
   });

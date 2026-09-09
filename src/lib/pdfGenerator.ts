@@ -616,6 +616,12 @@ export async function generateInvoicePdf(
   const bereichsTitelRows = new Set<number>();
   /** Bereichs-Zwischensummen (Sammelangebot, Kundenwunsch 24.08.2026). */
   const zwischenRows = new Set<number>();
+  /**
+   * Optionale Positionen („OPTIONAL: …"). Sie tragen keinen Betrag in der
+   * Summenspalte — ohne optische Absetzung sah das nach einer Lücke aus
+   * (Kundenfrage 09.09.2026: „sind die auch optisch klar ersichtlich?").
+   */
+  const optionalRows = new Set<number>();
   /** Projektbereich je Body-Zeile (null = keiner) — steuert Zwischensummen
    *  und den Seitenumbruch je Bereich. */
   const bereichVonRow: (string | null)[] = [];
@@ -657,6 +663,7 @@ export async function generateInvoicePdf(
     }
     if (e.detail) detailRows.add(rowIdx);
     if (e.summenzeile) summenRows.add(rowIdx);
+    if ((item as any).ist_info) optionalRows.add(rowIdx);
     if (istTextzeile(item)) {
       textRows.add(rowIdx);
       const txt = String(item.beschreibung || "").trim();
@@ -997,6 +1004,11 @@ export async function generateInvoicePdf(
           if (data.column.index === COL_BESCHREIBUNG) {
             data.cell.styles.cellPadding = { top: CELL_PAD_TOP, bottom: CELL_PAD_BOTTOM, left: 2 + INDENT_MM, right: 2 };
           }
+        }
+        if (optionalRows.has(ri)) {
+          // Optionale Position: heller Grund über die ganze Zeile — der leere
+          // Betrag rechts ist dann sichtbar Absicht, keine vergessene Zahl.
+          data.cell.styles.fillColor = [246, 243, 232];
         }
       }
       // minCellHeight für die komplette Row setzen, wenn Langtext

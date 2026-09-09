@@ -71,10 +71,10 @@ describe("Aufbau-Gruppen", () => {
   });
 });
 
-describe("INFOPOSITION (Kundenwunsch 28.08.2026)", () => {
+describe("Optionale Position, fuehrt keinen Betrag in die Summe (28.08.2026)", () => {
   it("zählt nicht in die Belegsumme, obwohl sie einen Betrag trägt", () => {
     const info = pos({
-      beschreibung: "INFOPOSITION: Carport", gruppe: "INFOPOSITION: Carport",
+      beschreibung: "OPTIONAL: Carport", gruppe: "OPTIONAL: Carport",
       ist_gruppensumme: true, ist_info: true, menge: 1, einzelpreis: 5000, gesamtpreis: 5000,
     });
     expect(zeilenBetrag(info)).toBe(0);

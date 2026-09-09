@@ -1222,6 +1222,13 @@ const kurzZahl = (n: number): string => fmt(n).replace(/,00$/, "").replace(/(,\d
  */
 export const NEBENKOSTEN_TEXT = "Transport, Kran & sonstige Nebenkosten (lt. Kalkulation)";
 
+/**
+ * Vorspann eines optionalen Aufbaus im Angebot. Hieß bis 09.09.2026
+ * „INFOPOSITION:" — der Kunde soll aber ohne Fachwort verstehen, dass die
+ * Position nicht in der Summe steckt; im Schlusstext steht derselbe Begriff.
+ */
+export const OPTIONAL_PRAEFIX = "OPTIONAL:";
+
 export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotItem[]; projektGesamt: number } {
   // Je Aufbau ein eigener Zeilenblock — erst am Ende werden die Blöcke nach
   // Kapiteln geordnet (Kundenwunsch 06.09.2026), siehe ordneNachKapiteln().
@@ -1237,9 +1244,11 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
     const items: AngebotItem[] = [];
     bloecke.push({ kapitel: (m.kapitel || "").trim(), items });
     // Optionale Aufbauten (Kundenwunsch 28.08.2026): Im Angebot steht vorne
-    // "INFOPOSITION", und die Sammelzeile zählt NICHT in die Belegsumme
+    // "OPTIONAL" (bis 09.09.2026 "INFOPOSITION" — der Kunde soll auf einen
+    // Blick verstehen, was gemeint ist; so steht es auch im Schlusstext),
+    // und die Sammelzeile zählt NICHT in die Belegsumme
     // (ist_info — der Betrag bleibt an der Zeile sichtbar).
-    const name = (m.isOptional ? "INFOPOSITION: " : "") + (m.name || `Aufbau ${i + 1}`);
+    const name = (m.isOptional ? `${OPTIONAL_PRAEFIX} ` : "") + (m.name || `Aufbau ${i + 1}`);
     // Zwei gleichnamige Aufbauten dürfen nicht in EINER Gruppe landen (dort
     // gäbe es sonst zwei Sammelzeilen). Der Gruppenname wird eindeutig gemacht.
     let gruppe = name;

@@ -107,8 +107,12 @@ export function belegzeileAusKalk(
   };
 }
 
-/** Präfix, das buildAngebotItems einer Infoposition voranstellt. */
-export const INFO_PRAEFIX = "INFOPOSITION:";
+/**
+ * Präfix, das buildAngebotItems einer optionalen Position voranstellt.
+ * Das alte „INFOPOSITION:" wird weiter erkannt (Belege von vor dem 09.09.2026).
+ */
+export const OPTIONAL_PRAEFIX = "OPTIONAL:";
+export const OPTIONAL_PRAEFIXE = [OPTIONAL_PRAEFIX, "INFOPOSITION:"] as const;
 
 /**
  * Stammt die Belegzeile aus der Kalkulation? Beim „Positionen neu übernehmen"
@@ -138,7 +142,7 @@ export function istKalkulationsZeile(
 export const BEREICH_PRAEFIX = "Bereich: ";
 
 /**
- * Zeile trägt den Infopositions-Text, ist aber nicht als solche gekennzeichnet
+ * Zeile trägt den Optional-Text, ist aber nicht als solche gekennzeichnet
  * — Altbestand aus der Zeit vor dem Fix. Der Beleg weist darauf hin, statt
  * still die Summe zu ändern: ein ausgestelltes Angebot darf seinen Preis nicht
  * von selbst wechseln.
@@ -146,4 +150,5 @@ export const BEREICH_PRAEFIX = "Bereich: ";
 export const istInfoTextOhneKennzeichen = (
   it: { beschreibung?: string | null; ist_info?: boolean | null },
 ): boolean =>
-  !it?.ist_info && String(it?.beschreibung || "").trim().toUpperCase().startsWith(INFO_PRAEFIX);
+  !it?.ist_info
+  && OPTIONAL_PRAEFIXE.some((p) => String(it?.beschreibung || "").trim().toUpperCase().startsWith(p));

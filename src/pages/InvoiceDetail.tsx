@@ -7249,7 +7249,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                     </Button>
                   )}
                   {/* Altbestand (Kundenmeldung 08.09.2026): Zeile heißt
-                      „INFOPOSITION: …", ist aber nicht gekennzeichnet — ihr
+                      „OPTIONAL: …", ist aber nicht gekennzeichnet — ihr
                       Betrag steckt in der Summe. Der Beleg weist darauf hin,
                       statt still den Preis zu ändern. */}
                   {(() => {
@@ -7260,7 +7260,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                       <div data-testid="info-nachtragen" className="mb-2 flex w-full flex-wrap items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm">
                         <AlertTriangle className="h-4 w-4 shrink-0 text-amber-700" />
                         <span className="min-w-0 flex-1 text-amber-900">
-                          <b>{offen.length} Infoposition{offen.length === 1 ? "" : "en"}</b> {offen.length === 1 ? "ist" : "sind"} nicht gekennzeichnet —{" "}
+                          <b>{offen.length} optionale Position{offen.length === 1 ? "" : "en"}</b> {offen.length === 1 ? "ist" : "sind"} nicht gekennzeichnet —{" "}
                           {eur(betrag)} zählen derzeit in die Belegsumme.
                         </span>
                         <Button size="sm" variant="outline" className="h-9 border-amber-400 bg-white"
@@ -7608,9 +7608,9 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                         className={`h-11 w-11 md:h-8 md:w-8 ${istInfo ? "text-amber-600" : "text-muted-foreground/50"}`}
                         disabled={isLocked}
                         title={istInfo
-                          ? "Infoposition — Betrag steht am Beleg, zählt NICHT zur Summe. Klicken, um sie normal mitzurechnen."
-                          : "Als Infoposition kennzeichnen — der Betrag zählt dann nicht zur Belegsumme, und rechts bleibt die Summenspalte leer."}
-                        aria-label="Infoposition"
+                          ? "Optionale Position — Betrag steht am Beleg, zählt NICHT zur Summe. Klicken, um sie normal mitzurechnen."
+                          : "Als optionale Position kennzeichnen — der Betrag zählt dann nicht zur Belegsumme, und rechts bleibt die Summenspalte leer."}
+                        aria-label="Optionale Position"
                         aria-pressed={istInfo}
                         onClick={() => toggleInfoposition(idx)}
                       >
@@ -7705,7 +7705,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                           )}
                           {!!r.item.ist_info && (
                             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 border-amber-400 text-amber-700 bg-white" title="Der Betrag steht am Beleg, zählt aber nicht zur Belegsumme">
-                              INFOPOSITION — zählt nicht zur Summe
+                              OPTIONAL — zählt nicht zur Summe
                             </Badge>
                           )}
                           {r.istDetail && (
@@ -7902,7 +7902,7 @@ Beleg: /invoices/${invoiceId || id || ""}`,
                         )}
                         {!!r.item.ist_info && (
                           <span className="mb-1 ml-1 inline-block text-[10px] font-semibold uppercase tracking-wide text-amber-700" title="Der Betrag steht am Beleg, zählt aber nicht zur Belegsumme">
-                            Infoposition — zählt nicht zur Summe
+                            OPTIONAL — zählt nicht zur Summe
                           </span>
                         )}
                         {r.istDetail && (
