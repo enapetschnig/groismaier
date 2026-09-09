@@ -201,6 +201,71 @@ Antworte als JSON: {"zuordnungen":[{"adresse":"...","kunde_nummer":"...","sicher
   return { geprueft: liste.length, gelernt };
 }
 
+/**
+ * Mail MIT GROSSEN ANHÄNGEN verschicken (über ~3 MB).
+ *
+ * Graph nimmt beim direkten `sendMail` nur kleine Anhänge im JSON entgegen.
+ * Der offizielle Weg für größere: Entwurf anlegen, jeden Anhang über eine
+ * Upload-Session in Blöcken hochladen, dann den Entwurf senden. Damit gehen
+ * die Regieberichte einer Sammelrechnung durch (25 Stück ≈ 6 MB).
+ */
+async function sendeMitGrossenAnhaengen(
+  mb: string,
+  nachricht: Record<string, unknown>,
+  anhaenge: { name: string; contentType: string; contentBytes: string }[],
+): Promise<Response> {
+  // 1) Entwurf anlegen
+  const entwurfRes = await graph(`/users/${mb}/messages`, {
+    method: "POST",
+    body: JSON.stringify(nachricht),
+  });
+  if (!entwurfRes.ok) return entwurfRes;
+  const entwurf = await entwurfRes.json();
+  const msgId = String(entwurf?.id || "");
+  if (!msgId) return new Response(JSON.stringify({ error: "Entwurf ohne Id" }), { status: 502 });
+
+  // 2) Anhänge hochladen — Blöcke als Vielfaches von 320 KiB (Graph-Vorgabe).
+  const BLOCK = 3 * 320 * 1024 * 4; // 3,75 MiB
+  for (const a of anhaenge) {
+    const roh = atob(a.contentBytes);
+    const bytes = new Uint8Array(roh.length);
+    for (let i = 0; i < roh.length; i++) bytes[i] = roh.charCodeAt(i);
+
+    const sessionRes = await graph(`/users/${mb}/messages/${encodeURIComponent(msgId)}/attachments/createUploadSession`, {
+      method: "POST",
+      body: JSON.stringify({
+        AttachmentItem: { attachmentType: "file", name: a.name, size: bytes.length, contentType: a.contentType },
+      }),
+    });
+    if (!sessionRes.ok) {
+      await graph(`/users/${mb}/messages/${encodeURIComponent(msgId)}`, { method: "DELETE" }).catch(() => {});
+      return sessionRes;
+    }
+    const uploadUrl = String((await sessionRes.json())?.uploadUrl || "");
+    if (!uploadUrl) return new Response(JSON.stringify({ error: "Upload-Session ohne URL" }), { status: 502 });
+
+    for (let von = 0; von < bytes.length; von += BLOCK) {
+      const bis = Math.min(von + BLOCK, bytes.length);
+      // Die Upload-URL ist vorsigniert — hier KEIN Authorization-Header.
+      const put = await fetch(uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Length": String(bis - von),
+          "Content-Range": `bytes ${von}-${bis - 1}/${bytes.length}`,
+        },
+        body: bytes.slice(von, bis),
+      });
+      if (!put.ok && put.status !== 201 && put.status !== 200) {
+        await graph(`/users/${mb}/messages/${encodeURIComponent(msgId)}`, { method: "DELETE" }).catch(() => {});
+        return put;
+      }
+    }
+  }
+
+  // 3) Entwurf senden — landet danach in „Gesendete Elemente".
+  return await graph(`/users/${mb}/messages/${encodeURIComponent(msgId)}/send`, { method: "POST" });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const antwort = (body: unknown, status = 200) =>
@@ -346,19 +411,28 @@ Deno.serve(async (req) => {
       } else {
         const toRecipients = empf(an);
         if (toRecipients.length === 0) return antwort({ error: "Empfänger fehlt" }, 400);
-        r = await graph(`/users/${mb}/sendMail`, {
-          method: "POST",
-          body: JSON.stringify({
-            message: {
-              subject: String(betreff || "").trim() || "(kein Betreff)",
-              body: { contentType: "HTML", content: html },
-              toRecipients,
-              ccRecipients: empf(cc),
-              ...(graphAnhaenge.length > 0 ? { attachments: graphAnhaenge } : {}),
-            },
-            saveToSentItems: true,
-          }),
-        });
+        const nachricht = {
+          subject: String(betreff || "").trim() || "(kein Betreff)",
+          body: { contentType: "HTML", content: html },
+          toRecipients,
+          ccRecipients: empf(cc),
+        };
+        // Graph nimmt beim direkten sendMail nur rund 3 MB Anhänge an. Größere
+        // (25 Regieberichte in einem PDF!) müssen über eine Upload-Session an
+        // einen Entwurf — Kundenmeldung 09.09.2026: „Rechnungsversand hat nicht
+        // geklappt, sind das die vielen Regieberichte als Anhang?"
+        const gesamtBytes = graphAnhaenge.reduce((n, a) => n + Math.floor(a.contentBytes.length * 0.75), 0);
+        if (gesamtBytes > 3 * 1024 * 1024) {
+          r = await sendeMitGrossenAnhaengen(mb, nachricht, graphAnhaenge);
+        } else {
+          r = await graph(`/users/${mb}/sendMail`, {
+            method: "POST",
+            body: JSON.stringify({
+              message: { ...nachricht, ...(graphAnhaenge.length > 0 ? { attachments: graphAnhaenge } : {}) },
+              saveToSentItems: true,
+            }),
+          });
+        }
       }
       if (!r.ok && r.status !== 202) {
         return antwort({ error: `Senden fehlgeschlagen (Graph ${r.status}): ${(await r.text()).slice(0, 200)}` }, 502);

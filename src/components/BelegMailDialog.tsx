@@ -18,6 +18,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { AlertTriangle, FileCode2, Loader2, Paperclip, Send } from "lucide-react";
 
+/**
+ * Obergrenze für alle Anhänge zusammen.
+ *
+ * Größere Anhänge lädt die Mail-Funktion seit 09.09.2026 über eine
+ * Graph-Upload-Session hoch (sonst wären bei ~3 MB Schluss). Die Grenze hier
+ * ist die des Postfachs: Exchange nimmt üblicherweise 25–35 MB je Nachricht,
+ * und beim Empfänger scheitert es oft schon früher. 20 MB sind eine Größe,
+ * die zuverlässig ankommt.
+ */
+const MAX_ANHANG_BYTES = 20 * 1024 * 1024;
+
 /** Absender-Postfächer (identisch zur Allowlist der Edge Function). */
 const POSTFAECHER = [
   { adresse: "office@cg-holzbau.at", kurz: "Office" },
@@ -173,6 +184,26 @@ export function BelegMailDialog({
       }
 
       if (anhaenge.length === 0) throw new Error("Kein Anhang gewählt");
+
+      /**
+       * Größenwächter (Kundenmeldung 09.09.2026: „Rechnungsversand hat nicht
+       * geklappt, da ist eine Fehlermeldung gekommen — sind das die vielen
+       * Regieberichte?"). Genau das war es: 25 Berichte ergaben 120 MB.
+       * Der Postfach-Weg (Microsoft Graph) nimmt rund 4 MB je Nachricht.
+       * Statt eines technischen Fehlers sagen wir klar, was zu tun ist.
+       */
+      const groesse = anhaenge.reduce((s, a) => s + a.inhaltBase64.length * 0.75, 0);
+      const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} MB`;
+      if (groesse > MAX_ANHANG_BYTES) {
+        const groesster = [...anhaenge].sort((a, b) => b.inhaltBase64.length - a.inhaltBase64.length)[0];
+        throw new Error(
+          `Die Anhänge sind mit ${mb(groesse)} zu groß für eine E-Mail (üblich sind höchstens ${mb(MAX_ANHANG_BYTES)}). `
+          + `Der größte ist „${groesster.name}" mit ${mb(groesster.inhaltBase64.length * 0.75)}. `
+          + (regieMitschicken && (regieberichtIds?.length || 0) > 1
+            ? "Schick die Rechnung ohne die Regieberichte und die Berichte getrennt nach — in der Regieberichte-Liste wählst du sie aus und öffnest sie als PDF."
+            : "Bitte einen kleineren Anhang wählen."),
+        );
+      }
 
       const { data, error } = await supabase.functions.invoke("mail-postfach", {
         body: {

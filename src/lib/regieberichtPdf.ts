@@ -12,6 +12,7 @@
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
 import { supabase } from "@/integrations/supabase/client";
+import { bildFuerPdf } from "./bildFuerPdf";
 import { parseDecimal } from "@/lib/num";
 
 export type Disturbance = {
@@ -267,11 +268,14 @@ async function baueRegieberichtPdf(d: Disturbance, workers: Worker[], inDoc?: an
           }
         } catch { dataUrl = null; }
         if (!dataUrl) continue;
+        // Auf Druckgröße rechnen, BEVOR das Foto ins PDF geht. Ohne das lagen
+        // Handy-Fotos in voller Auflösung im Dokument: 25 Berichte ergaben ein
+        // 120-MB-PDF, das keine Mail mehr annahm (Kundenmeldung 09.09.2026).
+        const aufbereitet = await bildFuerPdf(dataUrl);
         if (spalte === 0 && y + bildHoehe > pageHeight - 30) { pdf.addPage(); y = LETTERHEAD_MARGIN.top; }
         const x = ml + spalte * (bildBreite + 6);
         try {
-          const typ = /^data:image\/png/i.test(dataUrl) ? "PNG" : "JPEG";
-          pdf.addImage(dataUrl, typ, x, y, bildBreite, bildHoehe, undefined, "MEDIUM");
+          pdf.addImage(aufbereitet.dataUrl, aufbereitet.typ, x, y, bildBreite, bildHoehe, undefined, "MEDIUM");
         } catch { /* Format nicht einbettbar — überspringen */ }
         spalte += 1;
         if (spalte === 2) { spalte = 0; y += bildHoehe + 5; }
