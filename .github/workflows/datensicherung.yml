@@ -55,6 +55,10 @@ jobs:
   sichern:
     runs-on: ubuntu-latest
     steps:
+      # Wird fuer den Paketbau gebraucht (Skripte und Anleitungen). Fuer den
+      # reinen Datenbank-Dump waere es nicht noetig.
+      - uses: actions/checkout@v4
+
       - name: Zugangsdaten vorhanden?
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
