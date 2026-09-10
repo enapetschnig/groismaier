@@ -89,7 +89,18 @@ fi
 # einzigen Kunden.
 echo "→ Datensicherung"
 SICHERUNG_DA=nein
-if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
+
+# Im GitHub-Workflow liegt die Sicherung schon fertig vor und wird ueber
+# SICHERUNG_ORDNER hereingereicht — dort gibt es kein "gh run download".
+if [ -n "${SICHERUNG_ORDNER:-}" ] && [ -d "${SICHERUNG_ORDNER}" ]; then
+  cp "${SICHERUNG_ORDNER}"/* "$ZIEL/03_Daten-Sicherung/" 2>/dev/null || true
+  if ls "$ZIEL/03_Daten-Sicherung"/*.sql > /dev/null 2>&1; then
+    echo "  ✓ Sicherung uebernommen (aus ${SICHERUNG_ORDNER})"
+    SICHERUNG_DA=ja
+  fi
+fi
+
+if [ "$SICHERUNG_DA" = "nein" ] && command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
   LAUF=$(gh run list --workflow="Datensicherung" --limit 5 \
            --json databaseId,conclusion \
            -q '[.[] | select(.conclusion=="success")][0].databaseId' 2>/dev/null || true)

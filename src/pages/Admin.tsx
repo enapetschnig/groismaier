@@ -30,6 +30,7 @@ import { NeuerungenPflege } from "@/components/neuerungen/NeuerungenPflege";
 import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings";
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
 import { RegieSaetzeEditor } from "@/components/admin/RegieSaetzeEditor";
+import { UebergabePaketKarte } from "@/components/admin/UebergabePaketKarte";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
 import { MahnungSettings } from "@/components/admin/MahnungSettings";
 import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings";
@@ -1323,6 +1324,7 @@ export default function Admin() {
             <div id="mahnungen" className="scroll-mt-4">
               <MahnungSettings />
             </div>
+            <UebergabePaketKarte />
           </TabsContent>
 
           {/* ===== TAB 3: RECHNUNGS-LAYOUT ===== */}

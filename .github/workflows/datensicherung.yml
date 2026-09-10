@@ -235,6 +235,64 @@ jobs:
             psql "$DATENBANK_URL" -f 01_firmendaten.sql
           ANLEITUNG
 
+      # ────────────────────────────────────────────────────────────────────
+      # Das komplette Uebergabepaket bauen und in die App legen
+      #
+      # "perfekt waere wenn das backup zip direkt in der app waere, dass ich
+      #  gar nix per wetransfer schicken muss" (Kundenwunsch 10.09.2026)
+      #
+      # Der Chef laedt es im Admin-Bereich mit einem Klick herunter. Dadurch
+      # ist es nie veraltet, und es muss nichts verschickt werden.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Node einrichten
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Uebergabepaket bauen
+        env:
+          SICHERUNG_ORDNER: ${{ github.workspace }}/sicherung
+        run: |
+          set -euo pipefail
+          # Ohne Historie: Sie macht 85 der 105 MB aus, und wer sie braucht,
+          # kommt ohnehin an das Repository heran.
+          MIT_HISTORIE=nein ./skripte/uebergabe-paket.sh /tmp/Groismaier-App < /dev/null
+          ls -lh /tmp/Groismaier-App.zip
+
+      - name: Paket in die App hochladen
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: tdehljzmqwmfgfoyyoee
+        run: |
+          set -euo pipefail
+
+          # Den Service-Role-Key zur Laufzeit ueber die Management-API holen,
+          # statt ihn als weiteres Secret zu hinterlegen: ein Schluessel
+          # weniger, der irgendwo herumliegt und veralten kann.
+          KEYS=$(curl -sS "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys" \
+                   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}")
+          SERVICE_KEY=$(echo "$KEYS" | jq -r '.[] | select(.name=="service_role") | .api_key')
+          if [ -z "$SERVICE_KEY" ] || [ "$SERVICE_KEY" = "null" ]; then
+            echo "::warning::Service-Role-Key nicht abrufbar — das Paket bleibt als Artefakt verfuegbar, landet aber nicht in der App."
+            exit 0
+          fi
+
+          # x-upsert: es soll immer nur EINE aktuelle Fassung geben, sonst
+          # waechst die Ablage jeden Monat um 20 MB.
+          HTTP=$(curl -sS -o /tmp/upload.json -w "%{http_code}" \
+            -X POST "https://${PROJECT_REF}.supabase.co/storage/v1/object/uebergabe/Groismaier-App.zip" \
+            -H "Authorization: Bearer ${SERVICE_KEY}" \
+            -H "Content-Type: application/zip" \
+            -H "x-upsert: true" \
+            --data-binary @/tmp/Groismaier-App.zip)
+
+          if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then
+            echo "✓ Paket liegt in der App bereit ($(du -h /tmp/Groismaier-App.zip | cut -f1))."
+          else
+            echo "HTTP ${HTTP}"; cat /tmp/upload.json
+            echo "::warning::Hochladen fehlgeschlagen — das Paket bleibt als Artefakt verfuegbar."
+          fi
+
       - name: Ablegen
         uses: actions/upload-artifact@v5
         with:
