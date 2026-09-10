@@ -238,8 +238,11 @@ export default function KalkulationHub() {
     const map = new Map<string, { key: string; titel: string; rows: KalkRow[]; summe: number; letzte: string }>();
     for (const r of kalkulationen) {
       // Kunde gewinnt; sonst benennt das freie Bauvorhaben-Feld den Ordner
-      // (Kundenwunsch 31.08.2026: Kunde wird erst nach Auftrag angelegt).
-      const frei = (r.bauvorhaben || "").trim();
+      // (Kundenwunsch 31.08.2026: Kunde wird erst nach Auftrag angelegt) —
+      // und fehlt auch das, der Name der Kalkulation. So bleibt „Ohne Kunde"
+      // nur noch für wirklich namenlose Einträge übrig (Kundenfrage 10.09.2026:
+      // „Kormann, Rosenburg" stand unter „Ohne Kunde").
+      const frei = (r.bauvorhaben || "").trim() || (r.name || "").trim();
       const key = r.customer_id || (frei ? `bv:${frei.toLowerCase()}` : OHNE_KUNDE);
       const titel = r.customers?.name || frei || "Ohne Kunde";
       const e = map.get(key) || { key, titel, rows: [], summe: 0, letzte: r.updated_at };
@@ -256,7 +259,7 @@ export default function KalkulationHub() {
   /** Vollständige Zeile (inkl. data-Blob) für Kopier-Aktionen laden. */
   const fetchFull = async (id: string): Promise<any | null> => {
     const { data, error } = await kalkTable()
-      .select("id, name, customer_id, project_id, data, summe")
+      .select("id, name, customer_id, project_id, bauvorhaben, data, summe")
       .eq("id", id)
       .single();
     if (error || !data) {
@@ -295,9 +298,13 @@ export default function KalkulationHub() {
     }
     // ist_vorlage wird nicht mitgeschickt: DB-Default false (funktioniert so
     // auch, bevor die Migration 20260716090200 eingespielt ist).
+    // Ohne Kunde heißt der Ordner wie das freie Bauvorhaben-Feld — und ist
+    // das leer, wie die Kalkulation selbst. Christian tippt den Kunden fast
+    // immer in die Bezeichnung („Kormann, Rosenburg") und landete damit unter
+    // „Ohne Kunde" (Kundenfrage 10.09.2026).
     const id = await insertCopy({
       name: name.trim(), customer_id: customerId,
-      bauvorhaben: customerId ? null : (neuBauvorhaben.trim() || null), data, summe,
+      bauvorhaben: customerId ? null : (neuBauvorhaben.trim() || name.trim()), data, summe,
     });
     setCreating(false);
     if (!id) return;
@@ -313,6 +320,9 @@ export default function KalkulationHub() {
       name: `${src.name} (Kopie)`,
       customer_id: src.customer_id,
       project_id: src.project_id,
+      // Sonst rutscht die Kopie einer Kalkulation ohne Kunden nach „Ohne Kunde",
+      // obwohl das Original einen Ordner hat.
+      bauvorhaben: src.bauvorhaben ?? null,
       data: src.data,
       summe: src.summe,
     });
@@ -358,6 +368,8 @@ export default function KalkulationHub() {
     const id = await insertCopy({
       name: fromVorlageName.trim(),
       customer_id: fromVorlageCustomerId,
+      // Gleiche Regel wie beim Anlegen: ohne Kunde heißt der Ordner wie die Kalkulation.
+      bauvorhaben: fromVorlageCustomerId ? null : fromVorlageName.trim(),
       data: src.data,
       summe: src.summe,
       ist_vorlage: false,
@@ -816,22 +828,29 @@ export default function KalkulationHub() {
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Kunde (optional)</Label>
+              <Label>Kunde (nur wenn schon angelegt)</Label>
               <CustomerSelect value={customerId} onChange={(id) => setCustomerId(id)} />
+              <p className="text-xs text-muted-foreground">
+                Gibt es den Kunden noch nicht, lass das Feld leer — die Kalkulation
+                bekommt dann einen Ordner mit ihrer Bezeichnung.
+              </p>
             </div>
             {/* Kunde kommt oft erst nach Auftragserteilung in die Datenbank
-                (Kundenwunsch 31.08.2026) — freier Ordnername als Ersatz. */}
+                (Kundenwunsch 31.08.2026) — freier Ordnername als Ersatz. Seit
+                10.09.2026 nur noch nötig, wenn der Ordner anders heißen soll
+                als die Kalkulation (z. B. mehrere Kalkulationen je Bauvorhaben). */}
             {!customerId && (
               <div className="space-y-1.5">
-                <Label>Bauvorhaben (falls Kunde noch nicht angelegt)</Label>
+                <Label>Ordnername (optional)</Label>
                 <Input
                   value={neuBauvorhaben}
                   onChange={(e) => setNeuBauvorhaben(e.target.value)}
-                  placeholder="z. B. BV Müller – Neubau"
+                  placeholder={name.trim() ? `Leer = „${name.trim()}"` : "Leer = wie die Bezeichnung"}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Benennt den Ordner in der Übersicht. Später über „Bauvorhaben
-                  ändern" durch den echten Kunden ersetzbar.
+                  Nur ausfüllen, wenn mehrere Kalkulationen in einen gemeinsamen
+                  Ordner sollen. Später jederzeit über „Bauvorhaben ändern" durch
+                  den echten Kunden ersetzbar.
                 </p>
               </div>
             )}

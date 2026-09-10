@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, MessageSquare, Send, Users } from "lucide-react";
+import { ArrowLeft, Shield, User as UserIcon, UserPlus, Mail, Phone, MapPin, Shirt, FileText, Clock, Trash2, Settings, Save, MessageSquare, Send, Users, Receipt } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
@@ -1356,6 +1356,11 @@ export default function Admin() {
                 Konfiguration herum. */}
             <ConfigOptionsManager kategorie="taetigkeit" title="Tätigkeiten (Zeiterfassung)" description="Auswahlliste für das Tätigkeits-Feld bei Stundenbuchungen" icon={<Clock className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="kostenstelle" title="Kostenstellen (Zeiterfassung)" description="Auf welche Kostenstelle Stunden gebucht werden (Baustelle, Werkstatt, Lagerplatz …)" icon={<Clock className="h-5 w-5" />} />
+            {/* Kundenwunsch 10.09.2026: „Kategorien selbst anlegen bzw ändern".
+                Die Liste wurde von den Eingangsrechnungen (Filter, Hochladen,
+                Bearbeiten) schon immer aus admin_config_options gelesen — nur
+                die Pflegemaske dafür fehlte. */}
+            <ConfigOptionsManager kategorie="eingangsrechnung_kategorie" title="Kategorien (Eingangsrechnungen)" description="Wonach Eingangsrechnungen und Belege eingeordnet werden (Material, Werkzeug, Treibstoff …)" icon={<Receipt className="h-5 w-5" />} />
             <ConfigOptionsManager kategorie="kunde_herkunft" title="Kunde — Herkunft" description="Über welche Quelle ist der Kunde zu uns gekommen (Empfehlung, Google, Messe …)" icon={<UserPlus className="h-5 w-5" />} />
 
             {/* Der frühere VehicleManager stand hier als ZWEITE, abgespeckte
