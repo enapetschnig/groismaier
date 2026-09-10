@@ -95,6 +95,12 @@ Wird monatlich automatisch gesichert. Herunterladen:
 
 Von Hand anstossen geht dort ebenfalls (**Run workflow**).
 
+> **Wichtig:** Diese Sicherungen werden nach **90 Tagen automatisch
+> geloescht**. Das ist ein Sicherheitsnetz fuer den Alltag, kein Archiv.
+> Wer eine Sicherung dauerhaft behalten will — zum Jahresabschluss, vor
+> einer Uebergabe, vor einer groesseren Aenderung — laedt sie herunter und
+> legt sie hier in diesen Ordner.
+
 ## 2. Die hinterlegten Dateien
 
 Fotos, Beleg-PDFs, Dokumente — rund 950 MB. Nicht automatisch, weil zu gross.

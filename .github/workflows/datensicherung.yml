@@ -117,16 +117,22 @@ jobs:
           echo "✓ $(du -h "sicherung/01_firmendaten_${DATUM}.sql" | cut -f1)"
 
           echo "── Benutzer (Schema auth) ──"
-          "$PGDUMP" "$DB_URL" \
-            --schema=auth --no-owner --no-privileges --quote-all-identifiers \
-            -f "sicherung/02_benutzer_${DATUM}.sql" \
-            || echo "::warning::auth-Schema nicht sicherbar (fehlende Rechte) — Benutzer muessen im Notfall neu angelegt werden."
+          if "$PGDUMP" "$DB_URL" \
+               --schema=auth --no-owner --no-privileges --quote-all-identifiers \
+               -f "sicherung/02_benutzer_${DATUM}.sql"; then
+            echo "✓ $(du -h "sicherung/02_benutzer_${DATUM}.sql" | cut -f1)"
+          else
+            echo "::warning::auth-Schema nicht sicherbar (fehlende Rechte) — Benutzer muessten im Notfall neu angelegt werden."
+          fi
 
           echo "── Dateiverzeichnis (Schema storage) ──"
-          "$PGDUMP" "$DB_URL" \
-            --schema=storage --no-owner --no-privileges --quote-all-identifiers \
-            -f "sicherung/03_dateiverzeichnis_${DATUM}.sql" \
-            || echo "::warning::storage-Schema nicht sicherbar — nur die Metadaten fehlen, die Dateien selbst liegen ohnehin separat."
+          if "$PGDUMP" "$DB_URL" \
+               --schema=storage --no-owner --no-privileges --quote-all-identifiers \
+               -f "sicherung/03_dateiverzeichnis_${DATUM}.sql"; then
+            echo "✓ $(du -h "sicherung/03_dateiverzeichnis_${DATUM}.sql" | cut -f1)"
+          else
+            echo "::warning::storage-Schema nicht sicherbar — nur die Metadaten fehlen, die Dateien selbst liegen ohnehin separat."
+          fi
 
           # Ein Inhaltsverzeichnis, damit man Monate spaeter sieht, was drin ist,
           # ohne eine 30-MB-Datei oeffnen zu muessen.
@@ -163,11 +169,18 @@ jobs:
           echo "✓ Verschluesselt. Entschluesseln mit: gpg --decrypt <datei>.gpg > <datei>"
 
       - name: Ablegen
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: sicherung-${{ github.run_number }}
           path: sicherung/
-          retention-days: 400          # gut ein Jahr — Maximum bei privaten Repos
+          # 90 Tage ist das Maximum, das dieses Repository zulaesst — ein
+          # hoeherer Wert wird stillschweigend auf 90 gekappt. Die Grenze
+          # steht unter Settings → Actions → General → Artifact retention.
+          #
+          # Wichtig zu wissen: Nach 90 Tagen ist die Sicherung WEG. Wer sie
+          # laenger braucht (Jahresabschluss, Uebergabe), laedt sie herunter
+          # und legt sie in den Cloud-Ordner.
+          retention-days: 90
 
       - name: Zusammenfassung
         run: |
@@ -178,7 +191,7 @@ jobs:
             echo "|---|---|"
             ls -lh sicherung/ | tail -n +2 | awk '{print "| " $9 " | " $5 " |"}'
             echo
-            echo "Herunterladen: unten unter **Artifacts**. Aufbewahrt: 400 Tage."
+            echo "Herunterladen: unten unter **Artifacts**. Aufbewahrt: 90 Tage — danach geloescht."
             echo
             echo "> Nicht enthalten: Fotos und PDFs (~950 MB). Getrennt sichern mit \`node skripte/dateien-sichern.mjs\`."
           } >> "$GITHUB_STEP_SUMMARY"
