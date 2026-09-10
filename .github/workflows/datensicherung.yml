@@ -1,0 +1,162 @@
+# Monatliche Sicherung der Datenbank
+#
+# Warum hier und nicht auf einem Rechner: Ein Sicherungslauf, den jemand von
+# Hand starten muss, wird irgendwann vergessen. Hier läuft er von allein, an
+# einem festen Tag, und meldet sich, wenn er scheitert.
+#
+# Gesichert wird die DATENBANK (rund 32 MB) — Kunden, Belege, Positionen,
+# Stunden, Projekte, Benutzer. NICHT die hinterlegten Dateien (~950 MB Fotos
+# und PDFs): Die wären für den Artefakt-Speicher von GitHub zu gross und
+# aendern sich langsamer. Dafuer gibt es skripte/dateien-sichern.mjs.
+#
+# ── Was einmalig einzurichten ist ────────────────────────────────────────────
+#
+#   Repo → Settings → Secrets and variables → Actions → New repository secret
+#
+#   SUPABASE_DB_URL   (Pflicht)
+#     Die Verbindungszeichenfolge aus dem Supabase-Dashboard unter
+#     Project Settings → Database → Connection string → Session pooler.
+#     Wichtig: den SESSION-Pooler auf Port 5432 nehmen, nicht den
+#     Transaction-Pooler auf 6543 — pg_dump braucht eine echte Sitzung.
+#     Sonderzeichen im Passwort muessen prozentkodiert sein.
+#
+#   SICHERUNG_PASSWORT   (empfohlen)
+#     Wird es gesetzt, ist die Sicherung mit AES verschluesselt. Ohne dieses
+#     Secret liegt sie im Klartext im Artefakt — und darin stehen saemtliche
+#     Kunden- und Mitarbeiterdaten. Das Passwort gehoert in den Passwort-
+#     Tresor, NICHT in dieses Repository.
+#
+#     Entschluesseln spaeter:
+#       gpg --decrypt sicherung.sql.gpg > sicherung.sql
+#
+name: Datensicherung
+
+on:
+  schedule:
+    # 1. jedes Monats, 03:00 UTC (04:00 bzw. 05:00 österreichischer Zeit)
+    - cron: "0 3 1 * *"
+  workflow_dispatch:
+    inputs:
+      hinweis:
+        description: "Notiz zu dieser Sicherung (z. B. vor Übergabe)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  sichern:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Zugangsdaten vorhanden?
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "${DB_URL}" ]; then
+            echo "::error::Repository-Secret SUPABASE_DB_URL fehlt. Anlegen unter Settings → Secrets and variables → Actions (Session-Pooler-URL, Port 5432)."
+            exit 1
+          fi
+
+      # Supabase laeuft auf Postgres 17. Der auf dem Runner vorinstallierte
+      # Client ist aelter und bricht mit "server version mismatch" ab.
+      - name: pg_dump 17 installieren
+        run: |
+          set -euo pipefail
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -sS -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+          /usr/lib/postgresql/17/bin/pg_dump --version
+
+      - name: Datenbank sichern
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -euo pipefail
+          PGDUMP=/usr/lib/postgresql/17/bin/pg_dump
+          DATUM=$(date -u +%Y-%m-%d)
+          mkdir -p sicherung
+
+          # Drei getrennte Dumps statt einem grossen:
+          #  - public  → die eigentlichen Firmendaten (muss klappen)
+          #  - auth    → die Anmeldedaten der Mitarbeiter (Passwoerter bleiben gueltig)
+          #  - storage → Verzeichnis der hinterlegten Dateien (nicht die Dateien selbst)
+          # Getrennt, damit ein Rechteproblem bei auth/storage nicht die
+          # Firmendaten mitreisst.
+
+          echo "── Firmendaten (Schema public) ──"
+          "$PGDUMP" "$DB_URL" \
+            --schema=public --no-owner --no-privileges --quote-all-identifiers \
+            -f "sicherung/01_firmendaten_${DATUM}.sql"
+          echo "✓ $(du -h "sicherung/01_firmendaten_${DATUM}.sql" | cut -f1)"
+
+          echo "── Benutzer (Schema auth) ──"
+          "$PGDUMP" "$DB_URL" \
+            --schema=auth --no-owner --no-privileges --quote-all-identifiers \
+            -f "sicherung/02_benutzer_${DATUM}.sql" \
+            || echo "::warning::auth-Schema nicht sicherbar (fehlende Rechte) — Benutzer muessen im Notfall neu angelegt werden."
+
+          echo "── Dateiverzeichnis (Schema storage) ──"
+          "$PGDUMP" "$DB_URL" \
+            --schema=storage --no-owner --no-privileges --quote-all-identifiers \
+            -f "sicherung/03_dateiverzeichnis_${DATUM}.sql" \
+            || echo "::warning::storage-Schema nicht sicherbar — nur die Metadaten fehlen, die Dateien selbst liegen ohnehin separat."
+
+          # Ein Inhaltsverzeichnis, damit man Monate spaeter sieht, was drin ist,
+          # ohne eine 30-MB-Datei oeffnen zu muessen.
+          {
+            echo "Sicherung der App Holzbau Groismaier"
+            echo "Erstellt: $(date -u '+%d.%m.%Y %H:%M') UTC"
+            [ -n "${{ inputs.hinweis }}" ] && echo "Notiz: ${{ inputs.hinweis }}"
+            echo
+            echo "Dateien:"
+            ls -lh sicherung/ | tail -n +2 | awk '{print "  " $9 "  (" $5 ")"}'
+            echo
+            echo "Zurueckspielen:"
+            echo "  psql \"\$DATENBANK_URL\" -f 01_firmendaten_*.sql"
+            echo
+            echo "Nicht enthalten: die hinterlegten Dateien (Fotos, PDFs, ~950 MB)."
+            echo "Die werden mit skripte/dateien-sichern.mjs getrennt gesichert."
+          } > sicherung/INHALT.txt
+          cat sicherung/INHALT.txt
+
+      - name: Verschluesseln, falls Passwort hinterlegt
+        env:
+          PASSWORT: ${{ secrets.SICHERUNG_PASSWORT }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PASSWORT}" ]; then
+            echo "::warning::Secret SICHERUNG_PASSWORT fehlt — die Sicherung liegt UNVERSCHLUESSELT im Artefakt. Darin stehen alle Kunden- und Mitarbeiterdaten. Empfehlung: Passwort anlegen."
+            exit 0
+          fi
+          for f in sicherung/*.sql; do
+            gpg --batch --yes --symmetric --cipher-algo AES256 \
+                --passphrase "${PASSWORT}" -o "${f}.gpg" "$f"
+            rm "$f"
+          done
+          echo "✓ Verschluesselt. Entschluesseln mit: gpg --decrypt <datei>.gpg > <datei>"
+
+      - name: Ablegen
+        uses: actions/upload-artifact@v4
+        with:
+          name: sicherung-${{ github.run_number }}
+          path: sicherung/
+          retention-days: 400          # gut ein Jahr — Maximum bei privaten Repos
+
+      - name: Zusammenfassung
+        run: |
+          {
+            echo "## Sicherung erstellt"
+            echo
+            echo "| Datei | Grösse |"
+            echo "|---|---|"
+            ls -lh sicherung/ | tail -n +2 | awk '{print "| " $9 " | " $5 " |"}'
+            echo
+            echo "Herunterladen: unten unter **Artifacts**. Aufbewahrt: 400 Tage."
+            echo
+            echo "> Nicht enthalten: Fotos und PDFs (~950 MB). Getrennt sichern mit \`node skripte/dateien-sichern.mjs\`."
+          } >> "$GITHUB_STEP_SUMMARY"

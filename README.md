@@ -14,6 +14,7 @@ Kundenverwaltung, Projekte/Plantafel und Zeiterfassung.
 
 ```sh
 npm install
+cp .env.beispiel .env     # und die zwei Werte eintragen
 npm run dev
 ```
 
@@ -29,3 +30,30 @@ VITE_SUPABASE_KEY="<publishable-key>"
 ```sh
 npm run build
 ```
+
+## Prüfungen vor jedem Commit
+
+```sh
+npx tsc --noEmit -p tsconfig.app.json   # Baseline: 5 bekannte Fehler
+npm test -- --run                        # 299 Tests
+npm run build
+```
+
+## Weiterführende Unterlagen
+
+| Datei | Für wen |
+|---|---|
+| [`CLAUDE.md`](CLAUDE.md) | KI-Werkzeuge, die im Code arbeiten — Eigenheiten und Tabus |
+| [`docs/HANDBUCH.md`](docs/HANDBUCH.md) | Entwickler — Architektur, Dienste, Ausrollen, Neuaufbau |
+| [`docs/uebergabe/`](docs/uebergabe/) | Den Betrieb — Anleitungen ohne Fachbegriffe |
+
+## Skripte
+
+```sh
+./skripte/uebergabe-paket.sh              # Übergabe-Paket zusammenstellen
+node skripte/dateien-sichern.mjs <ziel>   # Storage sichern (fortsetzbar)
+node skripte/dateien-zurueckspielen.mjs <quelle> --probe
+```
+
+Die Datenbank sichert der Workflow [`Datensicherung`](.github/workflows/datensicherung.yml)
+monatlich automatisch.
