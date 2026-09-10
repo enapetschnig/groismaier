@@ -26,8 +26,14 @@
 #     Kunden- und Mitarbeiterdaten. Das Passwort gehoert in den Passwort-
 #     Tresor, NICHT in dieses Repository.
 #
-#     Entschluesseln spaeter:
-#       gpg --decrypt sicherung.sql.gpg > sicherung.sql
+#     Entschluesseln spaeter (openssl ist auf jedem Mac und Linux schon da,
+#     es muss nichts installiert werden — das war der Grund gegen gpg):
+#
+#       openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+#         -in 01_firmendaten_JJJJ-MM-TT.sql.enc \
+#         -out 01_firmendaten.sql -pass pass:'<das Passwort>'
+#
+#     Bequemer: skripte/sicherung-oeffnen.sh <ordner>
 #
 name: Datensicherung
 
@@ -161,12 +167,48 @@ jobs:
             echo "::warning::Secret SICHERUNG_PASSWORT fehlt — die Sicherung liegt UNVERSCHLUESSELT im Artefakt. Darin stehen alle Kunden- und Mitarbeiterdaten. Empfehlung: Passwort anlegen."
             exit 0
           fi
+          # AES-256 ueber openssl, nicht gpg: openssl liegt auf jedem Mac und
+          # jedem Linux bereits vor. gpg muesste im Ernstfall erst installiert
+          # werden — ausgerechnet in dem Moment, in dem etwas brennt.
           for f in sicherung/*.sql; do
-            gpg --batch --yes --symmetric --cipher-algo AES256 \
-                --passphrase "${PASSWORT}" -o "${f}.gpg" "$f"
+            openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+              -in "$f" -out "${f%.sql}.sql.enc" -pass env:PASSWORT
             rm "$f"
           done
-          echo "✓ Verschluesselt. Entschluesseln mit: gpg --decrypt <datei>.gpg > <datei>"
+
+          # Sofort gegenpruefen: Eine Sicherung, die sich nicht wieder oeffnen
+          # laesst, ist schlimmer als gar keine — und das faellt sonst erst
+          # im Ernstfall auf.
+          ERSTE=$(ls sicherung/*.enc | head -1)
+          if openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+               -in "$ERSTE" -pass env:PASSWORT 2>/dev/null | head -c 200 | grep -q "PostgreSQL database dump"; then
+            echo "✓ Verschluesselt — und die Gegenprobe hat sie wieder geoeffnet."
+          else
+            echo "::error::Die Sicherung laesst sich mit dem hinterlegten Passwort NICHT wieder oeffnen. Abbruch, damit keine unbrauchbare Sicherung abgelegt wird."
+            exit 1
+          fi
+
+          # Die Anleitung wandert mit ins Paket — im Ernstfall sucht niemand
+          # in einer Workflow-Datei nach dem Befehl.
+          cat > sicherung/ENTSCHLUESSELN.txt <<'ANLEITUNG'
+          Diese Sicherung ist mit AES-256 verschluesselt.
+          Das Passwort liegt im Passwort-Tresor (Secret SICHERUNG_PASSWORT).
+
+          Oeffnen — funktioniert auf jedem Mac und Linux ohne Installation:
+
+            openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+              -in 01_firmendaten_JJJJ-MM-TT.sql.enc \
+              -out 01_firmendaten.sql \
+              -pass pass:'DAS-PASSWORT'
+
+          Fuer alle Dateien auf einmal:
+
+            skripte/sicherung-oeffnen.sh <dieser Ordner>
+
+          Danach einspielen:
+
+            psql "$DATENBANK_URL" -f 01_firmendaten.sql
+          ANLEITUNG
 
       - name: Ablegen
         uses: actions/upload-artifact@v5
