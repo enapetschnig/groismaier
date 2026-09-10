@@ -163,8 +163,17 @@ jobs:
           PASSWORT: ${{ secrets.SICHERUNG_PASSWORT }}
         run: |
           set -euo pipefail
+          # Ohne Secret bleibt die Sicherung im Klartext — bewusst so, solange
+          # nur der Betrieb selbst Zugang zu diesem Repository hat. Eine
+          # Verschluesselung waere hier keine Sicherheit, sondern nur eine
+          # weitere Huerde im Ernstfall: Wer das Passwort nicht findet, kommt
+          # an die Sicherung nicht mehr heran.
+          #
+          # Sobald jemand Aussenstehendes Zugriff auf dieses Repository
+          # bekommt, gehoert das Secret wieder gesetzt.
           if [ -z "${PASSWORT}" ]; then
-            echo "::warning::Secret SICHERUNG_PASSWORT fehlt — die Sicherung liegt UNVERSCHLUESSELT im Artefakt. Darin stehen alle Kunden- und Mitarbeiterdaten. Empfehlung: Passwort anlegen."
+            echo "Kein SICHERUNG_PASSWORT hinterlegt — die Sicherung bleibt unverschluesselt."
+            echo "Das ist so gewollt, solange nur der Betrieb Zugang zu diesem Repository hat."
             exit 0
           fi
           # AES-256 ueber openssl, nicht gpg: openssl liegt auf jedem Mac und

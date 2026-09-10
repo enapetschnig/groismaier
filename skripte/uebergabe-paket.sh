@@ -37,6 +37,9 @@ mkdir -p "$ZIEL"/{01_Anleitungen,02_Programm,03_Daten-Sicherung}
 echo "→ Anleitungen"
 cp "$QUELLE/docs/uebergabe/00-ZUERST-LESEN.md" "$ZIEL/00-ZUERST-LESEN.md"
 cp "$QUELLE"/docs/uebergabe/0[1-9]-*.md "$ZIEL/01_Anleitungen/"
+# Die Techniker-Anleitung gehoert nach ganz oben, nicht in den Code-Ordner:
+# Wer sie braucht, sucht im Ernstfall nicht erst in Unterordnern.
+cp "$QUELLE/NOTFALL.md" "$ZIEL/FUER-DEN-TECHNIKER.md"
 
 # ── 2. Programm ─────────────────────────────────────────────────────────────
 # Ausgeschlossen wird alles, was entweder neu erzeugt werden kann

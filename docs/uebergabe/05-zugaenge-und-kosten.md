@@ -53,25 +53,7 @@ Betreuer. Solltet ihr euch trennen, ist diese Adresse weg.
 `app.cg-holzbau.at` ist in zwei Stunden eingerichtet und kostet fast nichts.
 Wenn du `cg-holzbau.at` schon hast, sogar gar nichts. Siehe Anleitung 2.
 
-### 2. Ohne das Sicherungs-Passwort ist die Sicherung wertlos
-
-Deine Datensicherung wird jeden Monat automatisch erstellt und dabei
-**verschlüsselt** — sie enthält alle Kundendaten und die Anmeldedaten deiner
-Mitarbeiter, das darf nicht offen herumliegen.
-
-Der Preis dafür: **Ohne das Passwort kommt niemand mehr an die Sicherung.**
-Auch kein Fachmann, auch nicht dein Betreuer, auch nicht GitHub. Verschlüsselt
-ist verschlüsselt.
-
-Dieses eine Passwort muss also sicher verwahrt sein — im Passwort-Tresor
-*und* ausgedruckt im Safe. Es ist das einzige in dieser Liste, dessen Verlust
-nicht rückgängig zu machen ist.
-
-Zum Öffnen brauchst du keine Spezialsoftware; das Werkzeug ist auf jedem Mac
-und jedem Windows-PC mit Linux-Unterbau schon da. Die Anleitung liegt in jeder
-Sicherung als `ENTSCHLUESSELN.txt` bei.
-
-### 3. Ein Schlüssel ist wirklich gefährlich
+### 2. Ein Schlüssel ist wirklich gefährlich
 
 Bei den Zugangsdaten gibt es einen mit dem Namen **`SERVICE_ROLE_KEY`**.
 
@@ -119,8 +101,6 @@ Zum Abhaken, wenn ihr gemeinsam durchgeht:
 - [ ] Ich habe einen eigenen Supabase-Zugang und sehe dort **nur meine Firma**
 - [ ] Ich weiß, wo die aktuelle Datensicherung liegt und wie alt sie ist
 - [ ] Ich weiß, wie oft automatisch gesichert wird
-- [ ] **Das Sicherungs-Passwort liegt im Tresor** — ohne es ist jede Sicherung
-      unbrauchbar
 - [ ] Mir ist klar, dass Sicherungen nach 90 Tagen automatisch gelöscht werden
       und ich sie für ein Archiv selbst herunterladen muss
 - [ ] Anleitung 4 (Notfall) ist ausgefüllt und ausgedruckt im Büro

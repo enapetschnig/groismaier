@@ -56,6 +56,20 @@ Anleitung 3.
 
 ---
 
+## Wenn es wirklich ernst wird
+
+Es gibt eine Datei namens **`FUER-DEN-TECHNIKER.md`**. Die musst du nicht
+verstehen — du gibst sie einfach weiter.
+
+Darin steht alles, was ein beliebiger IT-Fachmann braucht, um die App wieder
+online zu bringen: ohne die Zugangsdaten deines bisherigen Betreuers, ohne
+seine Konten, auf ganz neuen. Er braucht nur zwei Dinge, und beide hast du:
+**den Ordner `02_Programm` und einen Datenbank-Abzug.**
+
+Aufwand für ihn: ein halber Tag.
+
+---
+
 ## Das Wichtigste in drei Sätzen
 
 1. Der Ordner **`02_Programm`** ist der Bauplan deiner App — ohne deine Daten.
