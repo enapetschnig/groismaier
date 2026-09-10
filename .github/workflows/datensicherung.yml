@@ -72,6 +72,28 @@ jobs:
           sudo apt-get install -y -qq postgresql-client-17
           /usr/lib/postgresql/17/bin/pg_dump --version
 
+      # Zuerst nur anklopfen. Ohne diesen Schritt scheitert erst pg_dump, und
+      # in dessen Meldung geht der eigentliche Grund unter.
+      - name: Verbindung pruefen
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          set -uo pipefail
+          if /usr/lib/postgresql/17/bin/psql "$DB_URL" -Atc "select 1" > /dev/null 2>/tmp/fehler.txt; then
+            echo "✓ Verbindung steht."
+            exit 0
+          fi
+          MELDUNG=$(cat /tmp/fehler.txt)
+          echo "$MELDUNG"
+          if echo "$MELDUNG" | grep -qi "password authentication failed"; then
+            echo "::error::Das Datenbank-Passwort in SUPABASE_DB_URL stimmt nicht (mehr). So wird es erneuert: Supabase-Dashboard → Project Settings → Database → Reset database password. Danach unter Connection string → Session pooler (Port 5432!) die neue Zeile kopieren und hier als Secret SUPABASE_DB_URL hinterlegen."
+          elif echo "$MELDUNG" | grep -qiE "could not translate|no route to host|timeout|Connection refused"; then
+            echo "::error::Der Server ist nicht erreichbar. Haeufigste Ursache: die DIREKTE Verbindung (db.<kennung>.supabase.co) wurde eingetragen — die ist nur ueber IPv6 erreichbar, GitHub-Runner koennen das nicht. Es muss der SESSION-Pooler auf Port 5432 sein."
+          else
+            echo "::error::Verbindung fehlgeschlagen. Meldung siehe oben."
+          fi
+          exit 1
+
       - name: Datenbank sichern
         env:
           DB_URL: ${{ secrets.SUPABASE_DB_URL }}
