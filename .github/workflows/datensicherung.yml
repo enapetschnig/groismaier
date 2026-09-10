@@ -170,23 +170,39 @@ jobs:
           # AES-256 ueber openssl, nicht gpg: openssl liegt auf jedem Mac und
           # jedem Linux bereits vor. gpg muesste im Ernstfall erst installiert
           # werden — ausgerechnet in dem Moment, in dem etwas brennt.
+          # Verschluesseln — und JEDE Datei sofort gegenpruefen. Eine Sicherung,
+          # die sich nicht wieder oeffnen laesst, ist schlimmer als gar keine,
+          # denn das faellt erst dann auf, wenn man sie braucht.
+          #
+          # Geprueft wird gegen eine Datei, nicht gegen eine Pipe: Ein
+          # "openssl … | head -c 200" schliesst die Pipe vorzeitig, openssl
+          # bekommt SIGPIPE, und unter "set -o pipefail" gilt die ganze
+          # Pruefung als fehlgeschlagen — obwohl die Verschluesselung in
+          # Ordnung ist. Genau das ist hier einmal passiert.
           for f in sicherung/*.sql; do
+            GROESSE_VORHER=$(wc -c < "$f")
             openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
               -in "$f" -out "${f%.sql}.sql.enc" -pass env:PASSWORT
+
+            PROBE=$(mktemp)
+            if ! openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
+                   -in "${f%.sql}.sql.enc" -out "$PROBE" -pass env:PASSWORT 2>/dev/null; then
+              rm -f "$PROBE"
+              echo "::error::$(basename "$f") laesst sich mit dem hinterlegten Passwort nicht wieder oeffnen. Abbruch, damit keine unbrauchbare Sicherung abgelegt wird."
+              exit 1
+            fi
+            # Bytegenau gleich gross? Dann ist wirklich alles zurueckgekommen,
+            # nicht nur der Anfang der Datei.
+            GROESSE_NACHHER=$(wc -c < "$PROBE")
+            rm -f "$PROBE"
+            if [ "$GROESSE_VORHER" != "$GROESSE_NACHHER" ]; then
+              echo "::error::$(basename "$f") kommt nicht vollstaendig zurueck (${GROESSE_VORHER} Bytes hinein, ${GROESSE_NACHHER} heraus). Abbruch."
+              exit 1
+            fi
+            echo "  ✓ $(basename "${f%.sql}.sql.enc") — Gegenprobe bytegenau"
             rm "$f"
           done
-
-          # Sofort gegenpruefen: Eine Sicherung, die sich nicht wieder oeffnen
-          # laesst, ist schlimmer als gar keine — und das faellt sonst erst
-          # im Ernstfall auf.
-          ERSTE=$(ls sicherung/*.enc | head -1)
-          if openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 \
-               -in "$ERSTE" -pass env:PASSWORT 2>/dev/null | head -c 200 | grep -q "PostgreSQL database dump"; then
-            echo "✓ Verschluesselt — und die Gegenprobe hat sie wieder geoeffnet."
-          else
-            echo "::error::Die Sicherung laesst sich mit dem hinterlegten Passwort NICHT wieder oeffnen. Abbruch, damit keine unbrauchbare Sicherung abgelegt wird."
-            exit 1
-          fi
+          echo "✓ Alle Dateien verschluesselt und wieder lesbar."
 
           # Die Anleitung wandert mit ins Paket — im Ernstfall sucht niemand
           # in einer Workflow-Datei nach dem Befehl.
