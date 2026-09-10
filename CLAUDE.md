@@ -83,7 +83,11 @@ Ablauf:
    git push -f origin supabase-deploy/run-N
    gh run watch
    ```
-   `N` ist die nächste Nummer (zuletzt: 52).
+   `N` ist die nächste freie Nummer. Die letzte findet man so (die Zweige
+   selbst werden nach dem Lauf gelöscht):
+   ```sh
+   gh run list --workflow="Supabase Deploy" --limit 5 --json headBranch -q '.[].headBranch'
+   ```
 4. Im Protokoll prüfen: **jede** Migration muss `HTTP 201` melden
 5. Erst dann `git push origin main` (das löst den Vercel-Deploy aus)
 6. Zweig aufräumen: `git push origin --delete supabase-deploy/run-N`
