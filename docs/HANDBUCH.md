@@ -157,6 +157,14 @@ Weitere, derzeit leer: `bautagesbericht-photos`,
 `logos`, `project-chef`, `project-materials`, `project-notizen`,
 `project-plans`.
 
+Eine Sonderrolle hat **`uebergabe`**: Dort legt der Workflow `Datensicherung`
+einmal im Monat das komplette Übergabepaket ab (Quellcode ohne Historie,
+Anleitungen, Datenbank-Dump — rund 7 MB). Lesen darf es ausschliesslich die
+Administrator-Rolle (`has_role(auth.uid(), 'administrator')`), heruntergeladen
+wird es unter *Admin → Einstellungen → Sicherheitskopie der App* über eine
+signierte URL. Der Workflow schreibt mit dem Service-Role-Key, den er sich zur
+Laufzeit über die Management-API holt; es gibt bewusst keine Insert-Policy.
+
 > **Achtung beim Neuaufbau:** Ob eine Ablage öffentlich ist, entscheidet, ob
 > jeder mit der URL an den Inhalt kommt. `employee-documents` und
 > `invoice-pdfs` dürfen niemals öffentlich sein. Die Eigenschaften werden von
