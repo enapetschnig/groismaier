@@ -72,6 +72,22 @@ export interface MaterialRow {
    * "er muss die Formel immer behalten und rechnen").
    */
   vkManuell?: boolean;
+  /**
+   * Dämmstoff-Zeile: true = der Preis gilt je m² und wird NICHT mit der
+   * Dämmstärke umgerechnet (Kundenmeldung 12.09.2026: „Beim Dämmstoff hab
+   * ich einen Preis/m² selbst gerechnet und eingetragen. Am Ende rechnet es
+   * dann aber doch wieder mit der Dämmstärke"). Bewusst nur per Schalter,
+   * nie automatisch — eine stille Umstellung änderte bestehende Summen.
+   */
+  preisJeM2?: boolean;
+  /**
+   * true: Der Katalog-Artikel dieser Zeile ist KALKULIERT (Rechner,
+   * invoice_templates.ist_kalkuliert) — sein VK ist ein bewusst gerechneter
+   * Preis, kein abgeleiteter. Nur dann darf eine Riegel-Zeile den Katalog-VK
+   * als m³-Basis nehmen (Kundenmeldung 12.09.2026). Setzt die Stammdaten-
+   * Nachführung; undefined = nicht bekannt/nicht kalkuliert.
+   */
+  vkKalkuliert?: boolean;
 }
 
 /** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten, auch als Preiseinheit "€ / m³"). */
@@ -155,6 +171,15 @@ export interface KalkModule {
   materialRows: MaterialRow[];
   workers: number;
   days: number;
+  /**
+   * Arbeitsgänge je Aufbau (Kundenwunsch 12.09.2026: „2,5 h 2 Mann Abbruch,
+   * 8 Std 4 Mann Riegelbau, 6 Std 3,5 Mann Außenhülle … am Ende eine
+   * Gesamtstundenanzahl, und man kann nachsehen, wie viele Stunden wo
+   * anfallen"). Gibt es Einträge mit Stunden, rechnet der Aufbau mit deren
+   * Summe (Std × Mann je Zeile) statt mit Arbeiter × Tage. Leer/undefined =
+   * wie bisher — alte Kalkulationen ändern sich nicht.
+   */
+  arbeitszeiten?: Arbeitsgang[];
   distanceKM: number;
   busTrips: number;
   lkwTrips: number;
@@ -434,6 +459,56 @@ export function calcArbeitsstunden(workers: number, days: number, bd: Betriebsda
   return num(workers) * num(days) * bd.stundenProTag;
 }
 
+// ── Arbeitsgänge (Kundenwunsch 12.09.2026) ──────────────────────────────────
+
+/** Ein Arbeitsgang: „8 Std · 4 Mann · Riegelbau". */
+export interface Arbeitsgang {
+  stunden: number;
+  mann: number;
+  text: string;
+}
+
+export const neuerArbeitsgang = (): Arbeitsgang => ({ stunden: 0, mann: 1, text: "" });
+
+/** Personenstunden eines Arbeitsgangs (Std × Mann). */
+export const arbeitsgangStunden = (g: Pick<Arbeitsgang, "stunden" | "mann">): number =>
+  num(g.stunden) * num(g.mann);
+
+/** Nur Arbeitsgänge, die Stunden ergeben — eine Zeile mit Text allein zählt nicht. */
+export const gueltigeArbeitsgaenge = (m: Pick<KalkModule, "arbeitszeiten">): Arbeitsgang[] =>
+  (m.arbeitszeiten || []).filter((g) => arbeitsgangStunden(g) > 0);
+
+/** Rechnet der Aufbau mit Arbeitsgängen statt mit Arbeiter × Tage? */
+export const nutztArbeitsgaenge = (m: Pick<KalkModule, "arbeitszeiten">): boolean =>
+  gueltigeArbeitsgaenge(m).length > 0;
+
+/**
+ * Arbeitsstunden eines Aufbaus — aus den Arbeitsgängen, sonst wie bisher
+ * Arbeiter × Tage × Stunden/Tag. Lohn und Selbstkosten hängen an dieser
+ * einen Stundenzahl; so können die drei nie auseinanderlaufen.
+ */
+export function calcArbeitsstundenModul(
+  m: Pick<KalkModule, "workers" | "days" | "arbeitszeiten">, bd: Betriebsdaten,
+): number {
+  const gaenge = gueltigeArbeitsgaenge(m);
+  if (gaenge.length > 0) return gaenge.reduce((s, g) => s + arbeitsgangStunden(g), 0);
+  return calcArbeitsstunden(m.workers, m.days, bd);
+}
+
+/** Lohnkosten des Aufbaus: Stunden × Mittellohn (identisch zu calcLohnkosten ohne Arbeitsgänge). */
+export function calcLohnkostenModul(
+  m: Pick<KalkModule, "workers" | "days" | "arbeitszeiten">, bd: Betriebsdaten,
+): number {
+  return calcArbeitsstundenModul(m, bd) * bd.mittellohn;
+}
+
+/** Lohn-Selbstkosten des Aufbaus: Stunden × Selbstkostensatz. */
+export function calcLohnSelbstkostenModul(
+  m: Pick<KalkModule, "workers" | "days" | "arbeitszeiten">, bd: Betriebsdaten,
+): number {
+  return calcArbeitsstundenModul(m, bd) * bd.selbstkostenLohn;
+}
+
 /**
  * Riegelkonstruktion → €/m² Wandfläche. Christians Rechenweg (Mail 21.08.2026):
  *
@@ -521,8 +596,35 @@ export function zeilenVkIstManuell(
  * VK-Feld — dort zählt nur das explizite Manuell-Flag.
  */
 export function zeilenVkRoh(row: MaterialRow, bd: Betriebsdaten): number {
-  if (istRiegelZeile(row)) return row.vkManuell === true ? num(row.vkPrice) : 0;
+  if (istRiegelZeile(row)) return riegelVkRoh(row);
   return zeilenVkIstManuell(row, bd) ? num(row.vkPrice) : 0;
+}
+
+/**
+ * VK-Basis (€/m³) einer Riegel-Zeile — 0 heißt „aus dem EK ableiten".
+ *
+ * Zählt in zwei Fällen: von Hand gesetzt (vkManuell) ODER der Artikel ist im
+ * Katalog KALKULIERT (Rechner, ist_kalkuliert) und der Zeilen-VK ist dessen
+ * aktueller Wert. Der zweite Fall fehlte (Kundenmeldung 12.09.2026: „ich hab
+ * diesen mit der Rechnerfunktion selbst kalkuliert … das Ergebnis erscheint
+ * dann aber nicht vorne als VK"): Der Rechner schrieb den kalkulierten VK in
+ * den Artikel, die Stammdaten-Nachführung holte ihn in die Zeile — und die
+ * Riegel-Rechnung ignorierte ihn und nahm EK × Faktor.
+ *
+ * Bewusst NUR bei kalkulierten Artikeln: Die Regel vom 24.08.2026 („Riegel
+ * immer EK × Faktor, der kopierte Katalog-VK zählt nicht — 11,13 statt
+ * 12,47") gilt für jeden anderen Katalog-VK unverändert weiter. Das
+ * Kennzeichen kommt über die Stammdaten-Nachführung (kalkKatalogSync) in
+ * die Zeile.
+ */
+export function riegelVkRoh(
+  row: Pick<MaterialRow, "vkPrice" | "vkManuell" | "katalogVk" | "vkKalkuliert">,
+): number {
+  const vk = num(row.vkPrice);
+  if (row.vkManuell === true) return vk;
+  if (row.vkKalkuliert !== true || vk <= 0) return 0;
+  if (row.katalogVk === null || row.katalogVk === undefined) return 0;
+  return Math.abs(vk - num(row.katalogVk)) < 1e-9 ? vk : 0;   // nur der aktuelle Katalogwert, nichts Veraltetes
 }
 
 /**
@@ -616,7 +718,10 @@ export function calcMaterialRow(
       vkAbgeleitet: abgeleitet && num(row.vkPrice) <= 0,
     };
   }
-  if (istDaemmstoffZeile(row)) {
+  // preisJeM2: der Anwender hat den Preis selbst je m² gerechnet — dann keine
+  // Umrechnung über die Dämmstärke, die Zeile rechnet wie jedes andere
+  // Material (Preis × Fläche). Siehe MaterialRow.preisJeM2.
+  if (istDaemmstoffZeile(row) && row.preisJeM2 !== true) {
     const dicke = num(m.insulationThickness) / 100;
     const ekRoh = num(row.ekPrice);
     const vkRoh = num(row.vkPrice);
@@ -771,8 +876,10 @@ export interface ModulErgebnis {
 
 export function calcModule(m: KalkModule, bd: Betriebsdaten): ModulErgebnis {
   const material = calcMaterialSummen(m, bd);
-  const laborCosts = calcLohnkosten(m.workers, m.days, bd);
-  const laborHours = calcArbeitsstunden(m.workers, m.days, bd);
+  // Stunden aus Arbeitsgängen oder Arbeiter × Tage — eine Quelle für Lohn
+  // und Stundenzahl (Kundenwunsch 12.09.2026).
+  const laborHours = calcArbeitsstundenModul(m, bd);
+  const laborCosts = calcLohnkostenModul(m, bd);
   const transport = calcTransport(m, bd);
   const craneCosts = num(m.craneHours) * bd.kranSatz;
   const servicesTotal = craneCosts + num(m.shippingCosts) + num(m.paintCosts) + num(m.miscCosts);
@@ -872,7 +979,7 @@ export function calcVerdienst(
 ): VerdienstErgebnis {
   const erloes = erg.grandTotal * faktor;
   const materialEk = erg.material.ekSelbstkosten;
-  const lohnSelbstkosten = calcLohnSelbstkosten(m.workers, m.days, bd);
+  const lohnSelbstkosten = calcLohnSelbstkostenModul(m, bd);
   const fahrtkosten = erg.transport.total;
   const dienstleistungen = erg.servicesTotal;
   const selbstkosten = materialEk + lohnSelbstkosten + fahrtkosten + dienstleistungen;
@@ -1382,11 +1489,15 @@ export function buildAngebotItems(projekt: ProjektErgebnis): { items: AngebotIte
       });
     }
 
-    // Arbeitszeit
+    // Arbeitszeit — mit Arbeitsgängen (12.09.2026) steht die Stundensumme im
+    // Text, nicht Tage × Arbeiter (die gibt es dann nicht mehr).
     const tage = num(m.days);
     const arbeiter = num(m.workers);
+    const gaenge = gueltigeArbeitsgaenge(m);
     detail(
-      `Arbeitszeit: ${kurzZahl(tage)} ${tage === 1 ? "Tag" : "Tage"} × ${kurzZahl(arbeiter)} Arbeiter`,
+      gaenge.length > 0
+        ? `Arbeitszeit: ${kurzZahl(erg.laborHours)} Std. (${gaenge.length} ${gaenge.length === 1 ? "Arbeitsgang" : "Arbeitsgänge"})`
+        : `Arbeitszeit: ${kurzZahl(tage)} ${tage === 1 ? "Tag" : "Tage"} × ${kurzZahl(arbeiter)} Arbeiter`,
       erg.laborCosts * faktor, erg.laborHours, "h",
     );
 
@@ -1619,6 +1730,8 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
             katalogVk: numOrNull(r?.katalogVk),
             vkManuell: typeof r?.vkManuell === "boolean" ? r.vkManuell : undefined,
             imAngebot: r?.imAngebot === true ? true : undefined,
+            preisJeM2: r?.preisJeM2 === true ? true : undefined,
+            vkKalkuliert: r?.vkKalkuliert === true ? true : undefined,
           }))
         : base.materialRows;
       return {
@@ -1640,6 +1753,13 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         materialRows: rows,
         workers: num(m.workers),
         days: num(m.days),
+        // Arbeitsgänge nur übernehmen, wenn welche da sind — sonst bleibt das
+        // Feld weg und der Aufbau rechnet wie bisher.
+        arbeitszeiten: Array.isArray(m.arbeitszeiten) && m.arbeitszeiten.length > 0
+          ? m.arbeitszeiten.map((g: any): Arbeitsgang => ({
+              stunden: num(g?.stunden), mann: num(g?.mann), text: typeof g?.text === "string" ? g.text : "",
+            }))
+          : undefined,
         distanceKM: num(m.distanceKM),
         busTrips: num(m.busTrips),
         lkwTrips: num(m.lkwTrips),

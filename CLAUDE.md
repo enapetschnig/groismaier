@@ -23,7 +23,7 @@ Fuhrpark, Finanzplanung.
 Rechnung ist kein Anzeigefehler, sondern ein steuerrechtliches Problem.
 
 Größenordnung: ~99.000 Zeilen Code, 39 Seiten, ~100 Tabellen, 297 Migrationen,
-20 Serverfunktionen, 311 Tests.
+20 Serverfunktionen, 327 Tests.
 
 ---
 
@@ -60,7 +60,7 @@ SQL gegen die Produktivdatenbank.
 
 ```sh
 npx tsc --noEmit -p tsconfig.app.json   # exakt 5 bekannte Fehler, nicht mehr
-npm test -- --run                        # 311 Tests, alle grün
+npm test -- --run                        # 327 Tests, alle grün
 npm run build                            # muss durchlaufen
 ```
 

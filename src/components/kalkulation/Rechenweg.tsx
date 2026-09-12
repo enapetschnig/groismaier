@@ -12,6 +12,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Betriebsdaten, KalkModule, ModulErgebnis, fmt, fmtEuro, num,
   istRiegelZeile, istDaemmstoffZeile, zeilenVkIstManuell,
+  gueltigeArbeitsgaenge,
 } from "@/lib/kalkulationEngine";
 
 interface Props {
@@ -105,10 +106,16 @@ export function Rechenweg({ m, erg, bd, faktor }: Props) {
           {zeilenMitInhalt.map((z, i) => (
             <Schritt key={i} titel={z.bezeichnung || "Materialzeile"} formel={materialFormel(z)} betrag={z.vkBetrag} />
           ))}
+          {/* Mit Arbeitsgängen (12.09.2026) steht jeder Gang in der Formel —
+              „wie viele Stunden wo anfallen" — die Summe bleibt EIN Schritt. */}
           {erg.laborCosts > 0 && (
             <Schritt
               titel="Arbeitszeit"
-              formel={`${fmt(num(m.days))} Tage × ${fmt(bd.stundenProTag)} h × ${fmt(num(m.workers))} Arbeiter × ${fmt(bd.mittellohn)} €/h`}
+              formel={gueltigeArbeitsgaenge(m).length > 0
+                ? `${gueltigeArbeitsgaenge(m)
+                    .map((g, i) => `${fmt(num(g.stunden))} h × ${fmt(num(g.mann))} Mann${g.text ? ` (${g.text})` : ` (Arbeitsgang ${i + 1})`}`)
+                    .join(" + ")} = ${fmt(erg.laborHours)} Std. × ${fmt(bd.mittellohn)} €/h`
+                : `${fmt(num(m.days))} Tage × ${fmt(bd.stundenProTag)} h × ${fmt(num(m.workers))} Arbeiter × ${fmt(bd.mittellohn)} €/h`}
               betrag={erg.laborCosts}
             />
           )}

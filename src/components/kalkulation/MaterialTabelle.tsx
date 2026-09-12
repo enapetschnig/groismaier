@@ -32,7 +32,7 @@ import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, Eye, EyeOff, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
-  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell,
+  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell, riegelVkRoh,
 } from "@/lib/kalkulationEngine";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -369,22 +369,53 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       {r.istRiegel && (
         <div className="mt-0.5 text-[10px] text-kb-blue-dark">
           KVH-Wand: {fmt(bd.riegelLfmProM2)} lfm/m² × {fmt(bd.riegelBrettDicke)} cm × {fmt(num(m.insulationThickness))} cm Wanddicke
+          {/* Drei Fälle (Kundenmeldung 12.09.2026): von Hand gesetzter VK,
+              kalkulierter VK aus dem Artikel (Rechner), sonst EK × Faktor. */}
           {row.vkManuell === true
             ? ` × VK ${fmt(num(row.vkPrice))} €/m³`
-            : ` × ${fmt(num(row.ekPrice))} €/m³ × ${fmt(bd.vkFaktor)}`}
+            : riegelVkRoh(row) > 0
+              ? ` × VK ${fmt(riegelVkRoh(row))} €/m³ (aus Artikel-Kalkulation)`
+              : ` × ${fmt(num(row.ekPrice))} €/m³ × ${fmt(bd.vkFaktor)}`}
           {" → "}{fmtEuro(r.erg.vkProM2)} / m²
         </div>
       )}
-      {r.istDaemm && row.product && (
-        <div className="mt-0.5 text-[10px] text-kb-blue-dark">
-          Preis je m³ × {fmt(num(m.insulationThickness))} cm Dämmstärke → {fmtEuro(r.erg.vkProM2)} / m²
-          <span className="text-muted-foreground"> · Tipp: €/m² je cm × 100 = €/m³</span>
+      {r.istDaemm && row.product && row.preisJeM2 !== true && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-kb-blue-dark">
+          <span>
+            Preis je m³ × {fmt(num(m.insulationThickness))} cm Dämmstärke → {fmtEuro(r.erg.vkProM2)} / m²
+            <span className="text-muted-foreground"> · Tipp: €/m² je cm × 100 = €/m³</span>
+          </span>
+          {/* Kundenmeldung 12.09.2026: selbst gerechneter €/m²-Preis wurde
+              trotzdem mit der Dämmstärke multipliziert. Der Schalter nimmt
+              die Zeile aus der Umrechnung — sichtbar, an der Zeile gespeichert. */}
+          <button
+            type="button"
+            className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-900 hover:bg-amber-200"
+            onClick={() => onPatchRow(idx, { preisJeM2: true })}
+            title="EK/VK gelten je m² — keine Umrechnung über die Dämmstärke"
+          >
+            Preis gilt je m²
+          </button>
         </div>
       )}
-      {/* Dämmstoff-Zeilen rechnen IMMER €/m³ × Dämmstärke — ist der Artikel
-          laut Katalog anders bepreist (z.B. €/m²), wäre das Ergebnis um die
-          Dämmstärke daneben. Sichtbar machen statt still verrechnen. */}
-      {r.istDaemm && !!row.einheit && !istVolumenEinheit(row.einheit) && (
+      {r.istDaemm && row.product && row.preisJeM2 === true && (
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-kb-blue-dark">
+          <span>Preis je m² × Fläche — keine Umrechnung über die Dämmstärke ({fmt(num(m.insulationThickness))} cm).</span>
+          <button
+            type="button"
+            className="rounded border border-border bg-muted px-1.5 py-0.5 font-semibold hover:bg-muted/70"
+            onClick={() => onPatchRow(idx, { preisJeM2: false })}
+            title="Zurück zu Preis je m³ × Dämmstärke"
+          >
+            je m³ rechnen
+          </button>
+        </div>
+      )}
+      {/* Dämmstoff-Zeilen rechnen €/m³ × Dämmstärke — ist der Artikel laut
+          Katalog anders bepreist (z.B. €/m²), wäre das Ergebnis um die
+          Dämmstärke daneben. Sichtbar machen statt still verrechnen. Mit
+          „Preis gilt je m²" ist die Warnung gegenstandslos. */}
+      {r.istDaemm && row.preisJeM2 !== true && !!row.einheit && !istVolumenEinheit(row.einheit) && (
         <div className="mt-0.5 text-[10px] font-semibold text-amber-700">
           Achtung: Artikel ist je {row.einheit} bepreist, Dämmstoff-Zeilen rechnen aber
           €/m³ × Dämmstärke — bitte Preis prüfen (€/m³ eintragen oder Kategorie wechseln).

@@ -24,7 +24,13 @@ import type { KalkModule, MaterialRow } from "./kalkulationEngine";
 import { num } from "./kalkulationEngine";
 
 /** Struktur-Typen statt Import aus useKalkKatalog (das zöge den Supabase-Client in die Tests). */
-export interface KatalogArtikelPreis { name: string; ek: number | null; vk: number | null; }
+export interface KatalogArtikelPreis {
+  name: string;
+  ek: number | null;
+  vk: number | null;
+  /** invoice_templates.ist_kalkuliert — der VK kommt aus dem Rechner (12.09.2026). */
+  kalkuliert?: boolean;
+}
 export interface KatalogKategoriePreise { name: string; artikel: KatalogArtikelPreis[]; }
 
 const norm = (s: string | null | undefined): string => (s || "").trim().toLowerCase();
@@ -64,11 +70,17 @@ function syncZeile(row: MaterialRow, kategorien: KatalogKategoriePreise[]): Mate
   feld("ekPrice", "katalogEk", ekNeu);
   feld("vkPrice", "katalogVk", vkNeu);
 
+  // Kennzeichen „kalkulierter Artikel" mitziehen (Kundenmeldung 12.09.2026):
+  // Nur damit darf eine Riegel-Zeile den Katalog-VK als m³-Basis nehmen.
+  const kalkuliert = !!art.kalkuliert;
+  if ((row.vkKalkuliert === true) !== kalkuliert) patch.vkKalkuliert = kalkuliert ? true : undefined;
+
   // Nur echte Wert-Änderungen melden (das reine Setzen eines fehlenden
   // Vergleichswerts erzeugt sonst bei jedem Öffnen "Änderungen").
   const wertGeaendert = patch.ekPrice !== undefined || patch.vkPrice !== undefined;
   const baselineGesetzt = patch.katalogEk !== undefined || patch.katalogVk !== undefined;
-  if (!wertGeaendert && !baselineGesetzt) return null;
+  const kennzeichenGeaendert = "vkKalkuliert" in patch;
+  if (!wertGeaendert && !baselineGesetzt && !kennzeichenGeaendert) return null;
   return { ...row, ...patch };
 }
 

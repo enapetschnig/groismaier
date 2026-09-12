@@ -24,7 +24,7 @@ Regieberichte, Fuhrpark.
 
 React 18 + TypeScript + Vite, Tailwind + shadcn/ui, Supabase als Backend
 (Postgres 17, Auth, Storage, Edge Functions). Rund 99.000 Zeilen, 39 Seiten,
-85 Tabellen, 299 Unit-Tests.
+85 Tabellen, 327 Unit-Tests.
 
 **Der Betrieb verrechnet damit sein Geld.** Bestehende Rechnungen und
 Zahlungen werden nicht nachträglich verändert — Details in `CLAUDE.md`.
@@ -119,7 +119,7 @@ früheren Betreuers und können entfallen.
 
 ## Bevor du etwas änderst
 
-- **Prüfungen laufen lassen:** `npm test -- --run` → 311 Tests müssen grün
+- **Prüfungen laufen lassen:** `npm test -- --run` → 327 Tests müssen grün
   sein. `npx tsc --noEmit -p tsconfig.app.json` → **5 bekannte Typfehler**
   sind Altlast und in Ordnung; ein sechster wäre neu.
 - **`CLAUDE.md` lesen.** Dort stehen die Eigenheiten, die einen sonst

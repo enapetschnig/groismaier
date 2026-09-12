@@ -10,10 +10,10 @@
 // Altdaten nicht kaputtgehen — ausgewertet wird auf der Seite /nachkalkulation.
 // ============================================================================
 import { useState } from "react";
-import { BookmarkPlus, ChevronDown, Copy, GripVertical, Trash2 } from "lucide-react";
+import { BookmarkPlus, ChevronDown, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import {
-  KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten,
-  DAEMMSTAERKEN, fmt, fmtEuro, num,
+  KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten, type Arbeitsgang,
+  DAEMMSTAERKEN, fmt, fmtEuro, num, neuerArbeitsgang, nutztArbeitsgaenge, arbeitsgangStunden,
 } from "@/lib/kalkulationEngine";
 import { KatalogKategorie } from "./useKalkKatalog";
 import { MaterialTabelle } from "./MaterialTabelle";
@@ -238,11 +238,73 @@ export function AufbauKarte({
                     <NumInput min={0} value={m.days} onCommit={(n) => onPatch({ days: n ?? 0 })} className={FELD_H} />
                   </Feld>
                 </div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  {anz(num(m.days))} Tage × {anz(num(m.workers))} Arbeiter × {anz(bd.stundenProTag)} h × {fmtEuro(bd.mittellohn)}/h
-                  {" = "}<b className="tabular-nums text-foreground">{fmtEuro(erg.laborCosts)}</b>
-                  {erg.laborHours > 0 && <> ({anz(erg.laborHours)} Std.)</>}
-                </div>
+
+                {/* Arbeitsgänge (Kundenwunsch 12.09.2026: „2,5 h 2 Mann Abbruch,
+                    8 Std 4 Mann Riegelbau …"). Sobald eine Zeile Stunden hat,
+                    rechnet der Aufbau mit der Stundensumme; Arbeiter × Tage
+                    bleibt sichtbar, zählt dann aber nicht. */}
+                {(() => {
+                  const gaenge: Arbeitsgang[] = m.arbeitszeiten || [];
+                  const mitGaengen = nutztArbeitsgaenge(m);
+                  const setzeGaenge = (neu: Arbeitsgang[]) => onPatch({ arbeitszeiten: neu.length ? neu : undefined });
+                  const patchGang = (i: number, p: Partial<Arbeitsgang>) =>
+                    setzeGaenge(gaenge.map((g, k) => (k === i ? { ...g, ...p } : g)));
+                  return (
+                    <div className="mt-2">
+                      {gaenge.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="grid grid-cols-[4.5rem_4.5rem_1fr_1.75rem] gap-1 px-0.5 text-[10px] text-muted-foreground">
+                            <span>Stunden</span><span>Mann</span><span>Arbeitsgang</span><span />
+                          </div>
+                          {gaenge.map((g, i) => (
+                            <div key={i} className="grid grid-cols-[4.5rem_4.5rem_1fr_1.75rem] items-center gap-1">
+                              <NumInput min={0} value={g.stunden} onCommit={(n) => patchGang(i, { stunden: n ?? 0 })} className={FELD_H} title="Stunden je Mann" />
+                              <NumInput min={0} value={g.mann} onCommit={(n) => patchGang(i, { mann: n ?? 0 })} className={FELD_H} title="Anzahl Mann (auch 3,5)" />
+                              <input
+                                className={`kb-input min-h-0 w-full px-2 text-sm ${FELD_H}`}
+                                value={g.text}
+                                placeholder="z. B. Riegelbau"
+                                onChange={(e) => patchGang(i, { text: e.target.value })}
+                              />
+                              <button
+                                type="button"
+                                className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                title="Arbeitsgang entfernen"
+                                onClick={() => setzeGaenge(gaenge.filter((_, k) => k !== i))}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        className="mt-1 inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-[11px] font-medium hover:bg-muted"
+                        onClick={() => setzeGaenge([...gaenge, neuerArbeitsgang()])}
+                        title="Arbeitszeit je Arbeitsgang erfassen — Stunden × Mann je Zeile"
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Arbeitsgang
+                      </button>
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        {mitGaengen ? (
+                          <>
+                            {gaenge.filter((g) => arbeitsgangStunden(g) > 0).length} Arbeitsgänge,
+                            {" "}<b className="tabular-nums text-foreground">{anz(erg.laborHours)} Std.</b>
+                            {" × "}{fmtEuro(bd.mittellohn)}/h = <b className="tabular-nums text-foreground">{fmtEuro(erg.laborCosts)}</b>
+                            <span className="block">Rechnet mit der Stundensumme der Arbeitsgänge — Arbeiter × Tage zählt dann nicht.</span>
+                          </>
+                        ) : (
+                          <>
+                            {anz(num(m.days))} Tage × {anz(num(m.workers))} Arbeiter × {anz(bd.stundenProTag)} h × {fmtEuro(bd.mittellohn)}/h
+                            {" = "}<b className="tabular-nums text-foreground">{fmtEuro(erg.laborCosts)}</b>
+                            {erg.laborHours > 0 && <> ({anz(erg.laborHours)} Std.)</>}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
 
               <div className="rounded border bg-muted/20 p-2">

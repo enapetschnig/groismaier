@@ -407,7 +407,11 @@ export default function KalkulationEditor() {
   const stateRef = useRef(state); stateRef.current = state;
   const nameRef = useRef(name); nameRef.current = name;
   const customerIdRef = useRef(customerId); customerIdRef.current = customerId;
-  const summeRef = useRef(0); summeRef.current = round2(projekt.totalGesamt);
+  // Gespeichert wird die ANGEBOTSSUMME (ohne optionale Aufbauten) — dieselbe
+  // Zahl, die oben rechts steht und im Angebot landet (Kundenmeldung
+  // 11.09.2026). Vorher stand hier die Summe inkl. optional, und die
+  // Übersicht zeigte damit einen Betrag, den kein Angebot je hatte.
+  const summeRef = useRef(0); summeRef.current = round2(projekt.ohneOptional.gesamtAdj);
   const loadedRef = useRef(loaded); loadedRef.current = loaded;
   const lastSavedRef = useRef<string>("");
 
@@ -1044,9 +1048,19 @@ export default function KalkulationEditor() {
           {/* Beide Summen bleiben zusammen (sonst rutscht der Deckungsbeitrag
               beim Umbrechen allein in die nächste Zeile). */}
           <div className="ml-auto flex flex-wrap items-end justify-end gap-x-6 gap-y-1">
+            {/* Kundenmeldung 11.09.2026: „147.526,79 € … im Angebot plötzlich
+                131.000 €". Die Differenz waren die OPTIONALEN Aufbauten — sie
+                stehen im Angebot, zählen aber nicht in dessen Endsumme. Oben
+                muss deshalb die Zahl stehen, die im Angebot landet; optional
+                und gesamt darunter, damit nichts versteckt ist. */}
             <div className="pb-1 text-right">
-              <div className="text-xs text-muted-foreground">Projektsumme (netto)</div>
-              <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.totalGesamt)}</div>
+              <div className="text-xs text-muted-foreground">Angebotssumme (netto)</div>
+              <div className="text-lg font-bold tabular-nums text-kb-blue-dark">{fmtEuro(projekt.ohneOptional.gesamtAdj)}</div>
+              {projekt.optional.gesamtAdj > 0 && (
+                <div className="text-[11px] text-muted-foreground">
+                  + optional {fmtEuro(projekt.optional.gesamtAdj)} = {fmtEuro(projekt.totalGesamt)} gesamt
+                </div>
+              )}
             </div>
             <div className="pb-1 text-right">
               <div className="text-xs text-muted-foreground">Deckungsbeitrag</div>
