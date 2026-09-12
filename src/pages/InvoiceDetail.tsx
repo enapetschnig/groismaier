@@ -3786,7 +3786,15 @@ Beleg: /invoices/${invoiceId || id || ""}`,
           const hopTyp = (hop as any)?.typ;
           if (hopTyp === "angebot" || hopTyp === "auftragsbestaetigung" || hopTyp === "lieferschein") {
             if ((hop as any)?.status !== "verrechnet" && (hop as any)?.status !== "storniert") {
-              await supabase.from("invoices").update({ status: "verrechnet" }).eq("id", hopCursor);
+              // Der Lieferschein merkt sich zusätzlich, MIT WELCHER Rechnung —
+              // damit die Erinnerung (Kundenwunsch 11.09.2026) dorthin
+              // verlinken kann, so wie es die Regieberichte tun.
+              const patch: Record<string, unknown> = { status: "verrechnet" };
+              if (hopTyp === "lieferschein") {
+                patch.verrechnet_mit_invoice_id = savedId;
+                patch.verrechnet_am = new Date().toISOString().slice(0, 10);
+              }
+              await (supabase.from("invoices") as any).update(patch).eq("id", hopCursor);
             }
           }
           hopCursor = (hop as any)?.parent_invoice_id || null;
@@ -4095,6 +4103,9 @@ Beleg: /invoices/${invoiceId || id || ""}`,
     const enriched: any = {
       ...form,
       kunde_kundentyp: kundeKundentyp,
+      // Beleg-ID mitgeben: Der Lieferschein lädt darüber Unterschrift und
+      // Fotos fürs PDF (pdfLieferschein.ts). Für alle anderen Typen unbenutzt.
+      id: invoiceId,
       netto_summe: nettoSumme,
       mwst_betrag: mwstBetrag,
       brutto_summe: bruttoSumme,

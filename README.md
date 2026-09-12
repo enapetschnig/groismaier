@@ -35,7 +35,7 @@ npm run build
 
 ```sh
 npx tsc --noEmit -p tsconfig.app.json   # Baseline: 5 bekannte Fehler
-npm test -- --run                        # 299 Tests
+npm test -- --run                        # 311 Tests
 npm run build
 ```
 

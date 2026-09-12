@@ -125,6 +125,11 @@ export interface InvoiceHtmlData {
   ausfuehrungs_kw?: string | null;
   ausfuehrende_firma?: string | null;
   ausfuehrende_firma_freitext?: string | null;
+  /** Beleg-ID — der Lieferschein lädt darüber Unterschrift und Fotos (pdfLieferschein.ts). */
+  id?: string | null;
+  unterschrift_kunde?: string | null;
+  unterschrift_am?: string | null;
+  unterschrift_name?: string | null;
 }
 
 export interface InvoiceHtmlItem {

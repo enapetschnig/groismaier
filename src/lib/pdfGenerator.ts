@@ -8,6 +8,7 @@ import { DEFAULT_MAHNUNG_SETTINGS, renderMahnungText, type MahnungSettings } fro
 import { getDocConfig } from "./documentTypes";
 import { buildAllgemeineAngabenRows } from "./allgemeineAngaben";
 import { zeilenBetrag } from "./belegSummen";
+import { ladeUebergabe, zeichneUebergabe } from "./pdfLieferschein";
 
 const DEFAULT_BANK: BankData = {
   kontoinhaber: "",
@@ -1591,6 +1592,15 @@ export async function generateInvoicePdf(
     pdf.setTextColor(0, 0, 0);
     pdf.text(L.danke_text, pageWidth / 2, y, { align: "center" });
     y += 8;
+  }
+
+  // ── Lieferschein: Unterschrift und Fotos (Kundenwunsch 11.09.2026) ────────
+  // Nur dieser Typ; alle anderen Belege bleiben, wie sie sind. Die Daten
+  // werden anhand der Beleg-ID nachgeladen — ohne ID (ungespeicherte
+  // Vorschau) gibt es die zwei Unterschriftslinien, sonst nichts.
+  if (docCfg.typ === "lieferschein") {
+    const uebergabe = await ladeUebergabe((invoice as any).id);
+    y = await zeichneUebergabe(pdf, uebergabe, y, { ml, mr, pageWidth, pageHeight, fussReserve: 45 });
   }
 
   // ======= FOOTER on every page =======

@@ -31,6 +31,7 @@ import Disturbances from "./pages/Disturbances";
 import DisturbanceDetail from "./pages/DisturbanceDetail";
 import Invoices from "./pages/Invoices";
 import OffenePosten from "./pages/OffenePosten";
+import LieferscheinHandy from "./pages/LieferscheinHandy";
 import Sendeprotokoll from "./pages/Sendeprotokoll";
 import InvoiceDetail from "./pages/InvoiceDetail";
 import PurchaseInvoices from "./pages/PurchaseInvoices";
@@ -120,6 +121,9 @@ function AppContent() {
           <Route path="/disturbances/:id" element={<ProtectedRoute feature="regieberichte"><DisturbanceDetail /></ProtectedRoute>} />
           <Route path="/invoices" element={<ProtectedRoute feature="rechnungen"><Invoices /></ProtectedRoute>} />
           <Route path="/offene-posten" element={<ProtectedRoute feature="rechnungen"><OffenePosten /></ProtectedRoute>} />
+          {/* Lieferschein am Handy (Kundenwunsch 11.09.2026) */}
+          <Route path="/lieferschein/neu" element={<ProtectedRoute feature="rechnungen"><LieferscheinHandy /></ProtectedRoute>} />
+          <Route path="/lieferschein/:id" element={<ProtectedRoute feature="rechnungen"><LieferscheinHandy /></ProtectedRoute>} />
           <Route path="/sendeprotokoll" element={<ProtectedRoute feature="rechnungen"><Sendeprotokoll /></ProtectedRoute>} />
           <Route path="/invoices/templates" element={<ProtectedRoute feature="rechnungen"><InvoiceTemplates /></ProtectedRoute>} />
           <Route path="/invoices/packages" element={<ProtectedRoute feature="rechnungen"><OfferPackages /></ProtectedRoute>} />

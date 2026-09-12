@@ -451,7 +451,10 @@ export default function Index() {
             buchen, Beleg abfotografieren, Regiebericht schreiben. Ohne das
             muss sich der Chef am Telefon durch sieben Bereiche scrollen, bis
             er bei den Eingangsrechnungen ist. Nur am kleinen Schirm. */}
-        <div className="mb-4 grid grid-cols-3 gap-2 sm:hidden">
+        {/* Zwei Spalten statt drei: Mit dem vierten Knopf „Lieferschein"
+            (Kundenwunsch 11.09.2026) stünde einer allein in der zweiten
+            Reihe — so sind alle gleich groß, und größer noch dazu. */}
+        <div className="mb-4 grid grid-cols-2 gap-2 sm:hidden">
           <KBButton
             className="w-full min-h-[72px] flex-col gap-1.5 py-3 text-sm"
             icon={Clock}
@@ -472,6 +475,17 @@ export default function Index() {
               icon={FileText}
               label="Regiebericht"
               onClick={() => navigate("/disturbances")}
+            />
+          )}
+          {/* Lieferschein am Hof: Fotos vom Verladen, Unterschrift vom
+              Frächter (Kundenwunsch 11.09.2026). Jeder darf — ein
+              Lieferschein hat keine Preise. */}
+          {canView("rechnungen") && (
+            <KBButton
+              className="w-full min-h-[72px] flex-col gap-1.5 py-3 text-sm"
+              icon={Truck}
+              label="Lieferschein"
+              onClick={() => navigate("/lieferschein/neu")}
             />
           )}
         </div>

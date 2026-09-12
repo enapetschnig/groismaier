@@ -10,6 +10,8 @@ import { FileText, Receipt, AlertTriangle, Download, Archive, ArchiveRestore, Tr
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { matchesSearch } from "@/lib/searchUtils";
 import { istEntwurfBeleg, hatPlatzhalterNummer, nummerFuerAnzeige } from "@/lib/belegEntwurf";
+import { lieferscheinWarnung } from "@/lib/lieferscheinUebergabe";
+import { belegPdfErzeugen, blobHerunterladen } from "@/lib/belegPdfLaden";
 import { loadInvoiceLogo } from "@/lib/logoLoader";
 import { formatDateShort } from "@/lib/dateFormat";
 import { EmptyState } from "@/components/EmptyState";
@@ -32,6 +34,8 @@ import { type InvoiceLayoutSettings, DEFAULT_LAYOUT, parseLayoutSettings } from 
 import { heuteISO } from "@/lib/datum";
 
 interface Invoice {
+  /** Lieferschein: Zeitpunkt der Unterschrift (Uebergabe). */
+  unterschrift_am?: string | null;
   id: string;
   typ: string;
   nummer: string;
@@ -301,7 +305,7 @@ export default function Invoices() {
   const fetchInvoices = async () => {
     const { data, error } = await supabase
       .from("invoices")
-      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer, betreff, dokument_bezeichnung, kunde_adresse, kunde_plz, kunde_ort, leistungsdatum, leistungsdatum_bis, lieferadresse, notizen")
+      .select("id, typ, nummer, status, kunde_name, datum, brutto_summe, netto_summe, project_id, faellig_am, mahnstufe, gueltig_bis, bezahlt_betrag, archiviert, storno_nummer, storno_datum, kundennummer, betreff, dokument_bezeichnung, kunde_adresse, kunde_plz, kunde_ort, leistungsdatum, leistungsdatum_bis, lieferadresse, notizen, unterschrift_am")
       .order("datum", { ascending: false })
       .order("created_at", { ascending: false });
 
@@ -406,84 +410,15 @@ export default function Invoices() {
 
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
+  // Der Zusammenbau (Beleg, Positionen, Bank, Logo, QR, Dokumenttexte) lebt
+  // seit 12.09.2026 in belegPdfLaden.ts — die Handy-Seite für Lieferscheine
+  // liefert damit exakt dasselbe PDF wie diese Liste.
   const handleDownloadPdf = async (invoiceId: string, nummer: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setDownloadingId(invoiceId);
     try {
-      // Load invoice + items + bank data
-      const [{ data: inv }, { data: invItems }, { data: bankSettings }] = await Promise.all([
-        supabase.from("invoices").select("*").eq("id", invoiceId).single(),
-        supabase.from("invoice_items").select("*").eq("invoice_id", invoiceId).order("position"),
-        supabase.from("app_settings").select("key, value").in("key", ["bank_kontoinhaber", "bank_iban", "bank_bic", "bank_institut", "firmen_uid"]),
-      ]);
-      if (!inv) throw new Error("Rechnung nicht gefunden");
-
-      const bank = { kontoinhaber: "", iban: bankIban, bic: bankBic, institut: bankInstitut };
-      let firmenUid = "";
-      if (bankSettings) {
-        bankSettings.forEach((s: any) => {
-          if (s.key === "bank_kontoinhaber") bank.kontoinhaber = s.value;
-          if (s.key === "bank_iban") bank.iban = s.value;
-          if (s.key === "bank_bic") bank.bic = s.value;
-          if (s.key === "bank_institut") bank.institut = s.value;
-          if (s.key === "firmen_uid") firmenUid = s.value;
-        });
-      }
-
-      // Load logo (prüft Custom-Logo aus Admin, fällt zurück auf Default)
-      const logoUri = await loadInvoiceLogo();
-
-      // Zahlungs-QR — dieselbe Regel wie überall (zahlungsQrFuerBeleg).
-      const { zahlungsQrFuerBeleg } = await import("@/lib/invoiceHtml");
-      const qrUri = await zahlungsQrFuerBeleg(inv.typ, Number(inv.brutto_summe), inv.nummer || "", bank);
-
-      const { generateInvoicePdf } = await import("@/lib/pdfGenerator");
-      const { loadDocumentTexts, applyDocumentTextsToInvoice } = await import("@/lib/documentTextsLoader");
-      const docTexts = await loadDocumentTexts(inv.typ);
-      const tageMatchDL = (inv.zahlungsbedingungen || "").match(/\d+/);
-      const invoiceWithTexts = applyDocumentTextsToInvoice({
-        // KOMPLETTE Zeile spreaden — so kommen auch die neuen Felder
-        // (referenz, zeige_faelligkeit, zahlungstext, custom_*_text,
-        // lieferadresse, kunde_kontaktperson, kundennummer) mit aufs PDF
-        // und beleg-eigene Texte werden nicht mehr überschrieben (Audit).
-        ...(inv as any),
-        kunde_anrede: inv.kunde_anrede || "", kunde_titel: inv.kunde_titel || "", reverse_charge: inv.reverse_charge || false,
-        netto_summe: Number(inv.netto_summe), mwst_satz: Number(inv.mwst_satz),
-        mwst_betrag: Number(inv.mwst_betrag), brutto_summe: Number(inv.brutto_summe),
-        bezahlt_betrag: Number(inv.bezahlt_betrag), rabatt_prozent: Number(inv.rabatt_prozent),
-        rabatt_betrag: Number(inv.rabatt_betrag), mahnstufe: Number(inv.mahnstufe),
-        skonto_prozent: Number(inv.skonto_prozent || 0), skonto_tage: Number(inv.skonto_tage || 0),
-        anzahlung_prozent: Number((inv as any).anzahlung_prozent || 0) || undefined,
-      }, docTexts, { tage: tageMatchDL ? Number(tageMatchDL[0]) : 14 });
-      const pdfBlob = await generateInvoicePdf(
-        invoiceWithTexts,
-        (invItems || []).map((it: any) => ({
-          position: it.position, beschreibung: it.beschreibung,
-          kurztext: it.kurztext || it.beschreibung, langtext: it.langtext || "",
-          menge: Number(it.menge), einheit: it.einheit || "Stk.",
-          einzelpreis: Number(it.einzelpreis), gesamtpreis: Number(it.gesamtpreis),
-          // Positionsrabatt + Gruppen-/Sichtbarkeits-Felder MÜSSEN mit,
-          // sonst druckt der Generator falsche Summen bzw. Aufbauten doppelt.
-          rabatt_prozent: Number(it.rabatt_prozent) || 0,
-          produktnummer: it.produktnummer || "",
-          gruppe: it.gruppe || null,
-          auf_pdf: it.auf_pdf !== false,
-          ist_gruppensumme: !!it.ist_gruppensumme,
-          ist_info: !!(it as any).ist_info,
-          mwst_exempt: !!(it as any).mwst_exempt,
-        })),
-        bank, logoUri, qrUri, firmenUid, invoiceLayout
-      );
-
-      // Direct download
-      const url = URL.createObjectURL(pdfBlob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${nummer}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      const { blob } = await belegPdfErzeugen(invoiceId, invoiceLayout);
+      blobHerunterladen(blob, `${nummer}.pdf`);
     } catch (err: any) {
       console.error("PDF download error:", err);
       toast({ variant: "destructive", title: "Fehler", description: "PDF konnte nicht erstellt werden" });
@@ -708,7 +643,11 @@ export default function Invoices() {
       inv.status === "teilbezahlt" ? "bg-yellow-500" :
       inv.status === "verrechnet" ? "bg-blue-500" :
       "bg-orange-500";
-    const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : "";
+    // Lieferschein: „seit N Tagen nicht verrechnet" ab 14 Tagen nach der
+    // Übergabe (Kundenwunsch 11.09.2026) — dieselbe Regel wie bei den
+    // Offenen Posten und auf der Startseite (lieferscheinUebergabe.ts).
+    const lsWarn = inv.typ === "lieferschein" ? lieferscheinWarnung(inv.status, inv.datum, inv.unterschrift_am) : "";
+    const warn = overdue ? "überfällig" : expired ? "abgelaufen" : inv.mahnstufe > 0 ? `Mahnung ${inv.mahnstufe}` : lsWarn;
     return { overdue, expired, brutto, bezahlt, offen, availableStatuses, dotColor, warn };
   };
 
@@ -1371,6 +1310,21 @@ export default function Invoices() {
                           >
                             <CheckCircle2 className={`h-4 w-4 ${inv.status === "verrechnet" ? "text-purple-700" : "text-muted-foreground"}`} />
                             {inv.status === "verrechnet" ? "Verrechnet" : "Als verrechnet"}
+                          </Button>
+                        )}
+                        {/* Fotos, Unterschrift, Übergabe — die Handy-Seite
+                            (Kundenwunsch 11.09.2026), auch vom Schreibtisch
+                            aus erreichbar. */}
+                        {inv.typ === "lieferschein" && inv.status !== "storniert" && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="h-10 gap-1.5 text-xs"
+                            title="Fotos und Unterschrift zum Lieferschein"
+                            onClick={(e) => { e.stopPropagation(); navigate(`/lieferschein/${inv.id}`); }}
+                          >
+                            <Truck className="h-4 w-4 text-muted-foreground" />
+                            Übergabe
                           </Button>
                         )}
                         <div className="ml-auto flex items-center">

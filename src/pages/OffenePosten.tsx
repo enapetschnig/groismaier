@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { supabase } from "@/integrations/supabase/client";
+import { OffeneLieferscheineKarte } from "@/components/OffeneLieferscheineKarte";
 import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton, KBButton } from "@/components/kingbill";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -328,6 +329,9 @@ export default function OffenePosten() {
                   <Input type="date" className="h-8" value={datumBis} onChange={(e) => setDatumBis(e.target.value)} title="bis" />
                 </div>
               )}
+              {/* Übergebene, noch nicht verrechnete Lieferscheine — sie stehen
+                  zur Abrechnung an, auch ohne Euro-Betrag (Kundenwunsch 11.09.2026). */}
+              <OffeneLieferscheineKarte />
               <div className="space-y-0.5 border-t border-border pt-2 text-sm">
                 <div className="flex justify-between"><span>Anzahl Rechnungen</span><span className="font-bold tabular-nums">{loading ? "…" : summen.anzahl}</span></div>
                 <div className="flex justify-between"><span>Summe Netto</span><span className="font-bold tabular-nums">€ {eur(summen.netto)}</span></div>
