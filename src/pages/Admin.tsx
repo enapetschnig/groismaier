@@ -1051,6 +1051,13 @@ export default function Admin() {
 
             {/* ===== URLAUBSVERWALTUNG ===== */}
             <LeaveManagement profiles={profiles.filter(p => p.is_active)} />
+
+            {/* ===== ZEITKONTEN + MONATSABSCHLUSS =====
+                Die Komponente war seit Monaten importiert, aber nie gerendert —
+                es gab keine Stelle, an der der Chef Zeitkonten sah oder ein
+                Monat abgeschlossen werden konnte (aufgefallen 14.09.2026 beim
+                Eintragen der ZA-Stände). */}
+            <TimeAccountManagement profiles={profiles.filter(p => p.is_active)} />
           </TabsContent>
 
           {/* ===== TAB 2: EINSTELLUNGEN ===== */}
