@@ -10,6 +10,7 @@
 // nicht als Überstunden gewertet. Saldo neutral pro solchem Tag.
 
 import { getNormalWorkingHours } from "@/lib/workingHours";
+import { tagesSoll } from "@/lib/sollStunden";
 
 export type TimeEntryLite = {
   datum: string;
@@ -45,7 +46,12 @@ export const SONDER_TAETIGKEITEN = new Set([
  * Aggregiert beliebige time_entries nach Datum und liefert je Tag
  * Ist-, Soll- und Saldo-Stunden. Sortiert aufsteigend nach Datum.
  */
-export function aggregateByDay(entries: TimeEntryLite[]): DayBalance[] {
+/**
+ * @param sollJeTag Tagessoll der Person (sollStunden.sollProTag) — ohne
+ *   Angabe Vollzeit 7,8 h. Seit 14.09.2026 hat jede Person ihr eigenes Soll
+ *   (Meldung Katrin: „auf 15 h eingestellt, nicht auf 39").
+ */
+export function aggregateByDay(entries: TimeEntryLite[], sollJeTag?: number): DayBalance[] {
   const grouped = new Map<string, TimeEntryLite[]>();
   for (const e of entries) {
     if (!e?.datum) continue;
@@ -59,9 +65,10 @@ export function aggregateByDay(entries: TimeEntryLite[]): DayBalance[] {
     const istSonderzeit = dayEntries.some(
       (e) => !!e.taetigkeit && SONDER_TAETIGKEITEN.has(e.taetigkeit),
     );
+    const tag = new Date(datum + "T12:00:00");
     const soll = istSonderzeit
       ? 0
-      : getNormalWorkingHours(new Date(datum + "T12:00:00"));
+      : (sollJeTag === undefined ? getNormalWorkingHours(tag) : tagesSoll(tag, sollJeTag));
     const saldo = istSonderzeit ? 0 : ist - soll;
     out.push({ datum, ist, soll, saldo, istSonderzeit });
   }
@@ -69,8 +76,8 @@ export function aggregateByDay(entries: TimeEntryLite[]): DayBalance[] {
 }
 
 /** Saldo-Summe über die gegebenen Einträge — Auto-Saldo aus time_entries. */
-export function totalAutoSaldo(entries: TimeEntryLite[]): number {
-  return aggregateByDay(entries).reduce((s, d) => s + d.saldo, 0);
+export function totalAutoSaldo(entries: TimeEntryLite[], sollJeTag?: number): number {
+  return aggregateByDay(entries, sollJeTag).reduce((s, d) => s + d.saldo, 0);
 }
 
 /**

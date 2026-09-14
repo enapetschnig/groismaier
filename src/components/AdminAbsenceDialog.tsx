@@ -37,7 +37,8 @@ import {
 import { Loader2, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
-import { getNormalWorkingHours, getAbsenceHoursPerDay } from "@/lib/workingHours";
+import { getNormalWorkingHours } from "@/lib/workingHours";
+import { ladeSollProfil, sollProTag } from "@/lib/sollStunden";
 import { format } from "date-fns";
 
 type AbsenceType = "Urlaub" | "Krankenstand" | "Zeitausgleich" | "Feiertag" | "Weiterbildung";
@@ -134,9 +135,9 @@ export function AdminAbsenceDialog({
 
       // Pro Werktag einen time_entry schreiben — Schema 1:1 wie der
       // Self-Service-Pfad in TimeTracking.tsx (Z. 558-570).
-      // Urlaub / Zeitausgleich / Krankenstand: pauschal 7,8 h je Tag
-      // (Kundenvorgabe 39h-Woche ÷ 5), unabhängig vom Wochentag.
-      const absenceStunden = getAbsenceHoursPerDay();
+      // Urlaub / Zeitausgleich / Krankenstand: das persönliche Tagessoll des
+      // Mitarbeiters (Teilzeit, 14.09.2026), unabhängig vom Wochentag.
+      const absenceStunden = sollProTag(await ladeSollProfil(userId));
       const rows = eligibleDates.map((d) => {
         return {
           user_id: userId,

@@ -91,6 +91,29 @@ export interface MaterialRow {
 }
 
 /** Einheit, die ein VOLUMEN meint (m³ und Schreibvarianten, auch als Preiseinheit "€ / m³"). */
+/**
+ * Wie die Menge eines Aufbaus heißt — folgt „Im Angebot als" (Kundenwunsch
+ * 14.09.2026: „wenn man oben Laufmeter, Stk oder so aussucht, dass unten
+ * auch so beschrieben wird, mit was multipliziert wird. Aktuell steht ja
+ * immer 'Pro m² rechnen'"). Gerechnet wird unverändert Preis × Menge; nur
+ * die Beschriftung wechselt. Riegel- und Dämmstoff-Zeilen bleiben bei m²,
+ * weil dort die Wandfläche physikalisch gemeint ist.
+ */
+export interface MengenEinheit {
+  einheit: string;      // „m²", „lfm", „Stk", „m³"
+  mengeLabel: string;   // Feldbeschriftung: „Länge in lfm"
+  proLabel: string;     // „pro lfm"
+  malText: string;      // „× Länge"
+}
+export function mengenEinheit(m: Pick<KalkModule, "angebotEinheit"> | null | undefined): MengenEinheit {
+  switch (m?.angebotEinheit) {
+    case "lfm":  return { einheit: "lfm", mengeLabel: "Länge in lfm",   proLabel: "pro lfm", malText: "× Länge" };
+    case "Stk.": return { einheit: "Stk", mengeLabel: "Anzahl in Stk",  proLabel: "pro Stk", malText: "× Anzahl" };
+    case "m³":   return { einheit: "m³",  mengeLabel: "Volumen in m³",  proLabel: "pro m³",  malText: "× Volumen" };
+    default:     return { einheit: "m²",  mengeLabel: "Fläche in m²",   proLabel: "pro m²",  malText: "× Fläche" };
+  }
+}
+
 export const istVolumenEinheit = (einheit: string | null | undefined): boolean =>
   /^\s*(?:(?:€|eur)\s*\/\s*)?(m3|m³|fm|rm|srm)\s*$/i.test(String(einheit || ""));
 

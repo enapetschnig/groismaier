@@ -4,6 +4,7 @@ import { useZurueck } from "@/hooks/useZurueck";
 import { Clock, Pencil, Trash2, Wallet } from "lucide-react";
 import { aggregateByDay, formatSaldo } from "@/lib/hoursAccounting";
 import { laufenderSaldo, zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, formatDatumDE, type ZeitraumSaldo } from "@/lib/zeitkonto";
+import { ladeSollProfil, sollProTag, sollText, type SollProfil } from "@/lib/sollStunden";
 import { KBToolbar } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -76,6 +77,9 @@ const MyHours = () => {
   const [laufend, setLaufend] = useState<ZeitraumSaldo>({ ueberstunden: 0, zeitausgleich: 0, gesamt: 0, tage: 0 });
   const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
   const [manualSaldo, setManualSaldo] = useState<number>(0);
+  // Persönliches Soll (Teilzeit, 14.09.2026) — Vollzeit-Rückfall bis geladen.
+  const [sollProfil, setSollProfil] = useState<SollProfil>({});
+  const sollJeTag = sollProTag(sollProfil);
 
   useEffect(() => {
     fetchEntries();
@@ -98,9 +102,10 @@ const MyHours = () => {
         .select("datum, stunden, taetigkeit").eq("user_id", user.id),
     ]);
     setManualSaldo(Number((acc as any)?.balance_hours) || 0);
-    const bis = await zaAbgeschlossenBisLaden();
+    const [bis, profil] = await Promise.all([zaAbgeschlossenBisLaden(), ladeSollProfil(user.id)]);
     setAbgeschlossenBis(bis);
-    setLaufend(laufenderSaldo((allEntries as any[]) || [], bis));
+    setSollProfil(profil);
+    setLaufend(laufenderSaldo((allEntries as any[]) || [], bis, sollProTag(profil)));
   };
 
   useEffect(() => {
@@ -108,7 +113,7 @@ const MyHours = () => {
   }, []);
 
   // Tages-Aggregation des aktuell angezeigten Monats (für Tagessaldo-Spalte).
-  const dayBalances = useMemo(() => aggregateByDay(entries as any), [entries]);
+  const dayBalances = useMemo(() => aggregateByDay(entries as any, sollJeTag), [entries, sollJeTag]);
   const dayBalanceMap = useMemo(() => new Map(dayBalances.map(d => [d.datum, d])), [dayBalances]);
   const effektiv = manualSaldo + laufend.gesamt;
 
@@ -322,7 +327,7 @@ const MyHours = () => {
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">
-              Das ZA-Konto ändert sich nur beim Monatsabschluss. Plus = Überstunden-Guthaben · Minus = Nachzuholende Stunden.
+              Dein Soll: {sollText(sollProfil)}. Das ZA-Konto ändert sich nur beim Monatsabschluss. Plus = Überstunden-Guthaben · Minus = Nachzuholende Stunden.
               Zeitausgleich-Tage zählen beim Abschluss; Urlaub, Krankenstand und Feiertag sind neutral.
             </p>
           </CardContent>

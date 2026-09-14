@@ -32,7 +32,7 @@ import { useRef, useState } from "react";
 import { ArrowDown, ArrowUp, Calculator, Check, ChevronsUpDown, Database, Eye, EyeOff, GripVertical, Grid3x3, Pencil, Plus, X } from "lucide-react";
 import {
   KalkModule, MaterialRow, Betriebsdaten, calcMaterialRow, calcMaterialSummen,
-  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell, riegelVkRoh,
+  newMaterialRow, fmt, fmtEuro, num, istRiegelZeile, istDaemmstoffZeile, istVolumenEinheit, round4, zeilenPatchFuerEk, zeilenPatchFuerVk, zeilenVkIstManuell, riegelVkRoh, mengenEinheit,
 } from "@/lib/kalkulationEngine";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -285,10 +285,12 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
     };
   };
 
+  // Beschriftung folgt „Im Angebot als" (Kundenwunsch 14.09.2026).
+  const me = mengenEinheit(m);
   const modusTitel = (row: MaterialRow) =>
-    row.manual ? "Pauschale (EK/VK gelten gesamt) — klicken für €/m² × Fläche; Namen und Preise bleiben"
+    row.manual ? `Pauschale (EK/VK gelten gesamt) — klicken für €/${me.einheit} ${me.malText}; Namen und Preise bleiben`
       : row.calc ? "Holz berechnen — klicken für Datenbank-Modus"
-        : "€/m² × Fläche (Datenbank) — klicken für Pauschale; Namen und Preise bleiben"
+        : `€/${me.einheit} ${me.malText} (Datenbank) — klicken für Pauschale; Namen und Preise bleiben`
 
   const ModusIcon = ({ row }: { row: MaterialRow }) =>
     row.manual ? <Pencil className="h-3.5 w-3.5" />
@@ -345,7 +347,7 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
           €/m² (Namen und Preise bleiben, Zeile wird freie DB-Position). */}
       {row.manual && (
         <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px] font-medium text-amber-700">
-          <span>✏️ Pauschale: EK/VK gelten GESAMT — ohne × Fläche ({fmt(num(m.area))} m²).</span>
+          <span>✏️ Pauschale: EK/VK gelten GESAMT — ohne {me.malText} ({fmt(num(m.area))} {me.einheit}).</span>
           {/* Meldung 28.08.: KVH mit 485 €/m³ stand als Pauschale in der Zeile —
               der m³-Preis zählte still nur EINMAL. Deutlich machen, dass der
               Katalogpreis je m³ gilt, die Pauschale aber keine Menge kennt. */}
@@ -359,9 +361,9 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
             type="button"
             className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold hover:bg-amber-200"
             onClick={() => onPatchRow(idx, { manual: false })}
-            title="Zeile auf €/m² umstellen — Namen und Preise bleiben, gerechnet wird dann Preis × Fläche"
+            title={`Zeile auf €/${me.einheit} umstellen — Namen und Preise bleiben, gerechnet wird dann Preis ${me.malText}`}
           >
-            Pro m² rechnen (× Fläche)
+            Pro {me.einheit} rechnen ({me.malText})
           </button>
         </div>
       )}

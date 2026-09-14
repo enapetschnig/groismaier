@@ -30,7 +30,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
+import { getDefaultWorkTimes } from "@/lib/workingHours";
+import { ladeSollProfil, sollProTag, tagesSoll, type SollProfil } from "@/lib/sollStunden";
 import { aggregateByDay, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
 import { laufenderSaldo, zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, formatDatumDE, type ZeitraumSaldo } from "@/lib/zeitkonto";
 import { alsISO } from "@/lib/datum";
@@ -564,7 +565,10 @@ export default function HoursReport() {
 
   // Tages-Saldo aus dem zentralen Helper — pro Tag aggregiert,
   // Sonderzeiten neutral, Minusstunden möglich.
-  const dayBalances = useMemo(() => aggregateByDay(timeEntries as any), [timeEntries]);
+  // Persönliches Soll des gewählten Mitarbeiters (Teilzeit, 14.09.2026).
+  const [sollProfil, setSollProfil] = useState<SollProfil>({});
+  const sollJeTag = sollProTag(sollProfil);
+  const dayBalances = useMemo(() => aggregateByDay(timeEntries as any, sollJeTag), [timeEntries, sollJeTag]);
   const dayBalanceMap = useMemo(() => new Map(dayBalances.map(d => [d.datum, d])), [dayBalances]);
   // Erste Eintrags-ID pro Tag — damit "Überstunden" und Soll nur in
   // der ersten Zeile pro Tag gezeigt werden (vermeidet Doppelzählung).
@@ -626,9 +630,10 @@ export default function HoursReport() {
       ]);
       if (cancelled) return;
       setManualBalance(Number((acc as any)?.balance_hours) || 0);
-      const bis = await zaAbgeschlossenBisLaden();
+      const [bis, profil] = await Promise.all([zaAbgeschlossenBisLaden(), ladeSollProfil(selectedUserId)]);
       setAbgeschlossenBis(bis);
-      setLaufend(laufenderSaldo((allEntries as any[]) || [], bis));
+      setSollProfil(profil);
+      setLaufend(laufenderSaldo((allEntries as any[]) || [], bis, sollProTag(profil)));
     })();
     return () => { cancelled = true; };
   }, [selectedUserId]);
@@ -760,7 +765,7 @@ export default function HoursReport() {
             ]);
           } else {
             // Export OHNE Überstunden: Regelarbeitszeiten aus Lib
-            const regelarbeitszeit = getNormalWorkingHours(dayDate);
+            const regelarbeitszeit = tagesSoll(dayDate, sollJeTag);
 
             // Anwesenheits-Vorgabe zur Anzeige: Mo-Do 07:00-17:00 (1h Pause),
             // Fr 07:00-12:00. Das gebuchte Soll bleibt 7,8 h/Tag (regelarbeitszeit).
@@ -799,7 +804,7 @@ export default function HoursReport() {
             const saldoText = (dayBal && Math.abs(dayBal.saldo) >= 0.005) ? formatSaldo(dayBal.saldo) : "";
             worksheetData.push(["", "", "", "", "", "Tagessumme:", dayTotalHours.toFixed(2), saldoText, "", "", "", ""]);
           } else {
-            const regelarbeitszeitTag = getNormalWorkingHours(dayDate);
+            const regelarbeitszeitTag = tagesSoll(dayDate, sollJeTag);
             // Tagessoll erscheint genau EINMAL pro Tag (vorher ×Anzahl-Einträge — Bug).
             worksheetData.push(["", "", "", "", "", "Tagessumme:", regelarbeitszeitTag.toFixed(2), "", "", "", "", ""]);
           }
@@ -814,7 +819,7 @@ export default function HoursReport() {
       for (let day = 1; day <= daysInMonth; day++) {
         const dayDate = new Date(year, month - 1, day);
         const hasEntries = timeEntries.some((e) => isSameDay(parseISO(e.datum), dayDate));
-        if (hasEntries) summe += getNormalWorkingHours(dayDate);
+        if (hasEntries) summe += tagesSoll(dayDate, sollJeTag);
       }
       return summe;
     };

@@ -13,7 +13,7 @@ import { useState } from "react";
 import { BookmarkPlus, ChevronDown, Copy, GripVertical, Plus, Trash2 } from "lucide-react";
 import {
   KalkModule, MaterialRow, ModulErgebnis, Betriebsdaten, type Arbeitsgang,
-  DAEMMSTAERKEN, fmt, fmtEuro, num, neuerArbeitsgang, nutztArbeitsgaenge, arbeitsgangStunden,
+  DAEMMSTAERKEN, fmt, fmtEuro, num, neuerArbeitsgang, nutztArbeitsgaenge, arbeitsgangStunden, mengenEinheit,
 } from "@/lib/kalkulationEngine";
 import { KatalogKategorie } from "./useKalkKatalog";
 import { MaterialTabelle } from "./MaterialTabelle";
@@ -138,7 +138,7 @@ export function AufbauKarte({
                     <option value="AW">AW</option>
                   </select>
                 </Feld>
-                <Feld label="Fläche in qm">
+                <Feld label={mengenEinheit(m).mengeLabel}>
                   <NumInput min={0} value={m.area} onCommit={(n) => onPatch({ area: n ?? 0 })} className={FELD_H} />
                 </Feld>
                 {/* Wie geht der Aufbau ins Angebot? (Kundenwunsch 26.08.2026:
@@ -148,7 +148,7 @@ export function AufbauKarte({
                     value={m.angebotEinheit || "auto"}
                     onChange={(e) => onPatch({ angebotEinheit: e.target.value as KalkModule["angebotEinheit"] })}
                     title="Pauschale = ein Betrag ohne Menge. Sonst wird die Fläche als Menge übergeben.">
-                    <option value="auto">automatisch (m² × Fläche)</option>
+                    <option value="auto">automatisch (m², Preis × Fläche)</option>
                     <option value="pauschal">Pauschale</option>
                     <option value="m²">m²</option>
                     <option value="lfm">Laufmeter</option>
@@ -367,7 +367,7 @@ export function AufbauKarte({
                 <div className="mt-1 flex justify-between border-t pt-1 text-base"><span className="font-bold">Gesamt</span><b className="tabular-nums">{fmtEuro(gesamtAdj)}</b></div>
                 {area > 0 && (
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    pro qm: Material {fmtEuro(area > 0 ? materialAdj / area : 0)} · Arbeit {fmtEuro(area > 0 ? laborAdj / area : 0)} · Gesamt <b className="tabular-nums">{fmtEuro(area > 0 ? gesamtAdj / area : 0)}</b>
+                    {mengenEinheit(m).proLabel}: Material {fmtEuro(area > 0 ? materialAdj / area : 0)} · Arbeit {fmtEuro(area > 0 ? laborAdj / area : 0)} · Gesamt <b className="tabular-nums">{fmtEuro(area > 0 ? gesamtAdj / area : 0)}</b>
                   </div>
                 )}
                 {faktor !== 1 && <div className="mt-1 text-[10px] text-muted-foreground">inkl. Aufschlag/Skonto (Faktor {fmt(faktor)})</div>}

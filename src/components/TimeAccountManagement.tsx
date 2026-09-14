@@ -17,6 +17,7 @@ import {
   laufenderSaldo, zaAbgeschlossenBisLaden, monatAbschliessen, naechsterAbschluss, formatDatumDE,
   type ZeitraumSaldo, type AbschlussMonat,
 } from "@/lib/zeitkonto";
+import { ladeSollProfile, sollProTag, sollText, speichereSoll, wochenstundenVon, arbeitstageVon, type SollProfil } from "@/lib/sollStunden";
 
 type Profile = {
   id: string;
@@ -65,6 +66,12 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
   const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
   const [naechster, setNaechster] = useState<AbschlussMonat | null>(null);
   const [abschlussLaeuft, setAbschlussLaeuft] = useState(false);
+  // Persönliches Soll je Person (Teilzeit, 14.09.2026) + Editor.
+  const [sollByUser, setSollByUser] = useState<Record<string, SollProfil>>({});
+  const [sollUser, setSollUser] = useState<string | null>(null);
+  const [sollWochen, setSollWochen] = useState("39");
+  const [sollTage, setSollTage] = useState("5");
+  const [sollSpeichert, setSollSpeichert] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -86,9 +93,10 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
     if (accData) setAccounts(accData as TimeAccount[]);
     if (txData) setTransactions(txData as Transaction[]);
 
-    const bis = await zaAbgeschlossenBisLaden();
+    const [bis, soll] = await Promise.all([zaAbgeschlossenBisLaden(), ladeSollProfile()]);
     setAbgeschlossenBis(bis);
     setNaechster(naechsterAbschluss(bis));
+    setSollByUser(soll);
     if (entriesData) {
       const byUser: Record<string, TimeEntryLite[]> = {};
       for (const e of entriesData as Array<TimeEntryLite & { user_id: string }>) {
@@ -96,10 +104,32 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
         byUser[e.user_id].push(e);
       }
       const map: Record<string, ZeitraumSaldo> = {};
-      for (const [uid, list] of Object.entries(byUser)) map[uid] = laufenderSaldo(list, bis);
+      for (const [uid, list] of Object.entries(byUser)) map[uid] = laufenderSaldo(list, bis, sollProTag(soll[uid]));
       setLaufendByUser(map);
     }
     setLoading(false);
+  };
+
+  const sollOeffnen = (userId: string) => {
+    const p = sollByUser[userId] || {};
+    setSollWochen(String(wochenstundenVon(p)).replace(".", ","));
+    setSollTage(String(arbeitstageVon(p)));
+    setSollUser(userId);
+  };
+  const sollSpeichern = async () => {
+    if (!sollUser) return;
+    const w = Number(sollWochen.replace(",", ".")); const t = Number(sollTage.replace(",", "."));
+    if (!(w > 0 && w <= 60) || !(t >= 1 && t <= 7)) {
+      toast({ variant: "destructive", title: "Unplausibel", description: "Wochenstunden 1–60, Arbeitstage 1–7." });
+      return;
+    }
+    setSollSpeichert(true);
+    const fehler = await speichereSoll(sollUser, w, t);
+    setSollSpeichert(false);
+    if (fehler) { toast({ variant: "destructive", title: "Nicht gespeichert", description: fehler }); return; }
+    toast({ title: "Soll gespeichert", description: `${getProfileName(sollUser)}: ${sollText({ wochenstunden: w, arbeitstage_woche: t })}` });
+    setSollUser(null);
+    await fetchData();
   };
 
   /** Monatsabschluss für alle angezeigten Mitarbeiter — bucht den nächsten Monat ins Konto. */
@@ -302,9 +332,15 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
                         <span className="text-muted-foreground">
                           nach Abschluss: <span className={colorClass(effektiv)}>{formatSaldo(effektiv)} h</span>
                         </span>
+                        <span className="text-muted-foreground">
+                          Soll: {sollText(sollByUser[profile.id])}
+                        </span>
                       </p>
                     </div>
                     <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => sollOeffnen(profile.id)} title="Wochenstunden und Arbeitstage dieser Person">
+                        Soll
+                      </Button>
                       {account ? (
                         <>
                           <Button
@@ -448,6 +484,38 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
               ))}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Soll je Person (Teilzeit, 14.09.2026) */}
+      <Dialog open={!!sollUser} onOpenChange={(o) => { if (!o) setSollUser(null); }}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Soll-Stunden{sollUser ? ` — ${getProfileName(sollUser)}` : ""}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-1">
+            <p className="text-sm text-muted-foreground">
+              Tagessoll = Wochenstunden ÷ Arbeitstage. Es gilt an jedem gebuchten Werktag und für Urlaub,
+              Zeitausgleich und Krankenstand. Vollzeit: 39 h / 5 Tage = 7,8 h.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1">
+                <Label>Wochenstunden</Label>
+                <Input inputMode="decimal" value={sollWochen} onChange={(e) => setSollWochen(e.target.value)} className="h-10" />
+              </div>
+              <div className="space-y-1">
+                <Label>Arbeitstage je Woche</Label>
+                <Input inputMode="numeric" value={sollTage} onChange={(e) => setSollTage(e.target.value)} className="h-10" />
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Ergibt {sollText({ wochenstunden: sollWochen.replace(",", "."), arbeitstage_woche: sollTage })}.
+            </p>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setSollUser(null)}>Abbrechen</Button>
+              <Button onClick={() => void sollSpeichern()} disabled={sollSpeichert}>{sollSpeichert ? "Speichert …" : "Speichern"}</Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

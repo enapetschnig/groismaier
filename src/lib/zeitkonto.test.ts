@@ -1,4 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+// Reine Rechenlogik testen — der Supabase-Client würde in Node ohne localStorage schreien.
+vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: () => ({ select: async () => ({ data: null, error: null }) }) } }));
 import { zeitraumSaldo, laufenderSaldo, naechsterAbschluss, istAbgeschlossen } from "./zeitkonto";
 
 // 2026-09-01 ist ein Dienstag; 05./06.09. Wochenende.
@@ -76,5 +78,16 @@ describe("istAbgeschlossen", () => {
     expect(istAbgeschlossen("2026-08-31", "2026-08-31")).toBe(true);
     expect(istAbgeschlossen("2026-09-01", "2026-08-31")).toBe(false);
     expect(istAbgeschlossen("2026-08-01", null)).toBe(false);
+  });
+});
+
+describe("zeitraumSaldo mit persönlichem Soll (Teilzeit, 14.09.2026)", () => {
+  it("Katrin 3 h Soll: 2,5 h gebucht = −0,5, ganzer ZA-Tag = −3", () => {
+    expect(zeitraumSaldo([e("2026-09-09", 2.5, "Büro")], null, null, 3).gesamt).toBe(-0.5);
+    expect(zeitraumSaldo([e("2026-09-09", 3, "Zeitausgleich")], null, null, 3).gesamt).toBe(-3);
+  });
+  it("ohne Angabe bleibt Vollzeit 7,8", () => {
+    expect(zeitraumSaldo([e("2026-09-09", 9)]).gesamt).toBe(1.2);
+    expect(laufenderSaldo([e("2026-09-09", 9)], "2026-08-31", 3).gesamt).toBe(6);
   });
 });

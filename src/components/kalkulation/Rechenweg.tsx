@@ -12,7 +12,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import {
   Betriebsdaten, KalkModule, ModulErgebnis, fmt, fmtEuro, num,
   istRiegelZeile, istDaemmstoffZeile, zeilenVkIstManuell,
-  gueltigeArbeitsgaenge,
+  gueltigeArbeitsgaenge, mengenEinheit,
 } from "@/lib/kalkulationEngine";
 
 interface Props {
@@ -39,6 +39,7 @@ export function Rechenweg({ m, erg, bd, faktor }: Props) {
   const [offen, setOffen] = useState(false);
   const area = num(m.area);
   const vkFaktor = bd.vkFaktor > 0 ? bd.vkFaktor : 1;
+  const me = mengenEinheit(m);
 
   /** Formeltext einer Materialzeile mit eingesetzten Zahlen. */
   const materialFormel = (z: ModulErgebnis["material"]["zeilen"][number]): string => {
@@ -46,8 +47,8 @@ export function Rechenweg({ m, erg, bd, faktor }: Props) {
     const r = z.ergebnis;
     if (row.manual) {
       return r.vkAbgeleitet
-        ? `Pauschale: EK ${fmt(num(row.ekPrice))} € × ${fmt(vkFaktor)} = ${fmt(r.vkAbsolut)} € gesamt (ohne × Fläche)`
-        : `Pauschale ${fmt(r.vkAbsolut)} € gesamt (ohne × Fläche)`;
+        ? `Pauschale: EK ${fmt(num(row.ekPrice))} € × ${fmt(vkFaktor)} = ${fmt(r.vkAbsolut)} € gesamt (ohne ${me.malText})`
+        : `Pauschale ${fmt(r.vkAbsolut)} € gesamt (ohne ${me.malText})`;
     }
     if (row.calc) {
       return `${fmt(area)} m² × ${fmt(num(row.lmPerQm))} lfm/m² × ${fmt(num(row.dimension))} cm × ${fmt(num(row.dimension2))} cm × ${fmt(num(row.ekPrice))} €/m³ = ${fmt(r.vkAbsolut)} € (EK = VK, ohne Aufschlag)`;

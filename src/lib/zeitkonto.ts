@@ -26,6 +26,7 @@
 import { supabase } from "@/integrations/supabase/client";
 import { getNormalWorkingHours } from "@/lib/workingHours";
 import { SONDER_TAETIGKEITEN } from "./hoursAccounting";
+import { tagesSoll, sollProTag, ladeSollProfile } from "./sollStunden";
 
 export const ZA_ABGESCHLOSSEN_KEY = "za_abgeschlossen_bis";
 export const ZEITAUSGLEICH = "Zeitausgleich";
@@ -71,6 +72,8 @@ export function zeitraumSaldo(
   entries: ZaEintragLite[],
   von?: string | null,
   bis?: string | null,
+  /** Tagessoll der Person (sollStunden.sollProTag); ohne Angabe Vollzeit 7,8 h. */
+  sollJeTag?: number,
 ): ZeitraumSaldo {
   const tage = new Map<string, ZaEintragLite[]>();
   for (const e of entries || []) {
@@ -83,7 +86,8 @@ export function zeitraumSaldo(
   }
   let ueberstunden = 0, zeitausgleich = 0;
   for (const [datum, list] of tage) {
-    const soll = getNormalWorkingHours(new Date(datum + "T12:00:00"));
+    const tag = new Date(datum + "T12:00:00");
+    const soll = sollJeTag === undefined ? getNormalWorkingHours(tag) : tagesSoll(tag, sollJeTag);
     const za = list.filter((e) => istZa(e.taetigkeit)).reduce((s, e) => s + (Number(e.stunden) || 0), 0);
     const andereSonder = list.some((e) => istAndereSonder(e.taetigkeit));
     const normalIst = list
@@ -96,11 +100,11 @@ export function zeitraumSaldo(
 }
 
 /** Der laufende, noch nicht abgeschlossene Zeitraum: alles nach dem Stichtag. */
-export function laufenderSaldo(entries: ZaEintragLite[], abgeschlossenBis: string | null): ZeitraumSaldo {
-  if (!abgeschlossenBis) return zeitraumSaldo(entries);
+export function laufenderSaldo(entries: ZaEintragLite[], abgeschlossenBis: string | null, sollJeTag?: number): ZeitraumSaldo {
+  if (!abgeschlossenBis) return zeitraumSaldo(entries, null, null, sollJeTag);
   const von = new Date(abgeschlossenBis + "T12:00:00");
   von.setDate(von.getDate() + 1);
-  return zeitraumSaldo(entries, isoDatum(von), null);
+  return zeitraumSaldo(entries, isoDatum(von), null, sollJeTag);
 }
 
 export const isoDatum = (d: Date): string =>
@@ -190,10 +194,12 @@ export async function monatAbschliessen(userIds: string[], geaendertVon: string)
     l.push(e);
     proUser.set(e.user_id, l);
   }
+  // Persönliches Soll je Mitarbeiter (Teilzeit, 14.09.2026).
+  const sollProfile = await ladeSollProfile(userIds);
 
   const ergebnis: AbschlussErgebnis = { monat, gebucht: [], ohneAenderung: 0, fehler: [] };
   for (const userId of userIds) {
-    const saldo = zeitraumSaldo(proUser.get(userId) || []);
+    const saldo = zeitraumSaldo(proUser.get(userId) || [], null, null, sollProTag(sollProfile[userId]));
     if (Math.abs(saldo.gesamt) < 0.005) { ergebnis.ohneAenderung++; continue; }
     const { data: konto } = await (supabase.from("time_accounts" as never) as any)
       .select("id, balance_hours").eq("user_id", userId).maybeSingle();

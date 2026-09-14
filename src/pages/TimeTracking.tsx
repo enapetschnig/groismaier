@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, laufenderSaldo } from "@/lib/zeitkonto";
+import { ladeSollProfil, sollProTag, sollText, tagesSoll, type SollProfil } from "@/lib/sollStunden";
 import { toast as sonnerToast } from "sonner";
 import {
   getNormalWorkingHours,
@@ -148,6 +149,9 @@ const TimeTracking = () => {
   const [loadingDayEntries, setLoadingDayEntries] = useState(false);
   
   const [showAbsenceDialog, setShowAbsenceDialog] = useState(false);
+  // Persönliches Soll (Teilzeit, 14.09.2026): Abwesenheitstage und Kopfzeile.
+  const [sollProfil, setSollProfil] = useState<SollProfil>({});
+  const sollJeTag = sollProTag(sollProfil);
   
   const [absenceData, setAbsenceData] = useState({
     date: heuteISO(),
@@ -241,6 +245,10 @@ const TimeTracking = () => {
   };
 
   // Load existing entries when date changes
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => { if (user) ladeSollProfil(user.id).then(setSollProfil); });
+  }, []);
+
   useEffect(() => {
     fetchExistingDayEntries(selectedDate);
   }, [selectedDate]);
@@ -524,9 +532,9 @@ const TimeTracking = () => {
     }
 
     const selectedDateObj = new Date(absenceData.date);
-    // Urlaub / ZA / Krankenstand / Feiertag: pauschal 7,8 h je Tag
-    // (Kundenvorgabe 39h-Woche ÷ 5 Tage), unabhängig vom Wochentag.
-    const automaticHours = getAbsenceHoursPerDay();
+    // Urlaub / ZA / Krankenstand / Feiertag: das persönliche Tagessoll
+    // (Wochenstunden ÷ Arbeitstage; Vollzeit 7,8 h), unabhängig vom Wochentag.
+    const automaticHours = sollJeTag;
     const defaultTimes = getDefaultWorkTimes(selectedDateObj);
 
     let workingHours: number;
@@ -1046,10 +1054,10 @@ const TimeTracking = () => {
               <div className="rounded-lg border bg-card p-4">
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary" className="text-xs">
-                    {getWeeklyTargetHours()}h Wochensoll
+                    {sollText(sollProfil)}
                   </Badge>
                   <span className="text-xs text-muted-foreground">
-                    Mo-Do: 8,5h • Fr: 5h (inkl. 0,5h Überstunde/ZA)
+                    Anwesenheit Mo–Do 07:00–17:00, Fr 07:00–12:00 · Mehr oder weniger läuft ins Zeitkonto
                   </span>
                 </div>
               </div>
@@ -1701,7 +1709,7 @@ const TimeTracking = () => {
                   <div className="flex items-center justify-between">
                     <span className="text-sm text-muted-foreground">Berechnete Stunden für diesen Tag:</span>
                     <Badge variant="secondary" className="text-lg font-bold px-3 py-1">
-                      {absenceData.customHours || getNormalWorkingHours(new Date(absenceData.date))} h
+                      {absenceData.customHours || tagesSoll(new Date(absenceData.date), sollJeTag)} h
                     </Badge>
                   </div>
                   <div className="text-xs text-muted-foreground">
@@ -1710,7 +1718,7 @@ const TimeTracking = () => {
                       // Vorher versprach der Dialog freitags 4,5 Stunden,
                       // gebucht wurden 0 — die Regel kennt Fr/Sa/So gar nicht.
                       const absenceDateObj = new Date(absenceData.date);
-                      const stunden = getNormalWorkingHours(absenceDateObj);
+                      const stunden = tagesSoll(absenceDateObj, sollJeTag);
                       const zeiten = getDefaultWorkTimes(absenceDateObj);
                       if (!stunden) return "Für diesen Tag ist keine Regelarbeitszeit hinterlegt: 0 Stunden";
                       return zeiten
@@ -1724,7 +1732,7 @@ const TimeTracking = () => {
                       <Input
                         type="text"
                         inputMode="decimal"
-                        placeholder={formatForInput(getNormalWorkingHours(new Date(absenceData.date)))}
+                        placeholder={formatForInput(tagesSoll(new Date(absenceData.date), sollJeTag))}
                         value={absenceData.customHours}
                         onChange={(e) => setAbsenceData({ ...absenceData, customHours: e.target.value })}
                         onBlur={() => {
