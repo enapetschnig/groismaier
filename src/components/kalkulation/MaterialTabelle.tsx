@@ -383,20 +383,26 @@ export function MaterialTabelle({ module: m, bd, kategorien, onPatchRow, onRepla
       )}
       {r.istDaemm && row.product && row.preisJeM2 !== true && (
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-kb-blue-dark">
+          {/* Frage 14.09.2026 (Knapp, Holzwolle): „Wie sieht der Vorgang im
+              Hintergrund aus … steht ja dabei, dass er nicht über m² rechnet".
+              Der Knopf „Preis gilt je m²" wurde als Aussage gelesen, der
+              „Tipp" als Teil der Rechnung. Jetzt steht die komplette Rechnung
+              mit Zahlen da, und der Knopf ist erkennbar ein Umschalter. */}
           <span>
-            Preis je m³ × {fmt(num(m.insulationThickness))} cm Dämmstärke → {fmtEuro(r.erg.vkProM2)} / m²
-            <span className="text-muted-foreground"> · Tipp: €/m² je cm × 100 = €/m³</span>
+            Dämmstoff: {fmt(num(m.insulationThickness) > 0 ? r.erg.vkProM2 / (num(m.insulationThickness) / 100) : 0)} €/m³
+            {" × "}{fmt(num(m.insulationThickness) / 100)} m ({fmt(num(m.insulationThickness))} cm Dämmstärke)
+            {" = "}<b>{fmtEuro(r.erg.vkProM2)} / m²</b> × {fmt(num(m.area))} m² Fläche
           </span>
           {/* Kundenmeldung 12.09.2026: selbst gerechneter €/m²-Preis wurde
               trotzdem mit der Dämmstärke multipliziert. Der Schalter nimmt
               die Zeile aus der Umrechnung — sichtbar, an der Zeile gespeichert. */}
           <button
             type="button"
-            className="rounded border border-amber-400 bg-amber-100 px-1.5 py-0.5 font-semibold text-amber-900 hover:bg-amber-200"
+            className="rounded border border-border bg-muted px-1.5 py-0.5 font-semibold hover:bg-muted/70"
             onClick={() => onPatchRow(idx, { preisJeM2: true })}
-            title="EK/VK gelten je m² — keine Umrechnung über die Dämmstärke"
+            title="Umschalten: EK/VK dieser Zeile gelten je m² — dann keine Umrechnung über die Dämmstärke"
           >
-            Preis gilt je m²
+            Umschalten auf Preis je m²
           </button>
         </div>
       )}

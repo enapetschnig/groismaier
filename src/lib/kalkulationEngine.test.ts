@@ -63,6 +63,23 @@ describe("Materialzeile", () => {
     expect(r.vkProM2).toBeCloseTo(40, 2);
   });
 
+  it("Frage 14.09.2026 (Knapp): jede Dämmstoff-Zeile rechnet gleich — €/m³ × gewählte Dämmstärke", () => {
+    // Holzwolle 141,75 €/m³ bei 16 cm → 22,68 €/m² (der Wert aus dem Foto);
+    // dieselbe Zeile bei 10 und 24 cm folgt der Dämmstärke; ein anderer
+    // Artikel derselben Kategorie (Stroh, Steinwolle) rechnet exakt gleich.
+    const holzwolle = zeile({ category: "Dämmstoffe", product: "Holzwolle", ekPrice: 105, vkPrice: 141.75 });
+    expect(calcMaterialRow(holzwolle, { ...modul, insulationThickness: 16 }, bd).vkProM2).toBeCloseTo(22.68, 2);
+    expect(calcMaterialRow(holzwolle, { ...modul, insulationThickness: 10 }, bd).vkProM2).toBeCloseTo(14.175, 3);
+    expect(calcMaterialRow(holzwolle, { ...modul, insulationThickness: 24 }, bd).vkProM2).toBeCloseTo(34.02, 2);
+    for (const product of ["Stroh inkl Einblasen", "Steinwolle", "Zellulose"]) {
+      const r = calcMaterialRow(zeile({ category: "Dämmstoffe", product, ekPrice: 105, vkPrice: 141.75 }), { ...modul, insulationThickness: 16 }, bd);
+      expect(r.vkProM2).toBeCloseTo(22.68, 2);
+      expect(r.ekProM2).toBeCloseTo(16.8, 2);
+    }
+    // „Preis gilt je m²" nimmt die Zeile aus der Umrechnung.
+    expect(calcMaterialRow({ ...holzwolle, preisJeM2: true }, { ...modul, insulationThickness: 16 }, bd).vkProM2).toBeCloseTo(141.75, 2);
+  });
+
   it("Dämmstoffe ohne Preis liefern nichts statt NaN", () => {
     const r = calcMaterialRow(zeile({ category: "Dämmstoffe", ekPrice: 0, vkPrice: 0 }), modul, bd);
     expect(r.ekProM2).toBe(0);
