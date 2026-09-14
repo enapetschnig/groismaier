@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { projektMoeglich, projektPflicht, projektFeldLabel, projektFeldHinweis } from "@/lib/kostenstellen";
+import { zeitkontoNachEintragAenderung, type ZaEintragLite } from "@/lib/zeitkonto";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -86,6 +87,9 @@ export function AdminTimeEntryDialog({
   const [geraetId, setGeraetId] = useState("");
   /** Kostenstelle beim Laden — steuert, ob Gerätezuordnungen zu ersetzen sind. */
   const [urspruenglicheKs, setUrspruenglicheKs] = useState("");
+  // Der geladene Stand des Eintrags — damit ein gelöschter oder umgebuchter
+  // Zeitausgleich seine Kontobuchung zurückgibt (Befund 14.09.2026).
+  const [urspruenglich, setUrspruenglich] = useState<ZaEintragLite | null>(null);
   const [kostenstellen, setKostenstellen] = useState<KostenstelleOpt[]>(KOSTENSTELLEN_FALLBACK);
   const [isAbsence, setIsAbsence] = useState(false);
 
@@ -151,6 +155,7 @@ export function AdminTimeEntryDialog({
             });
             setIsAbsence(ABWESENHEITS_TAETIGKEITEN.has((d.taetigkeit || "").trim()));
             setUrspruenglicheKs(d.kostenstelle || "baustelle");
+            setUrspruenglich({ datum: d.datum, stunden: Number(d.stunden) || 0, taetigkeit: d.taetigkeit || "" });
             setGeraetId((((d.time_entry_vehicles as any[]) || [])[0]?.vehicle_id as string) || "");
           }
         } else {
@@ -337,6 +342,20 @@ export function AdminTimeEntryDialog({
       } else if (targetId && warGeraeteKs && !geraeteKs) {
         await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", targetId);
       }
+      // Zeitkonto nachziehen: Ein nachgetragener Zeitausgleich bucht ab (das
+      // fehlte hier bisher — nur die Zeiterfassung und der Abwesenheits-Dialog
+      // taten es), ein umgebuchter oder in den Stunden geänderter gibt zurück.
+      const kontoErgebnis = await zeitkontoNachEintragAenderung(
+        userId,
+        isEdit ? urspruenglich : null,
+        { datum: form.datum, stunden: stundenNum, taetigkeit: form.taetigkeit.trim() },
+        callerId,
+      );
+      if (!kontoErgebnis.ok) {
+        toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: kontoErgebnis.fehler });
+      } else if (kontoErgebnis.delta !== 0) {
+        toast({ title: "Zeitkonto angepasst", description: `${kontoErgebnis.delta > 0 ? "+" : ""}${kontoErgebnis.delta.toFixed(2)} h gebucht.` });
+      }
       toast({ title: isEdit ? "Eintrag aktualisiert" : "Eintrag nachgetragen" });
       onSaved();
       onClose();
@@ -364,6 +383,14 @@ export function AdminTimeEntryDialog({
       // CASCADE entfernt time_entry_vehicles automatisch
       const { error } = await supabase.from("time_entries").delete().eq("id", entryId);
       if (error) throw error;
+      // Gelöschter Zeitausgleich: Abbuchung zurück ins Konto.
+      const { data: { user: caller } } = await supabase.auth.getUser();
+      const kontoErgebnis = await zeitkontoNachEintragAenderung(userId, urspruenglich, null, caller?.id || userId);
+      if (!kontoErgebnis.ok) {
+        toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: kontoErgebnis.fehler });
+      } else if (kontoErgebnis.delta !== 0) {
+        toast({ title: "Zeitkonto angepasst", description: `+${kontoErgebnis.delta.toFixed(2)} h zurückgebucht.` });
+      }
       toast({ title: "Eintrag gelöscht" });
       onSaved();
       onClose();

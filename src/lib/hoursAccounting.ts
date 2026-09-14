@@ -20,7 +20,10 @@ export type TimeEntryLite = {
 export type DayBalance = {
   datum: string;          // YYYY-MM-DD
   ist: number;            // gebuchte Summe (alle Einträge des Tages)
-  soll: number;           // Tagessoll (10/0 Mo-Do/sonst, 0 bei Sonderzeit)
+  // Tagessoll aus getNormalWorkingHours: 7,8 h Mo–Fr (39-h-Woche), 0 am
+  // Wochenende und bei Sonderzeit. (Der frühere Vermerk „10/0 Mo–Do" war
+  // seit der Umstellung auf 39 h veraltet — korrigiert 14.09.2026.)
+  soll: number;
   saldo: number;          // ist - soll, kann negativ sein
   istSonderzeit: boolean;
 };

@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
 import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
+import { zeitkontoNachEintragAenderung, type ZaEintragLite } from "@/lib/zeitkonto";
 import { alsISO } from "@/lib/datum";
 import { lenkzeitJeMitarbeiter, lenkzeitText } from "@/lib/lenkzeit";
 
@@ -517,9 +518,29 @@ export default function HoursReport() {
     if (error) {
       toast({ title: "Fehler", description: error.message, variant: "destructive" });
     } else {
+      // Zeitausgleich umgebucht oder Stunden geändert? Dann das Konto nachziehen
+      // (Befund 14.09.2026: Abbuchung blieb sonst stehen).
+      await zeitkontoNachAenderungMelden(
+        editEntry.user_id,
+        editEntry as any,
+        { datum: editEntry.datum, stunden, taetigkeit: editForm.taetigkeit },
+      );
       toast({ title: "Eintrag aktualisiert" });
       setEditEntry(null);
       fetchTimeEntries();
+    }
+  };
+
+  /** Konto nach Änderung/Löschung eines Eintrags nachziehen und das Ergebnis melden. */
+  const zeitkontoNachAenderungMelden = async (
+    userId: string, alt: ZaEintragLite | null, neu: ZaEintragLite | null,
+  ) => {
+    const { data: { user } } = await supabase.auth.getUser();
+    const r = await zeitkontoNachEintragAenderung(userId, alt, neu, user?.id || userId);
+    if (!r.ok) {
+      toast({ title: "Zeitkonto nicht nachgezogen", description: r.fehler, variant: "destructive" });
+    } else if (r.delta !== 0) {
+      toast({ title: "Zeitkonto angepasst", description: `${r.delta > 0 ? "+" : ""}${r.delta.toFixed(2)} h gebucht.` });
     }
   };
 
@@ -529,6 +550,7 @@ export default function HoursReport() {
     if (error) {
       toast({ title: "Fehler", description: error.message, variant: "destructive" });
     } else {
+      await zeitkontoNachAenderungMelden(editEntry.user_id, editEntry as any, null);
       toast({ title: "Eintrag gelöscht" });
       setEditEntry(null);
       fetchTimeEntries();

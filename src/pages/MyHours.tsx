@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { Clock, Pencil, Trash2, Wallet } from "lucide-react";
 import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
+import { zeitkontoNachEintragAenderung } from "@/lib/zeitkonto";
 import { KBToolbar } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -219,6 +220,22 @@ const MyHours = () => {
       } else if (warGeraeteKs) {
         await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", editingEntry.id);
       }
+      // Stunden eines Zeitausgleich-Eintrags geändert? Dann die Differenz im
+      // Konto nachziehen. Das Original steht noch in `entries` — editingEntry
+      // ist bereits der bearbeitete Stand (Befund 14.09.2026).
+      const original = entries.find((e) => e.id === editingEntry.id);
+      if (original) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const r = await zeitkontoNachEintragAenderung(
+            user.id, original as any,
+            { datum: original.datum, stunden: Math.max(0, calculatedHours), taetigkeit: (original as any).taetigkeit },
+            user.id,
+          );
+          if (r.ok && r.delta !== 0) toast({ title: "Zeitkonto angepasst", description: `${r.delta > 0 ? "+" : ""}${r.delta.toFixed(2)} h gebucht.` });
+          if (!r.ok) toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: r.fehler });
+        }
+      }
       toast({
         title: "Erfolg",
         description: "Eintrag wurde aktualisiert",
@@ -233,6 +250,9 @@ const MyHours = () => {
 
   const handleDeleteEntry = async (id: string) => {
     if (!confirm("Möchtest du diesen Eintrag wirklich löschen?")) return;
+    // Vor dem Löschen merken, was der Eintrag war — ein gelöschter
+    // Zeitausgleich muss seine Abbuchung zurückgeben (Befund 14.09.2026).
+    const alt = entries.find((e) => e.id === id) || null;
 
     const { error } = await supabase
       .from("time_entries")
@@ -246,6 +266,14 @@ const MyHours = () => {
         description: "Eintrag konnte nicht gelöscht werden",
       });
     } else {
+      if (alt) {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (user) {
+          const r = await zeitkontoNachEintragAenderung(user.id, alt as any, null, user.id);
+          if (r.ok && r.delta !== 0) toast({ title: "Zeitkonto angepasst", description: `+${r.delta.toFixed(2)} h zurückgebucht.` });
+          if (!r.ok) toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: r.fehler });
+        }
+      }
       toast({
         title: "Erfolg",
         description: "Eintrag wurde gelöscht",
