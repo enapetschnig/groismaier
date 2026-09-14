@@ -31,8 +31,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { getNormalWorkingHours, getDefaultWorkTimes } from "@/lib/workingHours";
-import { aggregateByDay, totalAutoSaldo, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
-import { zeitkontoNachEintragAenderung, type ZaEintragLite } from "@/lib/zeitkonto";
+import { aggregateByDay, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
+import { laufenderSaldo, zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, formatDatumDE, type ZeitraumSaldo } from "@/lib/zeitkonto";
 import { alsISO } from "@/lib/datum";
 import { lenkzeitJeMitarbeiter, lenkzeitText } from "@/lib/lenkzeit";
 
@@ -487,6 +487,9 @@ export default function HoursReport() {
 
   const handleEditSave = async () => {
     if (!editEntry) return;
+    // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026).
+    { const bis = await zaAbgeschlossenBisLaden();
+      if (istAbgeschlossen(editEntry.datum, bis)) { toast({ title: "Monat abgeschlossen", description: abgeschlossenHinweis(bis), variant: "destructive" }); return; } }
     const pause = clamp(Math.round(toNumber(editForm.pause_minutes, 0)), 0, 720);
     const stunden = recalcHours(editForm.start_time, editForm.end_time, pause);
     // Plausibilisieren statt den Postgres-Fehler durchzureichen.
@@ -518,39 +521,21 @@ export default function HoursReport() {
     if (error) {
       toast({ title: "Fehler", description: error.message, variant: "destructive" });
     } else {
-      // Zeitausgleich umgebucht oder Stunden geändert? Dann das Konto nachziehen
-      // (Befund 14.09.2026: Abbuchung blieb sonst stehen).
-      await zeitkontoNachAenderungMelden(
-        editEntry.user_id,
-        editEntry as any,
-        { datum: editEntry.datum, stunden, taetigkeit: editForm.taetigkeit },
-      );
       toast({ title: "Eintrag aktualisiert" });
       setEditEntry(null);
       fetchTimeEntries();
     }
   };
 
-  /** Konto nach Änderung/Löschung eines Eintrags nachziehen und das Ergebnis melden. */
-  const zeitkontoNachAenderungMelden = async (
-    userId: string, alt: ZaEintragLite | null, neu: ZaEintragLite | null,
-  ) => {
-    const { data: { user } } = await supabase.auth.getUser();
-    const r = await zeitkontoNachEintragAenderung(userId, alt, neu, user?.id || userId);
-    if (!r.ok) {
-      toast({ title: "Zeitkonto nicht nachgezogen", description: r.fehler, variant: "destructive" });
-    } else if (r.delta !== 0) {
-      toast({ title: "Zeitkonto angepasst", description: `${r.delta > 0 ? "+" : ""}${r.delta.toFixed(2)} h gebucht.` });
-    }
-  };
-
   const handleEditDelete = async () => {
     if (!editEntry || !confirm("Eintrag wirklich löschen?")) return;
+    // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026).
+    { const bis = await zaAbgeschlossenBisLaden();
+      if (istAbgeschlossen(editEntry.datum, bis)) { toast({ title: "Monat abgeschlossen", description: abgeschlossenHinweis(bis), variant: "destructive" }); return; } }
     const { error } = await supabase.from("time_entries").delete().eq("id", editEntry.id);
     if (error) {
       toast({ title: "Fehler", description: error.message, variant: "destructive" });
     } else {
-      await zeitkontoNachAenderungMelden(editEntry.user_id, editEntry as any, null);
       toast({ title: "Eintrag gelöscht" });
       setEditEntry(null);
       fetchTimeEntries();
@@ -625,7 +610,10 @@ export default function HoursReport() {
   // Live-Auto-Saldo über ALLE time_entries des Mitarbeiters (nicht
   // nur des aktuellen Monats). Wird im Header-Block angezeigt.
   const [manualBalance, setManualBalance] = useState<number>(0);
-  const [autoBalanceAll, setAutoBalanceAll] = useState<number>(0);
+  // Umstellung 14.09.2026: Konto = abgeschlossener Stand, daneben der laufende
+  // Zeitraum seit dem Stichtag (wird erst beim Monatsabschluss gebucht).
+  const [laufend, setLaufend] = useState<ZeitraumSaldo>({ ueberstunden: 0, zeitausgleich: 0, gesamt: 0, tage: 0 });
+  const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
   useEffect(() => {
     if (!selectedUserId) return;
     let cancelled = false;
@@ -638,7 +626,9 @@ export default function HoursReport() {
       ]);
       if (cancelled) return;
       setManualBalance(Number((acc as any)?.balance_hours) || 0);
-      setAutoBalanceAll(totalAutoSaldo((allEntries as any[]) || []));
+      const bis = await zaAbgeschlossenBisLaden();
+      setAbgeschlossenBis(bis);
+      setLaufend(laufenderSaldo((allEntries as any[]) || [], bis));
     })();
     return () => { cancelled = true; };
   }, [selectedUserId]);
@@ -1094,13 +1084,14 @@ export default function HoursReport() {
                         <p className="text-[10px] text-muted-foreground">+ Überstunden / − Minusstunden</p>
                       </div>
                       <div>
-                        <p className="text-sm text-muted-foreground">Stundenkonto effektiv</p>
-                        <p className={`text-2xl font-bold ${(autoBalanceAll + manualBalance) > 0.005 ? "text-green-600" : (autoBalanceAll + manualBalance) < -0.005 ? "text-red-600" : ""}`}>
-                          {formatSaldo(autoBalanceAll + manualBalance)} h
+                        <p className="text-sm text-muted-foreground">ZA-Konto (Stand bis {formatDatumDE(abgeschlossenBis)})</p>
+                        <p className={`text-2xl font-bold ${manualBalance > 0.005 ? "text-green-600" : manualBalance < -0.005 ? "text-red-600" : ""}`}>
+                          {formatSaldo(manualBalance)} h
                         </p>
                         <p className="text-[10px] text-muted-foreground">
-                          Auto {formatSaldo(autoBalanceAll)} h
-                          {Math.abs(manualBalance) >= 0.005 ? ` · Manuell ${formatSaldo(manualBalance)} h` : ""}
+                          Laufend seit Stichtag {formatSaldo(laufend.gesamt)} h
+                          {Math.abs(laufend.zeitausgleich) >= 0.005 ? ` (davon ZA ${formatSaldo(laufend.zeitausgleich)} h)` : ""}
+                          {" · voraussichtlich nach Abschluss "}{formatSaldo(manualBalance + laufend.gesamt)} h
                         </p>
                       </div>
                       <div>

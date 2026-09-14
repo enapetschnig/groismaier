@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
+import { zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, laufenderSaldo } from "@/lib/zeitkonto";
 import { toast as sonnerToast } from "sonner";
 import {
   getNormalWorkingHours,
@@ -555,66 +556,31 @@ const TimeTracking = () => {
       entryPauseMinutes = pause;
     }
 
-    // ZA: Check and deduct from time account
+    // Abgeschlossener Monat? Dann ist der Tag gesperrt (Umstellung 14.09.2026).
+    const abgeschlossenBis = await zaAbgeschlossenBisLaden();
+    if (istAbgeschlossen(absenceData.date, abgeschlossenBis)) {
+      toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(abgeschlossenBis) });
+      setSubmittingAbsence(false);
+      return;
+    }
+
+    // Zeitausgleich wird NICHT mehr sofort vom Konto abgebucht (Umstellung
+    // 14.09.2026): Das ZA-Konto ist ein abgeschlossener Stand, der ZA-Tag
+    // steht als Eintrag im Monat und zählt beim Monatsabschluss — dieselbe
+    // Quelle wie die Überstunden. Damit kann auch keine Abbuchung mehr
+    // stehen bleiben, wenn der Eintrag später gelöscht wird. Das Konto darf
+    // weiterhin ins Minus (Kundenentscheid 31.08.2026); hier nur ein Hinweis
+    // auf den voraussichtlichen Stand.
     if (absenceData.type === "za") {
-      const { data: timeAccount, error: taError } = await supabase
-        .from("time_accounts")
-        .select("id, balance_hours")
-        .eq("user_id", user.id)
-        .maybeSingle();
-
-      // Kein Zeitkonto? Dann eines anlegen statt abzubrechen. Bisher scheiterte
-      // JEDE Zeitausgleichs-Buchung an dieser Stelle, weil die Freischaltung
-      // eines Mitarbeiters zwar Profil, Rolle und Stammsatz erzeugt, aber kein
-      // Zeitkonto — es gab betriebsweit keinen einzigen Datensatz.
-      let konto = timeAccount;
-      if (!konto && !taError) {
-        const { data: neuesKonto } = await supabase
-          .from("time_accounts")
-          .insert({ user_id: user.id, balance_hours: 0 })
-          .select("id, balance_hours")
-          .single();
-        konto = neuesKonto;
-      }
-      if (taError || !konto) {
-        toast({ variant: "destructive", title: "Fehler", description: "Zeitkonto konnte nicht geladen werden. Bitte den Administrator verständigen." });
-        setSubmittingAbsence(false);
-        return;
-      }
-      const timeAccountRow = konto;
-
-      // Das ZA-Konto DARF ins Minus gehen (Kundenentscheid 31.08.2026) —
-      // der Mitarbeiter arbeitet die Stunden später ein, die Monats-
-      // auswertung gleicht das Konto ohnehin ab. Kein Abbruch mehr,
-      // nur ein ehrlicher Hinweis auf den neuen Stand.
-      const balanceBefore = Number(timeAccountRow.balance_hours);
-      const balanceAfter = balanceBefore - workingHours;
-      if (balanceAfter < 0) {
-        toast({
-          title: "ZA-Konto geht ins Minus",
-          description: `Neuer Stand: ${balanceAfter.toLocaleString("de-AT", { maximumFractionDigits: 2 })} h — wird mit künftigen Überstunden ausgeglichen.`,
-        });
-      }
-
-      const { error: updateErr } = await supabase
-        .from("time_accounts")
-        .update({ balance_hours: balanceAfter, updated_at: new Date().toISOString() })
-        .eq("id", timeAccountRow.id);
-
-      if (updateErr) {
-        toast({ variant: "destructive", title: "Fehler", description: "ZA-Stunden konnten nicht abgebucht werden" });
-        setSubmittingAbsence(false);
-        return;
-      }
-
-      await supabase.from("time_account_transactions").insert({
-        user_id: user.id,
-        changed_by: user.id,
-        change_type: "za_abzug",
-        hours: -workingHours,
-        balance_before: balanceBefore,
-        balance_after: balanceAfter,
-        reason: `Zeitausgleich am ${absenceData.date}`,
+      const [{ data: konto }, { data: alle }] = await Promise.all([
+        supabase.from("time_accounts").select("balance_hours").eq("user_id", user.id).maybeSingle(),
+        supabase.from("time_entries").select("datum, stunden, taetigkeit").eq("user_id", user.id),
+      ]);
+      const laufend = laufenderSaldo((alle as any[]) || [], abgeschlossenBis).gesamt;
+      const voraussichtlich = (Number(konto?.balance_hours) || 0) + laufend - workingHours;
+      toast({
+        title: voraussichtlich < 0 ? "ZA-Konto geht voraussichtlich ins Minus" : "Zeitausgleich vorgemerkt",
+        description: `Wird beim Monatsabschluss gebucht. Voraussichtlicher Stand danach: ${voraussichtlich.toLocaleString("de-AT", { maximumFractionDigits: 2 })} h.`,
       });
     }
 
@@ -663,6 +629,16 @@ const TimeTracking = () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
       toast({ variant: "destructive", title: "Fehler", description: "Sie müssen angemeldet sein" });
+      setSaving(false);
+      return;
+    }
+
+    // Abgeschlossener Monat? Dann ist der Tag gesperrt (Umstellung 14.09.2026):
+    // Das ZA-Konto ist per Stichtag gebucht, Einträge davor dürfen sich nicht
+    // mehr still ändern.
+    const gesperrtBis = await zaAbgeschlossenBisLaden();
+    if (istAbgeschlossen(selectedDate, gesperrtBis)) {
+      toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(gesperrtBis) });
       setSaving(false);
       return;
     }

@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useZurueck } from "@/hooks/useZurueck";
 import { Clock, Pencil, Trash2, Wallet } from "lucide-react";
-import { aggregateByDay, totalAutoSaldo, formatSaldo } from "@/lib/hoursAccounting";
-import { zeitkontoNachEintragAenderung } from "@/lib/zeitkonto";
+import { aggregateByDay, formatSaldo } from "@/lib/hoursAccounting";
+import { laufenderSaldo, zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, formatDatumDE, type ZeitraumSaldo } from "@/lib/zeitkonto";
 import { KBToolbar } from "@/components/kingbill";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,10 +70,11 @@ const MyHours = () => {
   const [editingEntry, setEditingEntry] = useState<TimeEntry | null>(null);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
-  // Stundenkonto-Saldo: live aus ALLEN time_entries des Mitarbeiters
-  // berechnet (kein Stichtag), plus manuelle Korrekturen aus
-  // time_accounts.balance_hours.
-  const [autoSaldoAll, setAutoSaldoAll] = useState<number>(0);
+  // Umstellung 14.09.2026: Das ZA-Konto (time_accounts.balance_hours) ist der
+  // ABGESCHLOSSENE Stand bis zum Stichtag. Daneben läuft der offene Zeitraum
+  // live aus den Einträgen mit — gebucht wird er erst beim Monatsabschluss.
+  const [laufend, setLaufend] = useState<ZeitraumSaldo>({ ueberstunden: 0, zeitausgleich: 0, gesamt: 0, tage: 0 });
+  const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
   const [manualSaldo, setManualSaldo] = useState<number>(0);
 
   useEffect(() => {
@@ -97,7 +98,9 @@ const MyHours = () => {
         .select("datum, stunden, taetigkeit").eq("user_id", user.id),
     ]);
     setManualSaldo(Number((acc as any)?.balance_hours) || 0);
-    setAutoSaldoAll(totalAutoSaldo((allEntries as any[]) || []));
+    const bis = await zaAbgeschlossenBisLaden();
+    setAbgeschlossenBis(bis);
+    setLaufend(laufenderSaldo((allEntries as any[]) || [], bis));
   };
 
   useEffect(() => {
@@ -107,7 +110,7 @@ const MyHours = () => {
   // Tages-Aggregation des aktuell angezeigten Monats (für Tagessaldo-Spalte).
   const dayBalances = useMemo(() => aggregateByDay(entries as any), [entries]);
   const dayBalanceMap = useMemo(() => new Map(dayBalances.map(d => [d.datum, d])), [dayBalances]);
-  const effektiv = autoSaldoAll + manualSaldo;
+  const effektiv = manualSaldo + laufend.gesamt;
 
   const fetchEntries = async () => {
     const { data: { user } } = await supabase.auth.getUser();
@@ -180,6 +183,9 @@ const MyHours = () => {
       setSavingEdit(false);
       return;
     }
+    // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026).
+    { const bis = await zaAbgeschlossenBisLaden();
+      if (istAbgeschlossen(editingEntry.datum, bis)) { toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(bis) }); setSavingEdit(false); return; } }
     const { error } = await supabase
       .from("time_entries")
       .update({
@@ -220,22 +226,6 @@ const MyHours = () => {
       } else if (warGeraeteKs) {
         await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", editingEntry.id);
       }
-      // Stunden eines Zeitausgleich-Eintrags geändert? Dann die Differenz im
-      // Konto nachziehen. Das Original steht noch in `entries` — editingEntry
-      // ist bereits der bearbeitete Stand (Befund 14.09.2026).
-      const original = entries.find((e) => e.id === editingEntry.id);
-      if (original) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const r = await zeitkontoNachEintragAenderung(
-            user.id, original as any,
-            { datum: original.datum, stunden: Math.max(0, calculatedHours), taetigkeit: (original as any).taetigkeit },
-            user.id,
-          );
-          if (r.ok && r.delta !== 0) toast({ title: "Zeitkonto angepasst", description: `${r.delta > 0 ? "+" : ""}${r.delta.toFixed(2)} h gebucht.` });
-          if (!r.ok) toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: r.fehler });
-        }
-      }
       toast({
         title: "Erfolg",
         description: "Eintrag wurde aktualisiert",
@@ -250,9 +240,13 @@ const MyHours = () => {
 
   const handleDeleteEntry = async (id: string) => {
     if (!confirm("Möchtest du diesen Eintrag wirklich löschen?")) return;
-    // Vor dem Löschen merken, was der Eintrag war — ein gelöschter
-    // Zeitausgleich muss seine Abbuchung zurückgeben (Befund 14.09.2026).
+    // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026).
     const alt = entries.find((e) => e.id === id) || null;
+    const bis = await zaAbgeschlossenBisLaden();
+    if (istAbgeschlossen(alt?.datum, bis)) {
+      toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(bis) });
+      return;
+    }
 
     const { error } = await supabase
       .from("time_entries")
@@ -266,14 +260,6 @@ const MyHours = () => {
         description: "Eintrag konnte nicht gelöscht werden",
       });
     } else {
-      if (alt) {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-          const r = await zeitkontoNachEintragAenderung(user.id, alt as any, null, user.id);
-          if (r.ok && r.delta !== 0) toast({ title: "Zeitkonto angepasst", description: `+${r.delta.toFixed(2)} h zurückgebucht.` });
-          if (!r.ok) toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: r.fehler });
-        }
-      }
       toast({
         title: "Erfolg",
         description: "Eintrag wurde gelöscht",
@@ -314,26 +300,30 @@ const MyHours = () => {
           <CardContent>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
-                <p className="text-xs text-muted-foreground">Auto (aus Buchungen)</p>
-                <p className={`text-xl font-bold ${autoSaldoAll > 0.005 ? "text-green-600" : autoSaldoAll < -0.005 ? "text-red-600" : ""}`}>
-                  {formatSaldo(autoSaldoAll)} h
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-muted-foreground">Manuelle Korrektur</p>
-                <p className={`text-xl font-bold ${manualSaldo > 0.005 ? "text-green-600" : manualSaldo < -0.005 ? "text-red-600" : ""}`}>
+                <p className="text-xs text-muted-foreground">ZA-Konto (Stand bis {formatDatumDE(abgeschlossenBis)})</p>
+                <p className={`text-2xl font-extrabold ${manualSaldo > 0.005 ? "text-green-600" : manualSaldo < -0.005 ? "text-red-600" : ""}`}>
                   {formatSaldo(manualSaldo)} h
                 </p>
               </div>
               <div>
-                <p className="text-xs text-muted-foreground">Effektiver Saldo</p>
-                <p className={`text-2xl font-extrabold ${effektiv > 0.005 ? "text-green-600" : effektiv < -0.005 ? "text-red-600" : ""}`}>
+                <p className="text-xs text-muted-foreground">Laufend seit Stichtag (noch nicht gebucht)</p>
+                <p className={`text-xl font-bold ${laufend.gesamt > 0.005 ? "text-green-600" : laufend.gesamt < -0.005 ? "text-red-600" : ""}`}>
+                  {formatSaldo(laufend.gesamt)} h
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  Überstunden {formatSaldo(laufend.ueberstunden)} h · Zeitausgleich {formatSaldo(laufend.zeitausgleich)} h
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Voraussichtlich nach Abschluss</p>
+                <p className={`text-xl font-bold ${effektiv > 0.005 ? "text-green-600" : effektiv < -0.005 ? "text-red-600" : ""}`}>
                   {formatSaldo(effektiv)} h
                 </p>
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground mt-2">
-              Plus = Überstunden-Guthaben · Minus = Nachzuholende Stunden. Urlaub, Krankenstand, Feiertag und Zeitausgleich werden neutral gerechnet.
+              Das ZA-Konto ändert sich nur beim Monatsabschluss. Plus = Überstunden-Guthaben · Minus = Nachzuholende Stunden.
+              Zeitausgleich-Tage zählen beim Abschluss; Urlaub, Krankenstand und Feiertag sind neutral.
             </p>
           </CardContent>
         </Card>

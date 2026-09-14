@@ -12,7 +12,11 @@ import { Clock, Plus, History, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { de } from "date-fns/locale";
-import { totalAutoSaldo, formatSaldo, type TimeEntryLite } from "@/lib/hoursAccounting";
+import { formatSaldo, type TimeEntryLite } from "@/lib/hoursAccounting";
+import {
+  laufenderSaldo, zaAbgeschlossenBisLaden, monatAbschliessen, naechsterAbschluss, formatDatumDE,
+  type ZeitraumSaldo, type AbschlussMonat,
+} from "@/lib/zeitkonto";
 
 type Profile = {
   id: string;
@@ -55,8 +59,12 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
   const [adjustReason, setAdjustReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  // Auto-Saldo (live aus time_entries) pro user_id — Map für die UI.
-  const [autoSaldoByUser, setAutoSaldoByUser] = useState<Record<string, number>>({});
+  // Umstellung 14.09.2026: Konto = abgeschlossener Stand bis zum Stichtag;
+  // daneben je Mitarbeiter der laufende Zeitraum (noch nicht gebucht).
+  const [laufendByUser, setLaufendByUser] = useState<Record<string, ZeitraumSaldo>>({});
+  const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
+  const [naechster, setNaechster] = useState<AbschlussMonat | null>(null);
+  const [abschlussLaeuft, setAbschlussLaeuft] = useState(false);
 
   const fetchData = async () => {
     setLoading(true);
@@ -78,19 +86,43 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
     if (accData) setAccounts(accData as TimeAccount[]);
     if (txData) setTransactions(txData as Transaction[]);
 
+    const bis = await zaAbgeschlossenBisLaden();
+    setAbgeschlossenBis(bis);
+    setNaechster(naechsterAbschluss(bis));
     if (entriesData) {
       const byUser: Record<string, TimeEntryLite[]> = {};
       for (const e of entriesData as Array<TimeEntryLite & { user_id: string }>) {
         if (!byUser[e.user_id]) byUser[e.user_id] = [];
         byUser[e.user_id].push(e);
       }
-      const saldoMap: Record<string, number> = {};
-      for (const [uid, list] of Object.entries(byUser)) {
-        saldoMap[uid] = totalAutoSaldo(list);
-      }
-      setAutoSaldoByUser(saldoMap);
+      const map: Record<string, ZeitraumSaldo> = {};
+      for (const [uid, list] of Object.entries(byUser)) map[uid] = laufenderSaldo(list, bis);
+      setLaufendByUser(map);
     }
     setLoading(false);
+  };
+
+  /** Monatsabschluss für alle angezeigten Mitarbeiter — bucht den nächsten Monat ins Konto. */
+  const handleAbschluss = async () => {
+    if (!naechster) return;
+    const ids = profiles.filter((p) => p.vorname && p.nachname).map((p) => p.id);
+    if (!window.confirm(`${naechster.label} für ${ids.length} Mitarbeiter abschließen? Überstunden und Zeitausgleich des Monats werden ins ZA-Konto gebucht; Einträge in diesem Monat sind danach gesperrt.`)) return;
+    setAbschlussLaeuft(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const erg = await monatAbschliessen(ids, user.id);
+      if (erg.fehler.length > 0) {
+        toast({ variant: "destructive", title: "Abschluss unvollständig", description: `${erg.fehler.length} Fehler — der Stichtag wurde nicht vorgerückt, ein erneuter Lauf holt es nach. ${erg.fehler[0]}` });
+      } else {
+        toast({ title: `${erg.monat.label} abgeschlossen`, description: `${erg.gebucht.length} Konten gebucht, ${erg.ohneAenderung} ohne Änderung.` });
+      }
+      await fetchData();
+    } catch (e: any) {
+      toast({ variant: "destructive", title: "Abschluss nicht möglich", description: e?.message || String(e) });
+    } finally {
+      setAbschlussLaeuft(false);
+    }
   };
 
   useEffect(() => {
@@ -195,6 +227,35 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
 
   return (
     <div className="space-y-6">
+      {/* Monatsabschluss (Umstellung 14.09.2026): Das ZA-Konto ändert sich nur
+          hier. Der Knopf ist erst frei, wenn der Monat vorbei ist. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Clock className="h-5 w-5" />
+            Monatsabschluss
+          </CardTitle>
+          <CardDescription>
+            Abgeschlossen bis <b>{formatDatumDE(abgeschlossenBis)}</b>. Beim Abschluss werden Überstunden und
+            Zeitausgleich-Tage des Monats aus den Einträgen ins ZA-Konto gebucht; Einträge in abgeschlossenen
+            Monaten sind danach gesperrt (Korrekturen über Gutschrift/Abzug).
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          {naechster && (
+            <>
+              <span className="text-sm">
+                Nächster Abschluss: <b>{naechster.label}</b>
+                {!naechster.abschliessbar && <span className="text-muted-foreground"> — möglich ab dem 1. des Folgemonats</span>}
+              </span>
+              <Button onClick={() => void handleAbschluss()} disabled={!naechster.abschliessbar || abschlussLaeuft} className="h-10">
+                {abschlussLaeuft ? "Wird gebucht …" : `${naechster.label} abschließen`}
+              </Button>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Time Accounts Overview */}
       <Card>
         <CardHeader>
@@ -203,7 +264,7 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
             Zeitkonten
           </CardTitle>
           <CardDescription>
-            Überstunden und Zeitausgleich (ZA) pro Mitarbeiter
+            ZA-Konto = abgeschlossener Stand bis {formatDatumDE(abgeschlossenBis)} · daneben der laufende, noch nicht gebuchte Zeitraum
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -213,7 +274,8 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
               .map((profile) => {
                 const account = accounts.find((a) => a.user_id === profile.id);
                 const manual = Number(account?.balance_hours) || 0;
-                const auto = autoSaldoByUser[profile.id] || 0;
+                const lauf = laufendByUser[profile.id] || { ueberstunden: 0, zeitausgleich: 0, gesamt: 0, tage: 0 };
+                const auto = lauf.gesamt;
                 const effektiv = manual + auto;
                 const colorClass = (n: number) =>
                   n > 0.005 ? "text-green-600 font-semibold"
@@ -230,14 +292,15 @@ export default function TimeAccountManagement({ profiles }: TimeAccountManagemen
                         {profile.vorname} {profile.nachname}
                       </p>
                       <p className="text-sm flex flex-wrap gap-x-3 gap-y-0.5">
-                        <span>
-                          Auto: <span className={colorClass(auto)}>{formatSaldo(auto)} h</span>
-                        </span>
-                        <span>
-                          Manuell: <span className={colorClass(manual)}>{formatSaldo(manual)} h</span>
-                        </span>
                         <span className="font-medium">
-                          Effektiv: <span className={colorClass(effektiv) + " text-base"}>{formatSaldo(effektiv)} h</span>
+                          ZA-Konto: <span className={colorClass(manual) + " text-base"}>{formatSaldo(manual)} h</span>
+                        </span>
+                        <span>
+                          Laufend: <span className={colorClass(auto)}>{formatSaldo(auto)} h</span>
+                          {Math.abs(lauf.zeitausgleich) >= 0.005 && <span className="text-muted-foreground"> (ZA {formatSaldo(lauf.zeitausgleich)} h)</span>}
+                        </span>
+                        <span className="text-muted-foreground">
+                          nach Abschluss: <span className={colorClass(effektiv)}>{formatSaldo(effektiv)} h</span>
                         </span>
                       </p>
                     </div>

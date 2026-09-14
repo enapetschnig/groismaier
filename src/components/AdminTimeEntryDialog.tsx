@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { projektMoeglich, projektPflicht, projektFeldLabel, projektFeldHinweis } from "@/lib/kostenstellen";
-import { zeitkontoNachEintragAenderung, type ZaEintragLite } from "@/lib/zeitkonto";
+import { zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, type ZaEintragLite } from "@/lib/zeitkonto";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -303,6 +303,14 @@ export function AdminTimeEntryDialog({
         notizen: form.notizen?.trim() || null,
       };
 
+      // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026) — gilt für
+      // das Zieldatum und, beim Verschieben, auch für das bisherige.
+      const abgeschlossenBis = await zaAbgeschlossenBisLaden();
+      if (istAbgeschlossen(form.datum, abgeschlossenBis) || (isEdit && istAbgeschlossen(urspruenglich?.datum, abgeschlossenBis))) {
+        toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(abgeschlossenBis) });
+        return;
+      }
+
       let targetId = entryId || "";
 
       if (isEdit && entryId) {
@@ -342,20 +350,6 @@ export function AdminTimeEntryDialog({
       } else if (targetId && warGeraeteKs && !geraeteKs) {
         await (supabase.from("time_entry_vehicles" as never) as any).delete().eq("time_entry_id", targetId);
       }
-      // Zeitkonto nachziehen: Ein nachgetragener Zeitausgleich bucht ab (das
-      // fehlte hier bisher — nur die Zeiterfassung und der Abwesenheits-Dialog
-      // taten es), ein umgebuchter oder in den Stunden geänderter gibt zurück.
-      const kontoErgebnis = await zeitkontoNachEintragAenderung(
-        userId,
-        isEdit ? urspruenglich : null,
-        { datum: form.datum, stunden: stundenNum, taetigkeit: form.taetigkeit.trim() },
-        callerId,
-      );
-      if (!kontoErgebnis.ok) {
-        toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: kontoErgebnis.fehler });
-      } else if (kontoErgebnis.delta !== 0) {
-        toast({ title: "Zeitkonto angepasst", description: `${kontoErgebnis.delta > 0 ? "+" : ""}${kontoErgebnis.delta.toFixed(2)} h gebucht.` });
-      }
       toast({ title: isEdit ? "Eintrag aktualisiert" : "Eintrag nachgetragen" });
       onSaved();
       onClose();
@@ -381,16 +375,15 @@ export function AdminTimeEntryDialog({
     setSaving(true);
     try {
       // CASCADE entfernt time_entry_vehicles automatisch
+      // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026).
+      const abgeschlossenBis = await zaAbgeschlossenBisLaden();
+      if (istAbgeschlossen(urspruenglich?.datum, abgeschlossenBis)) {
+        toast({ variant: "destructive", title: "Monat abgeschlossen", description: abgeschlossenHinweis(abgeschlossenBis) });
+        setSaving(false);
+        return;
+      }
       const { error } = await supabase.from("time_entries").delete().eq("id", entryId);
       if (error) throw error;
-      // Gelöschter Zeitausgleich: Abbuchung zurück ins Konto.
-      const { data: { user: caller } } = await supabase.auth.getUser();
-      const kontoErgebnis = await zeitkontoNachEintragAenderung(userId, urspruenglich, null, caller?.id || userId);
-      if (!kontoErgebnis.ok) {
-        toast({ variant: "destructive", title: "Zeitkonto nicht nachgezogen", description: kontoErgebnis.fehler });
-      } else if (kontoErgebnis.delta !== 0) {
-        toast({ title: "Zeitkonto angepasst", description: `+${kontoErgebnis.delta.toFixed(2)} h zurückgebucht.` });
-      }
       toast({ title: "Eintrag gelöscht" });
       onSaved();
       onClose();

@@ -173,34 +173,10 @@ export function AdminAbsenceDialog({
         notizen: notiz || null,
       });
 
-      // Bei Zeitausgleich: Stundenkonto-Abzug — analog TimeTracking.tsx
-      // (sonst würde der ZA "doppelt zählen" — kein Soll und kein Abzug).
-      if (type === "Zeitausgleich") {
-        const totalHours = rows.reduce((s, r) => s + r.stunden, 0);
-        const { data: acc } = await (supabase.from("time_accounts" as never) as any)
-          .select("balance_hours")
-          .eq("user_id", userId)
-          .maybeSingle();
-        const before = Number((acc as any)?.balance_hours) || 0;
-        const after = before - totalHours;
-        if (acc) {
-          await (supabase.from("time_accounts" as never) as any)
-            .update({ balance_hours: after, updated_at: new Date().toISOString() })
-            .eq("user_id", userId);
-        } else {
-          await (supabase.from("time_accounts" as never) as any)
-            .insert({ user_id: userId, balance_hours: after });
-        }
-        await (supabase.from("time_account_transactions" as never) as any).insert({
-          user_id: userId,
-          changed_by: caller.id,
-          change_type: "za_abzug",
-          hours: -totalHours,
-          balance_before: before,
-          balance_after: after,
-          reason: `Zeitausgleich ${fromDate}${totalDays > 1 ? ` – ${toDate}` : ""} (Admin-Nachtrag)`,
-        });
-      }
+      // Zeitausgleich wird NICHT mehr sofort abgebucht (Umstellung 14.09.2026):
+      // Die ZA-Tage stehen als Einträge im Monat und zählen beim
+      // Monatsabschluss (zeitraumSaldo in zeitkonto.ts) — kein Doppelzählen,
+      // weil der Abschluss die einzige Buchungsstelle ist.
 
       toast({
         title: "Abwesenheit eingetragen",
