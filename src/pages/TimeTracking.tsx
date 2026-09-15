@@ -155,6 +155,21 @@ const TimeTracking = () => {
   const sollJeTag = sollProTag(sollProfil);
   // Lenkzeit-Schwelle aus Admin → Einstellungen (15.09.2026); Rückfall 25 min.
   const [lenkSchwelle, setLenkSchwelle] = useState(LENKZEIT_SCHWELLE_MINUTEN);
+  // Fahrzeit eines Projekts direkt hier nachtragen (Christoph 15.09.2026: „kann
+  // man das mit der Fahrzeit eh easy einstellen in der Zeiterfassung?") —
+  // nur Admin/Vorarbeiter dürfen Projekte ändern (RLS), je Projekt ein Eingabefeld.
+  const [fahrzeitEingabe, setFahrzeitEingabe] = useState<Record<string, string>>({});
+  const fahrzeitSpeichern = async (projectId: string) => {
+    const min = Math.round(Number((fahrzeitEingabe[projectId] || "").replace(",", ".")));
+    if (!Number.isFinite(min) || min < 0 || min > 600) {
+      toast({ variant: "destructive", title: "Unplausibel", description: "Fahrzeit 0–600 Minuten je Strecke." });
+      return;
+    }
+    const { error } = await (supabase.from("projects" as never) as any).update({ fahrzeit_minuten: min }).eq("id", projectId);
+    if (error) { toast({ variant: "destructive", title: "Nicht gespeichert", description: error.message }); return; }
+    setProjects((prev: any[]) => prev.map((pr) => (pr.id === projectId ? { ...pr, fahrzeit_minuten: min } : pr)) as any);
+    toast({ title: "Fahrzeit gespeichert", description: min >= lenkSchwelle ? `${min} min je Strecke — Lenkzeit wird vergütet.` : `${min} min je Strecke — unter ${lenkSchwelle} min, zählt als normale Arbeitszeit.` });
+  };
   
   const [absenceData, setAbsenceData] = useState({
     date: heuteISO(),
@@ -1472,7 +1487,38 @@ const TimeTracking = () => {
                         {(() => {
                           const pr: any = projects.find((x: any) => x.id === block.projectId);
                           const fahrzeit = pr?.fahrzeit_minuten;
-                          if (!block.projectId || !istLenkzeitPflichtig(fahrzeit, lenkSchwelle)) return null;
+                          if (!block.projectId) return null;
+                          if (!istLenkzeitPflichtig(fahrzeit, lenkSchwelle)) {
+                            // Keine Lenkzeit: Admin kann die Fahrzeit gleich hier eintragen,
+                            // alle anderen sehen, warum die Kästchen fehlen.
+                            const fehlt = fahrzeit == null;
+                            return (
+                              <div className="rounded-md border border-dashed border-blue-300/50 bg-blue-50/30 px-3 py-2 text-xs text-muted-foreground dark:bg-blue-950/10">
+                                <div className="flex items-center gap-1.5">
+                                  <Car className="h-3.5 w-3.5" />
+                                  {fehlt
+                                    ? "Für dieses Projekt ist keine Fahrzeit hinterlegt — ohne Fahrzeit gibt es keine Lenkzeit."
+                                    : `Fahrzeit ${fahrzeit} min je Strecke — unter ${lenkSchwelle} min, zählt als normale Arbeitszeit.`}
+                                </div>
+                                {isAdmin && (
+                                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                                    <Label htmlFor={`fahrzeit-${block.id}`} className="text-xs">Fahrzeit einfach (Minuten laut Google Maps)</Label>
+                                    <Input
+                                      id={`fahrzeit-${block.id}`}
+                                      inputMode="numeric"
+                                      className="h-9 w-24"
+                                      placeholder={fahrzeit != null ? String(fahrzeit) : "z. B. 35"}
+                                      value={fahrzeitEingabe[block.projectId] ?? ""}
+                                      onChange={(e) => setFahrzeitEingabe((m) => ({ ...m, [block.projectId]: e.target.value }))}
+                                    />
+                                    <Button type="button" variant="outline" size="sm" className="h-9" onClick={() => void fahrzeitSpeichern(block.projectId)}>
+                                      Speichern
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
                           const minuten = lenkzeitMinutenProTag(fahrzeit, lenkSchwelle);
                           return (
                             <div className="rounded-md border border-blue-300/60 bg-blue-50/50 px-3 py-2 dark:bg-blue-950/20">

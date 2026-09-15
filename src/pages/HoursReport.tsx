@@ -887,6 +887,107 @@ export default function HoursReport() {
     toast({ title: "Excel exportiert", description: `Datei wurde heruntergeladen` });
   };
 
+  /**
+   * „Monatsauswertung" — der alte Stundenzettel des Betriebs, 1:1 nachgebaut
+   * (Christoph 15.09.2026: „du kannst ja das Excel genau so anpassen wie sie
+   * es vorher gehabt haben"): je Kalendertag eine Zeile (Wochenende grau),
+   * Baustelle, Stunden, Lenkzeitvergütung Fahrer/Beifahrer; darunter Soll/Ist/
+   * Diff, gesamt ZA, Zeitausgleich ALT, ZA verbraucht, ZA aus diesem Monat,
+   * „zur Kenntnis genommen".
+   */
+  const exportMonatsauswertung = () => {
+    if (!selectedUserId) {
+      toast({ title: "Kein Mitarbeiter ausgewählt", variant: "destructive" });
+      return;
+    }
+    const employeeName = profiles[selectedUserId]
+      ? `${profiles[selectedUserId].vorname} ${profiles[selectedUserId].nachname}`
+      : "Mitarbeiter";
+    const z = zettel;
+    const WT = ["SO", "MO", "DI", "MI", "DO", "FR", "SA"];
+    const daysInMonth = new Date(year, month, 0).getDate();
+    let werktage = 0;
+    for (let d = 1; d <= daysInMonth; d++) { const w = new Date(year, month - 1, d).getDay(); if (w >= 1 && w <= 5) werktage++; }
+    const dez = (n: number) => n.toFixed(2).replace(".", ",");
+    const euro = (n: number) => (n > 0 ? `${dez(n)} €` : "");
+
+    const rows: any[][] = [];
+    const push = (...v: any[]) => { rows.push(v); return rows.length - 1; };
+    push("", `Monatsauswertung (${werktage} Tage)`);
+    push();
+    push("", "Name", employeeName);
+    push("", "Monat", `${monthNames[month - 1]} ${year}`);
+    push("", "", "", "", "Lenkzeitvergüt.");
+    const KOPF = push("", "Datum", "Baustelle", "Stunden", "Fahrer", "Beifahrer");
+    const wochenendZeilen: number[] = [];
+    let lenkF = 0, lenkB = 0;
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dayDate = new Date(year, month - 1, d);
+      const w = dayDate.getDay();
+      const dayEntries = timeEntries.filter((e) => isSameDay(parseISO(e.datum), dayDate));
+      const bal = getDayBal(alsISO(dayDate));
+      // Baustelle: Projekte des Tages, sonst die Tätigkeit (Urlaub, Zeitausgleich …)
+      const namen = Array.from(new Set(dayEntries.map((e) => {
+        const p = projects[e.project_id];
+        if (p?.name) return p.name;
+        if (["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(e.taetigkeit)) return e.taetigkeit;
+        return kostenstelleLabel(e.kostenstelle, e.location_type, ksOptions);
+      }).filter(Boolean)));
+      let f = 0, b = 0;
+      for (const e of dayEntries) {
+        const min = Number(e.lenkzeit_minuten) || 0;
+        if (min <= 0) continue;
+        const betrag = lenkzeitBetrag(min, { istFahrer: e.ist_fahrer, istBeifahrer: e.ist_beifahrer }, saetzeGewaehlt);
+        if (e.ist_fahrer) f += betrag; else if (e.ist_beifahrer) b += betrag;
+      }
+      lenkF += f; lenkB += b;
+      const idx = push(WT[w], `${String(d).padStart(2, "0")}.${String(month).padStart(2, "0")}.${year}`, namen.join(", "),
+        dayEntries.length ? dez(bal?.ist ?? 0) : "", euro(f), euro(b));
+      if (w === 0 || w === 6) wochenendZeilen.push(idx);
+    }
+    const GESAMT = push("", "", "gesamt:", dez(z.ist), euro(lenkF), euro(lenkB));
+    push("", "", "", "", "gesamt", euro(z.lenkzeit.betrag));
+    const SOLL = push("", `Soll ${dez(z.soll)}`, "", "gesamt ZA (Stunden):", dez(z.kontoNachMonat));
+    push("", `Ist ${dez(z.ist)}`, "", z.monatAbgeschlossen ? "(abgeschlossen)" : "(voraussichtlich)");
+    push("", `Diff ${formatSaldo(z.ueberstunden).replace(".", ",")}`, `(${z.gebuchteTage} von ${werktage} Werktagen gebucht)`);
+    push();
+    push("", "Zeitausgleich ALT:", dez(z.kontoVorMonat));
+    push("", "ZA verbraucht:", dez(-z.zeitausgleich));
+    push("", "ZA aus diesem Monat:", dez(z.ueberstunden));
+    if (z.werktageOhneBuchung.length) push("", "Werktage ohne Buchung:", z.werktageOhneBuchung.map((t) => formatDatumDE(t).slice(0, 6)).join(" "));
+    push();
+    push();
+    const KENNTNIS = push("", "", "", "zur Kenntnis genommen");
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws["!cols"] = [{ wch: 5 }, { wch: 22 }, { wch: 34 }, { wch: 20 }, { wch: 12 }, { wch: 12 }];
+    ws["!merges"] = [{ s: { r: 0, c: 1 }, e: { r: 0, c: 3 } }, { s: { r: 4, c: 4 }, e: { r: 4, c: 5 } }];
+    const rahmen = (stil: string) => ({
+      top: { style: stil, color: { rgb: "000000" } }, bottom: { style: stil, color: { rgb: "000000" } },
+      left: { style: stil, color: { rgb: "000000" } }, right: { style: stil, color: { rgb: "000000" } },
+    });
+    const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
+    for (let R = range.s.r; R <= range.e.r; ++R) {
+      for (let C = range.s.c; C <= range.e.c; ++C) {
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+        const st: any = { alignment: { vertical: "center", horizontal: C === 3 || C === 4 || C === 5 ? "right" : "left" } };
+        if (R === 0) st.font = { bold: true, size: 12 };
+        if (R === KOPF) { st.font = { bold: true }; st.border = rahmen("medium"); st.alignment.horizontal = "center"; }
+        if (R > KOPF && R < GESAMT) { st.border = rahmen("thin"); if (wochenendZeilen.includes(R)) st.fill = { patternType: "solid", fgColor: { rgb: "D9D9D9" } }; }
+        if (R === GESAMT || R === GESAMT + 1) st.font = { bold: true };
+        if (R >= SOLL && R <= SOLL + 2 && C === 1) st.border = rahmen("thin");
+        if (R === SOLL && C === 4) st.font = { bold: true, size: 12 };
+        if (R === KENNTNIS && C === 3) st.border = { top: { style: "thin", color: { rgb: "000000" } } };
+        ws[addr].s = st;
+      }
+    }
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Monatsauswertung");
+    XLSX.writeFile(wb, `Monatsauswertung_${employeeName}_${monthNames[month - 1]}_${year}.xlsx`);
+    toast({ title: "Excel exportiert", description: "Monatsauswertung wie der bisherige Stundenzettel" });
+  };
+
   return (
     <div className="kb-page min-h-screen">
       {/* Kopfleiste wie in allen anderen Masken — vorher war /hours-report
@@ -953,6 +1054,9 @@ export default function HoursReport() {
                       </DropdownMenuItem>
                       <DropdownMenuItem onClick={() => exportToExcel(false)}>
                         Ohne Überstunden
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onClick={() => exportMonatsauswertung()}>
+                        Monatsauswertung (wie bisher)
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
