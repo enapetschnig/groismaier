@@ -24,12 +24,11 @@
 // Zahl täglich springen und war für den Chef nicht als „Stand" lesbar.
 // ============================================================================
 import { supabase } from "@/integrations/supabase/client";
-import { getNormalWorkingHours } from "@/lib/workingHours";
-import { SONDER_TAETIGKEITEN } from "./hoursAccounting";
-import { tagesSoll, sollProTag, ladeSollProfile } from "./sollStunden";
+import { tagesBilanz, ZEITAUSGLEICH } from "./hoursAccounting";
+import { sollProTag, ladeSollProfile } from "./sollStunden";
 
 export const ZA_ABGESCHLOSSEN_KEY = "za_abgeschlossen_bis";
-export const ZEITAUSGLEICH = "Zeitausgleich";
+export { ZEITAUSGLEICH };
 
 export interface ZaEintragLite {
   datum: string;
@@ -48,14 +47,12 @@ export interface ZeitraumSaldo {
 }
 
 const r2 = (n: number) => Math.round(n * 100) / 100;
-const istZa = (t: string | null | undefined) => String(t || "").trim() === ZEITAUSGLEICH;
-const istAndereSonder = (t: string | null | undefined) =>
-  !istZa(t) && SONDER_TAETIGKEITEN.has(String(t || "").trim());
 
 /**
  * Saldo eines Zeitraums aus Einträgen — die Rechnung des Monatsabschlusses.
+ * Je Tag gilt hoursAccounting.tagesBilanz (EINE Regel für Zeitkonto,
+ * Auswertung, Meine Stunden und Excel — 15.09.2026):
  *
- * Je Tag:
  *   Zeitausgleich-Stunden     → zeitausgleich −= Stunden; sie decken das
  *                               Tagessoll (7,8 h) in dieser Höhe ab
  *   Urlaub/Krank/Feiertag/WB  → Tag neutral
@@ -86,15 +83,9 @@ export function zeitraumSaldo(
   }
   let ueberstunden = 0, zeitausgleich = 0;
   for (const [datum, list] of tage) {
-    const tag = new Date(datum + "T12:00:00");
-    const soll = sollJeTag === undefined ? getNormalWorkingHours(tag) : tagesSoll(tag, sollJeTag);
-    const za = list.filter((e) => istZa(e.taetigkeit)).reduce((s, e) => s + (Number(e.stunden) || 0), 0);
-    const andereSonder = list.some((e) => istAndereSonder(e.taetigkeit));
-    const normalIst = list
-      .filter((e) => !istZa(e.taetigkeit) && !istAndereSonder(e.taetigkeit))
-      .reduce((s, e) => s + (Number(e.stunden) || 0), 0);
-    zeitausgleich -= za;
-    if (!andereSonder) ueberstunden += normalIst - Math.max(0, soll - za);
+    const b = tagesBilanz(datum, list, sollJeTag);
+    ueberstunden += b.ueberstunden;
+    zeitausgleich += b.zeitausgleich;
   }
   return { ueberstunden: r2(ueberstunden), zeitausgleich: r2(zeitausgleich), gesamt: r2(ueberstunden + zeitausgleich), tage: tage.size };
 }

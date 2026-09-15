@@ -30,7 +30,8 @@ import {
 import { parseDecimal, toNumber, clamp, formatForInput } from "@/lib/num";
 import { KOSTENSTELLEN_ICONS, projektMoeglich, projektPflicht } from "@/lib/kostenstellen";
 import { heuteISO } from "@/lib/datum";
-import { istLenkzeitPflichtig, lenkzeitMinutenProTag, lenkzeitText } from "@/lib/lenkzeit";
+import { istLenkzeitPflichtig, lenkzeitMinutenProTag, lenkzeitText, LENKZEIT_SCHWELLE_MINUTEN } from "@/lib/lenkzeit";
+import { ladeLenkzeitSchwelle } from "@/lib/lenkzeitSaetze";
 
 type Project = {
   id: string;
@@ -152,6 +153,8 @@ const TimeTracking = () => {
   // Persönliches Soll (Teilzeit, 14.09.2026): Abwesenheitstage und Kopfzeile.
   const [sollProfil, setSollProfil] = useState<SollProfil>({});
   const sollJeTag = sollProTag(sollProfil);
+  // Lenkzeit-Schwelle aus Admin → Einstellungen (15.09.2026); Rückfall 25 min.
+  const [lenkSchwelle, setLenkSchwelle] = useState(LENKZEIT_SCHWELLE_MINUTEN);
   
   const [absenceData, setAbsenceData] = useState({
     date: heuteISO(),
@@ -247,6 +250,7 @@ const TimeTracking = () => {
   // Load existing entries when date changes
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => { if (user) ladeSollProfil(user.id).then(setSollProfil); });
+    ladeLenkzeitSchwelle().then(setLenkSchwelle);
   }, []);
 
   useEffect(() => {
@@ -825,7 +829,7 @@ const TimeTracking = () => {
         ? (projects.find((pr: any) => pr.id === projectIdVal) as any)?.fahrzeit_minuten
         : null;
       const lenkzeitVal = (block.istFahrer || block.istBeifahrer)
-        ? lenkzeitMinutenProTag(projektFahrzeit)
+        ? lenkzeitMinutenProTag(projektFahrzeit, lenkSchwelle)
         : 0;
 
       const mainEntry = {
@@ -1468,8 +1472,8 @@ const TimeTracking = () => {
                         {(() => {
                           const pr: any = projects.find((x: any) => x.id === block.projectId);
                           const fahrzeit = pr?.fahrzeit_minuten;
-                          if (!block.projectId || !istLenkzeitPflichtig(fahrzeit)) return null;
-                          const minuten = lenkzeitMinutenProTag(fahrzeit);
+                          if (!block.projectId || !istLenkzeitPflichtig(fahrzeit, lenkSchwelle)) return null;
+                          const minuten = lenkzeitMinutenProTag(fahrzeit, lenkSchwelle);
                           return (
                             <div className="rounded-md border border-blue-300/60 bg-blue-50/50 px-3 py-2 dark:bg-blue-950/20">
                               <div className="mb-1.5 flex flex-wrap items-center gap-1.5 text-xs font-medium text-blue-900 dark:text-blue-200">

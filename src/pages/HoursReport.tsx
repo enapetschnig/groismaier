@@ -35,7 +35,9 @@ import { ladeSollProfil, sollProTag, tagesSoll, type SollProfil } from "@/lib/so
 import { aggregateByDay, formatSaldo, type DayBalance } from "@/lib/hoursAccounting";
 import { laufenderSaldo, zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, formatDatumDE, type ZeitraumSaldo } from "@/lib/zeitkonto";
 import { alsISO } from "@/lib/datum";
-import { lenkzeitJeMitarbeiter, lenkzeitText } from "@/lib/lenkzeit";
+import { lenkzeitJeMitarbeiter, lenkzeitText, lenkzeitBetrag } from "@/lib/lenkzeit";
+import { ladeLenkzeitVorgaben, type LenkzeitVorgaben } from "@/lib/lenkzeitSaetze";
+import { stundenzettelZahlen } from "@/lib/stundenzettel";
 
 interface TimeEntry {
   id: string;
@@ -57,6 +59,10 @@ interface TimeEntry {
   wetterschicht_stunden?: number | null;
   nachgetragen_von?: string | null;
   nachgetragen_am?: string | null;
+  /** Lenkzeitvergütung (Kundenvorgabe 02.09.2026). */
+  lenkzeit_minuten?: number | null;
+  ist_fahrer?: boolean | null;
+  ist_beifahrer?: boolean | null;
 }
 
 interface Profile {
@@ -69,6 +75,8 @@ interface Project {
   name: string;
   adresse?: string;
   plz?: string;
+  /** Fahrzeit einfach in Minuten — ab der Schwelle gibt es Lenkzeit. */
+  fahrzeit_minuten?: number | null;
 }
 
 /** Kostenstelle aus admin_config_options (kategorie='kostenstelle'). */
@@ -163,26 +171,17 @@ export default function HoursReport() {
     { userId: string; minutenFahrer: number; minutenBeifahrer: number; betrag: number }[]
   >([]);
 
+  /** Sätze + Schwelle (Admin → Einstellungen, Ausnahmen je Person) — 15.09.2026. */
+  const [lenkVorgaben, setLenkVorgaben] = useState<LenkzeitVorgaben | null>(null);
+
   const fetchLenkzeit = async () => {
-    const [{ data: buchungen }, { data: mitarbeiter }, { data: vorgaben }] = await Promise.all([
+    const [{ data: buchungen }, vorgaben] = await Promise.all([
       (supabase.from("time_entries" as never) as any)
         .select("user_id, lenkzeit_minuten, ist_fahrer, ist_beifahrer")
         .gte("datum", periodStart).lte("datum", periodEnd).gt("lenkzeit_minuten", 0),
-      supabase.from("employees").select("user_id, fahrer_verguetung, beifahrer_verguetung"),
-      supabase.from("app_settings").select("key, value").in("key", ["lenkzeit_satz_fahrer", "lenkzeit_satz_beifahrer"]),
+      ladeLenkzeitVorgaben(),
     ]);
-    const standard = { fahrer: 0, beifahrer: 0 };
-    for (const v of ((vorgaben as any[]) || [])) {
-      if (v.key === "lenkzeit_satz_fahrer") standard.fahrer = Number(v.value) || 0;
-      if (v.key === "lenkzeit_satz_beifahrer") standard.beifahrer = Number(v.value) || 0;
-    }
-    // Satz am Mitarbeiter gewinnt; sonst der betriebliche Vorgabewert.
-    const proMitarbeiter = new Map<string, { fahrer: number; beifahrer: number }>(
-      ((mitarbeiter as any[]) || []).filter((e) => e.user_id).map((e) => [e.user_id, {
-        fahrer: e.fahrer_verguetung != null ? Number(e.fahrer_verguetung) : standard.fahrer,
-        beifahrer: e.beifahrer_verguetung != null ? Number(e.beifahrer_verguetung) : standard.beifahrer,
-      }]),
-    );
+    setLenkVorgaben(vorgaben);
     setLenkzeitRows(lenkzeitJeMitarbeiter(
       ((buchungen as any[]) || []).map((b) => ({
         userId: b.user_id,
@@ -190,7 +189,7 @@ export default function HoursReport() {
         istFahrer: b.ist_fahrer,
         istBeifahrer: b.ist_beifahrer,
       })),
-      (uid) => proMitarbeiter.get(uid) || standard,
+      vorgaben.saetzeFuer,
     ));
   };
   const [vehicleLoading, setVehicleLoading] = useState(false);
@@ -431,7 +430,8 @@ export default function HoursReport() {
   };
 
   const fetchProjects = async () => {
-    const { data } = await supabase.from("projects").select("id, name, adresse, plz");
+    // fahrzeit_minuten steht nicht in den generierten Typen (Muster im Projekt: as never/any).
+    const { data } = await (supabase.from("projects" as never) as any).select("id, name, adresse, plz, fahrzeit_minuten");
     if (data) {
       const projectMap: Record<string, Project> = {};
       data.forEach((p) => {
@@ -618,6 +618,8 @@ export default function HoursReport() {
   // Zeitraum seit dem Stichtag (wird erst beim Monatsabschluss gebucht).
   const [laufend, setLaufend] = useState<ZeitraumSaldo>({ ueberstunden: 0, zeitausgleich: 0, gesamt: 0, tage: 0 });
   const [abgeschlossenBis, setAbgeschlossenBis] = useState<string | null>(null);
+  /** Alle Einträge der Person — für den Kontostand VOR dem gewählten Monat. */
+  const [alleEintraege, setAlleEintraege] = useState<{ datum: string; stunden: number; taetigkeit: string | null }[]>([]);
   useEffect(() => {
     if (!selectedUserId) return;
     let cancelled = false;
@@ -630,6 +632,7 @@ export default function HoursReport() {
       ]);
       if (cancelled) return;
       setManualBalance(Number((acc as any)?.balance_hours) || 0);
+      setAlleEintraege((allEntries as any[]) || []);
       const [bis, profil] = await Promise.all([zaAbgeschlossenBisLaden(), ladeSollProfil(selectedUserId)]);
       setAbgeschlossenBis(bis);
       setSollProfil(profil);
@@ -638,19 +641,39 @@ export default function HoursReport() {
     return () => { cancelled = true; };
   }, [selectedUserId]);
 
-  const addBordersToCell = (cell: any, thick: boolean = false, centered: boolean = false) => {
-    const borderStyle = thick ? "medium" : "thin";
-    cell.s = {
-      border: {
-        top: { style: borderStyle, color: { rgb: "000000" } },
-        bottom: { style: borderStyle, color: { rgb: "000000" } },
-        left: { style: borderStyle, color: { rgb: "000000" } },
-        right: { style: borderStyle, color: { rgb: "000000" } },
-      },
-      alignment: { vertical: "center", horizontal: centered ? "center" : "left" },
-    };
+  /** Sätze der gewählten Person (Ausnahme am Personalstamm oder Standard). */
+  const saetzeGewaehlt = useMemo(
+    () => (selectedUserId && lenkVorgaben ? lenkVorgaben.saetzeFuer(selectedUserId) : { fahrer: 0, beifahrer: 0 }),
+    [selectedUserId, lenkVorgaben],
+  );
+  // Die Zahlen des Stundenzettels (Soll/Ist/Überstunden/ZA/Konto vorher–nachher/
+  // Lenkzeit) — dieselbe Rechnung für Bildschirm und Excel (15.09.2026).
+  const zettel = useMemo(() => stundenzettelZahlen({
+    jahr: year, monat: month,
+    monatEintraege: timeEntries as any,
+    alleEintraege,
+    konto: manualBalance,
+    abgeschlossenBis,
+    sollJeTag,
+    saetze: saetzeGewaehlt,
+  }), [year, month, timeEntries, alleEintraege, manualBalance, abgeschlossenBis, sollJeTag, saetzeGewaehlt]);
+  /** Lenkzeit-Text für eine Buchung: „1:30 h Fahrer · 18,00 €". */
+  const lenkzeitZelle = (entry: TimeEntry): string => {
+    const min = Number(entry.lenkzeit_minuten) || 0;
+    if (min <= 0 || (!entry.ist_fahrer && !entry.ist_beifahrer)) return "";
+    const betrag = lenkzeitBetrag(min, { istFahrer: entry.ist_fahrer, istBeifahrer: entry.ist_beifahrer }, saetzeGewaehlt);
+    return `${lenkzeitText(min)} ${entry.ist_fahrer ? "Fahrer" : "Beifahrer"} · ${formatEuro(betrag)}`;
   };
 
+  /**
+   * Excel-Monatsbericht. Aufbau wie der alte Stundenzettel des Betriebs
+   * (Screenshot Christoph 15.09.2026): je Tag eine Zeile, am Ende Soll/Ist/
+   * Differenz, ZA-Konto vorher → + Überstunden − ZA verbraucht → nachher,
+   * Lenkzeitvergütung Fahrer/Beifahrer, Unterschrift.
+   *
+   * includeOvertime=false: „Ohne Überstunden" — Regelarbeitszeiten statt der
+   * echten Zeiten, keine Saldo-Spalte, kein Kontoblock.
+   */
   const exportToExcel = (includeOvertime: boolean = true) => {
     if (!selectedUserId) {
       toast({ title: "Kein Mitarbeiter ausgewählt", variant: "destructive" });
@@ -660,291 +683,199 @@ export default function HoursReport() {
     const employeeName = profiles[selectedUserId]
       ? `${profiles[selectedUserId].vorname} ${profiles[selectedUserId].nachname}`
       : "Mitarbeiter";
-
     const monthNamesShort = ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"];
+    const monatName = monthNames[month - 1];
+    const z = zettel;
+
+    // Spalten: mit Überstunden 15 (H = Überstunden), ohne 14.
+    const SPALTEN = includeOvertime ? 15 : 14;
+    const leer = (): any[] => Array(SPALTEN).fill("");
+    const zeile = (...v: any[]): any[] => { const r = leer(); v.forEach((x, i) => { r[i] = x; }); return r; };
+    const euroZelle = (n: number) => (n > 0 ? n.toFixed(2) : "");
+    const lenkSpalten = (entry: TimeEntry): [string, string] => {
+      const min = Number(entry.lenkzeit_minuten) || 0;
+      if (min <= 0) return ["", ""];
+      const betrag = lenkzeitBetrag(min, { istFahrer: entry.ist_fahrer, istBeifahrer: entry.ist_beifahrer }, saetzeGewaehlt);
+      return entry.ist_fahrer ? [euroZelle(betrag), ""] : entry.ist_beifahrer ? ["", euroZelle(betrag)] : ["", ""];
+    };
+    /** Zeile ab Spalte „Ort" — je nach Layout um eine Spalte versetzt. */
+    const rest = (ort: string, projekt: string, taetigkeit: string, plz: string, wetter: string, lenk: [string, string]) =>
+      [ort, projekt, taetigkeit, plz, wetter, lenk[0], lenk[1]];
 
     const worksheetData: any[][] = [
-      // Firmendaten Header
-      ["Holzbau Groismaier — Zimmerei & Holzbau", "", "", "", "", "", "", "", "", "", "", ""],
-      ["", "", "", "", "", "", "", "", "", "", "", ""],
-      ["", "", "", "", "", "", "", "", "", "", "", ""],
-      ["", "", "", "", "", "", "", "", "", "", "", ""],
-      ["Dienstnehmer:", "", employeeName, "", "", "", "", "", "Monat:", `${monthNamesShort[month - 1]}-${year.toString().slice(-2)}`, "", ""],
-      ["", "", "", "", "", "", "", "", "", "", "", ""],
+      zeile("Holzbau Groismaier — Zimmerei & Holzbau"),
+      leer(), leer(), leer(),
+      zeile("Dienstnehmer:", "", employeeName, "", "", "", "", "", "Monat:", `${monthNamesShort[month - 1]}-${year.toString().slice(-2)}`),
+      leer(),
     ];
-
-    // Header-Zeilen dynamisch je nach includeOvertime
+    const KOPF = worksheetData.length;                 // Index der 1. Kopfzeile
     if (includeOvertime) {
       worksheetData.push(
-        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Überstunden", "Ort", "Projekt", "Tätigkeit", "PLZ", "☔ Wetter h"],
-        ["", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt", "", "", "", "", "", ""]
+        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Überstunden", "Ort", "Projekt", "Tätigkeit", "PLZ", "☔ Wetter h", "Lenkzeit Fahrer €", "Lenkzeit Beifahrer €"],
+        zeile("", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt", "+ / − (ZA = Zeitausgleich)"),
       );
     } else {
       worksheetData.push(
-        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Ort", "Projekt", "Tätigkeit", "PLZ", "", "☔ Wetter h"],
-        ["", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt", "", "", "", "", "", ""]
+        ["Datum", "V o r m i t t a g", "", "Unterbrechung", "N a c h m i t t a g", "", "Stunden", "Ort", "Projekt", "Tätigkeit", "PLZ", "☔ Wetter h", "Lenkzeit Fahrer €", "Lenkzeit Beifahrer €"],
+        zeile("", "Beginn", "Ende", "von - bis", "Beginn", "Ende", "Gesamt"),
       );
     }
+    worksheetData.push(leer());
 
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]);
+    // Vormonat letzter Tag (leere Zeile, wie am alten Zettel)
+    worksheetData.push(zeile(new Date(year, month - 1, 0).getDate()));
 
-    // Vormonat letzter Tag hinzufügen (leere Zeile)
-    const prevMonthLastDay = new Date(year, month - 1, 0).getDate();
-    worksheetData.push([prevMonthLastDay, "", "", "", "", "", "", "", "", "", "", ""]);
-
-    // Alle Tage des Monats (1-31) durchgehen
     const daysInMonth = new Date(year, month, 0).getDate();
+    let wetterSumme = 0, lenkFahrerSumme = 0, lenkBeifahrerSumme = 0;
     for (let day = 1; day <= daysInMonth; day++) {
       const dayDate = new Date(year, month - 1, day);
-      // Finde alle Einträge für diesen Tag
       const dayEntries = timeEntries.filter((e) => isSameDay(parseISO(e.datum), dayDate));
-      
+      if (dayEntries.length === 0) { worksheetData.push(zeile(day)); continue; }
 
-      if (dayEntries.length === 0) {
-        worksheetData.push([day, "", "", "", "", "", "", "", "", "", "", ""]);
-      } else {
-        // Alle Einträge des Tages hinzufügen
-        dayEntries.forEach((entry, entryIndex) => {
-          const lunchBreak = calculateLunchBreak(entry);
-          const project = projects[entry.project_id];
-          
-          // Ort-Spalte: die Kostenstelle der Buchung. Vorher stand hier für
-          // JEDE Nicht-Baustelle pauschal „Werkstatt" — Fuhrpark- und
-          // Maschinenstunden waren im Export nicht zu erkennen.
-          const ortText = kostenstelleLabel(entry.kostenstelle, entry.location_type, ksOptions);
-          
-          // Projekt-Spalte: Urlaub/Krankenstand/Weiterbildung, Störung oder Projektname
-          const isAbsence = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag"].includes(entry.taetigkeit);
-          const isDisturbance = entry.disturbance_id != null || entry.taetigkeit?.startsWith("Störungseinsatz");
-          
-          let projektName = "";
-          if (isAbsence) {
-            projektName = entry.taetigkeit;
-          } else if (isDisturbance) {
-            projektName = "Störung";
-          } else {
-            projektName = project?.name || "";
-          }
-          
-          // PLZ: nur bei Baustellen (nicht bei Abwesenheit/Werkstatt/Störung)
-          const plz = (isAbsence || isDisturbance)
-            ? ""
-            : entry.location_type === "baustelle" ? (project?.plz || "") : "";
+      dayEntries.forEach((entry, entryIndex) => {
+        const lunchBreak = calculateLunchBreak(entry);
+        const project = projects[entry.project_id];
+        // Ort-Spalte: die Kostenstelle der Buchung (Fuhrpark/Maschinen erkennbar).
+        const ortText = kostenstelleLabel(entry.kostenstelle, entry.location_type, ksOptions);
+        const isAbsence = ["Urlaub", "Krankenstand", "Weiterbildung", "Feiertag", "Zeitausgleich"].includes(entry.taetigkeit);
+        const isDisturbance = entry.disturbance_id != null || entry.taetigkeit?.startsWith("Störungseinsatz");
+        const projektName = isAbsence ? entry.taetigkeit : isDisturbance ? "Störung" : (project?.name || "");
+        const plz = (isAbsence || isDisturbance) ? "" : entry.location_type === "baustelle" ? (project?.plz || "") : "";
+        const wetter = entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? entry.wetterschicht_stunden.toFixed(2) : "";
+        const lenk = lenkSpalten(entry);
+        wetterSumme += entry.wetterschicht_stunden || 0;
+        lenkFahrerSumme += Number(lenk[0]) || 0;
+        lenkBeifahrerSumme += Number(lenk[1]) || 0;
+        const displayDay = entryIndex === 0 ? day : "";
 
-          // Datum nur beim ersten Eintrag des Tages anzeigen
-          const displayDay = entryIndex === 0 ? day : "";
+        if (includeOvertime) {
+          const actualPauseText = entry.pause_minutes && entry.pause_minutes > 0 && lunchBreak ? `${lunchBreak.start} - ${lunchBreak.end}` : "";
+          // Saldo PRO TAG nur in der ersten Zeile; Zeitausgleich sichtbar als „ZA".
+          const dayBal = getDayBal(entry.datum);
+          const overtimeText = (entryIndex === 0 && dayBal && Math.abs(dayBal.saldo) >= 0.005)
+            ? `${formatSaldo(dayBal.saldo)}${dayBal.zeitausgleich < 0 ? " ZA" : ""}`
+            : "";
+          worksheetData.push([
+            displayDay,
+            entry.start_time?.substring(0, 5) || "",
+            lunchBreak?.start || "",
+            actualPauseText,
+            lunchBreak?.end || "",
+            entry.end_time?.substring(0, 5) || "",
+            entry.stunden.toFixed(2),
+            overtimeText,
+            ...rest(ortText, projektName, entry.taetigkeit, plz, wetter, lenk),
+          ]);
+        } else {
+          // Regelarbeitszeiten statt echter Zeiten; Soll der Person je Tag.
+          const preset = getDefaultWorkTimes(dayDate);
+          worksheetData.push([
+            displayDay,
+            preset ? preset.startTime : "",
+            preset ? preset.pauseStart : "",
+            preset && preset.pauseMinutes > 0 ? `${preset.pauseStart} - ${preset.pauseEnd}` : "",
+            preset && preset.pauseMinutes > 0 ? preset.pauseEnd : "",
+            preset ? preset.endTime : "",
+            tagesSoll(dayDate, sollJeTag).toFixed(2),
+            ...rest(ortText, projektName, entry.taetigkeit, plz, wetter, lenk),
+          ]);
+        }
+      });
 
-          if (includeOvertime) {
-            // Export MIT Überstunden: Tatsächliche Zeiten verwenden
-            const actualMorningEnd = lunchBreak?.start || "";
-            const actualAfternoonStart = lunchBreak?.end || "";
-            const actualPauseText = entry.pause_minutes && entry.pause_minutes > 0 && lunchBreak
-              ? `${lunchBreak.start} - ${lunchBreak.end}`
-              : "";
-            // Saldo PRO TAG (positiv oder negativ) — nur in der ersten
-            // Eintragszeile anzeigen, sonst leer (sonst doppelt gezählt).
-            const dayBal = getDayBal(entry.datum);
-            const overtimeText = (entryIndex === 0 && dayBal && Math.abs(dayBal.saldo) >= 0.005)
-              ? formatSaldo(dayBal.saldo)
-              : "";
-
-            worksheetData.push([
-              displayDay,
-              entry.start_time?.substring(0, 5) || "",
-              actualMorningEnd,
-              actualPauseText,
-              actualAfternoonStart,
-              entry.end_time?.substring(0, 5) || "",
-              entry.stunden.toFixed(2),
-              overtimeText,
-              ortText,
-              projektName,
-              entry.taetigkeit,
-              plz,
-              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? entry.wetterschicht_stunden.toFixed(2) : "",
-            ]);
-          } else {
-            // Export OHNE Überstunden: Regelarbeitszeiten aus Lib
-            const regelarbeitszeit = tagesSoll(dayDate, sollJeTag);
-
-            // Anwesenheits-Vorgabe zur Anzeige: Mo-Do 07:00-17:00 (1h Pause),
-            // Fr 07:00-12:00. Das gebuchte Soll bleibt 7,8 h/Tag (regelarbeitszeit).
-            const preset = getDefaultWorkTimes(dayDate);
-            const regelStart = preset ? preset.startTime : "";
-            const regelMorningEnd = preset ? preset.pauseStart : "";
-            const regelPause = preset && preset.pauseMinutes > 0 ? `${preset.pauseStart} - ${preset.pauseEnd}` : "";
-            const regelAfternoonStart = preset && preset.pauseMinutes > 0 ? preset.pauseEnd : "";
-            const regelEnd = preset ? preset.endTime : "";
-            
-            worksheetData.push([
-              displayDay,
-              regelStart,
-              regelMorningEnd,
-              regelPause,
-              regelAfternoonStart,
-              regelEnd,
-              regelarbeitszeit.toFixed(2),
-              ortText,
-              projektName,
-              entry.taetigkeit,
-              plz,
-              "",
-              entry.wetterschicht_stunden && entry.wetterschicht_stunden > 0 ? entry.wetterschicht_stunden.toFixed(2) : "",
-            ]);
-          }
-        });
-
-        // Tagessumme wenn mehrere Einträge am Tag — Saldo aus dem
-        // Helper, NICHT mehr per-Entry summieren.
-        if (dayEntries.length > 1) {
-          const datumStr = alsISO(dayDate);
-          const dayBal = getDayBal(datumStr);
-          const dayTotalHours = dayBal?.ist ?? dayEntries.reduce((sum, e) => sum + e.stunden, 0);
-          if (includeOvertime) {
-            const saldoText = (dayBal && Math.abs(dayBal.saldo) >= 0.005) ? formatSaldo(dayBal.saldo) : "";
-            worksheetData.push(["", "", "", "", "", "Tagessumme:", dayTotalHours.toFixed(2), saldoText, "", "", "", ""]);
-          } else {
-            const regelarbeitszeitTag = tagesSoll(dayDate, sollJeTag);
-            // Tagessoll erscheint genau EINMAL pro Tag (vorher ×Anzahl-Einträge — Bug).
-            worksheetData.push(["", "", "", "", "", "Tagessumme:", regelarbeitszeitTag.toFixed(2), "", "", "", "", ""]);
-          }
+      // Tagessumme bei mehreren Einträgen — aus dem Tages-Helper, nicht je Zeile.
+      if (dayEntries.length > 1) {
+        const dayBal = getDayBal(alsISO(dayDate));
+        const dayTotalHours = dayBal?.ist ?? dayEntries.reduce((sum, e) => sum + e.stunden, 0);
+        if (includeOvertime) {
+          const saldoText = (dayBal && Math.abs(dayBal.saldo) >= 0.005) ? `${formatSaldo(dayBal.saldo)}${dayBal.zeitausgleich < 0 ? " ZA" : ""}` : "";
+          worksheetData.push(zeile("", "", "", "", "", "Tagessumme:", dayTotalHours.toFixed(2), saldoText));
+        } else {
+          worksheetData.push(zeile("", "", "", "", "", "Tagessumme:", tagesSoll(dayDate, sollJeTag).toFixed(2)));
         }
       }
     }
 
-    // Regelarbeitszeit-Summe für Export ohne Überstunden — pro Tag,
-    // NICHT pro Entry. Summe aller Tagessoll der Tage mit Buchungen.
-    const calculateRegelarbeitszeitSumme = () => {
-      let summe = 0;
-      for (let day = 1; day <= daysInMonth; day++) {
-        const dayDate = new Date(year, month - 1, day);
-        const hasEntries = timeEntries.some((e) => isSameDay(parseISO(e.datum), dayDate));
-        if (hasEntries) summe += tagesSoll(dayDate, sollJeTag);
-      }
-      return summe;
-    };
+    // Summenzeile
+    const SUMME = worksheetData.length;
+    if (includeOvertime) {
+      worksheetData.push(["", "", "", "", "", "SUMME", totalHours.toFixed(2), formatSaldo(totalSaldo), "", "", "", "", wetterSumme.toFixed(2), euroZelle(lenkFahrerSumme), euroZelle(lenkBeifahrerSumme)]);
+    } else {
+      const regelSumme = zettel.soll;   // Σ Tagessoll der gebuchten Tage
+      worksheetData.push(["", "", "", "", "", "SUMME", regelSumme.toFixed(2), "", "", "", "", wetterSumme.toFixed(2), euroZelle(lenkFahrerSumme), euroZelle(lenkBeifahrerSumme)]);
+    }
 
-    // Summenzeile — Saldo statt Math.max(0,…), Vorzeichen sichtbar.
+    // Fußblock — Zeilen mit langem Text werden über B–L verbunden.
+    const breiteZeilen: number[] = [];
+    const breit = (text: string) => { breiteZeilen.push(worksheetData.length); worksheetData.push(zeile("", text)); };
+    const h = (n: number) => `${formatSaldo(n)} h`;
+    worksheetData.push(leer());
     if (includeOvertime) {
-      worksheetData.push(["", "", "", "", "", "SUMME", totalHours.toFixed(2), formatSaldo(totalSaldo), "", "", "", "", timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)]);
+      worksheetData.push(zeile("", "Soll (gebuchte Tage):", `${z.soll.toFixed(2)} h`, "", "Ist:", `${z.ist.toFixed(2)} h`, "", "Differenz:", h(z.ueberstunden)));
+      worksheetData.push(leer());
+      worksheetData.push(zeile("", `ZA-Konto Stand vor ${monatName} ${year}:`, "", "", h(z.kontoVorMonat)));
+      worksheetData.push(zeile("", `+ Überstunden ${monatName}:`, "", "", h(z.ueberstunden)));
+      worksheetData.push(zeile("", `− Zeitausgleich verbraucht ${monatName}:`, "", "", h(z.zeitausgleich)));
+      worksheetData.push(zeile("", `= ZA-Konto nach ${monatName} ${year}:`, "", "", h(z.kontoNachMonat), "",
+        z.monatAbgeschlossen ? "(Monat abgeschlossen — Stand aus den Buchungen zurückgerechnet)" : "(voraussichtlich — wird beim Monatsabschluss gebucht)"));
+      worksheetData.push(leer());
+      breit(`Lenkzeitvergütung: Fahrer ${lenkzeitText(z.lenkzeit.minutenFahrer)} = ${z.lenkzeit.betragFahrer.toFixed(2)} € · Beifahrer ${lenkzeitText(z.lenkzeit.minutenBeifahrer)} = ${z.lenkzeit.betragBeifahrer.toFixed(2)} € · gesamt ${z.lenkzeit.betrag.toFixed(2)} €`);
+      if (z.werktageOhneBuchung.length > 0) {
+        breit(`Werktage ohne Buchung: ${z.werktageOhneBuchung.map((d) => formatDatumDE(d).slice(0, 6)).join(" ")} (Feiertag oder vergessen? — zählen nicht als Minus)`);
+      }
+      worksheetData.push(leer());
+      breit("Hiermit bestätige ich die Richtigkeit der angegebenen Stunden, Überstunden und des verbrauchten Zeitausgleichs.");
     } else {
-      const regelarbeitszeitSumme = calculateRegelarbeitszeitSumme();
-      worksheetData.push(["", "", "", "", "", "SUMME", regelarbeitszeitSumme.toFixed(2), "", "", "", "", ""]);
+      worksheetData.push(leer()); worksheetData.push(leer()); worksheetData.push(leer());
     }
-    
-    // Footer-Zeilen
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    if (includeOvertime) {
-      worksheetData.push(["", "Hiermit bestätige ich die Richtigkeit der von mir angegebenen Überstunden.", "", "", "", "", "", "", "", "", "", ""]);
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", `Derzeitiger offener Überstundenstand: ${formatSaldo(totalSaldo)}`, "", "", "", "", "", "", "", "", "", ""]);
-      worksheetData.push(["", "Restliche Überstunden wurden zur Gänze abgegolten.", "", "", "", "", "", "", "", "", "", ""]);
-    } else {
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer statt Überstunden-Text
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-      worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    }
-    worksheetData.push(["", "", "", "", "", "", "", "", "", "", "", ""]); // Leer
-    worksheetData.push(["", "Datum:", "", "", "", "Unterschrift:", "", "", "", "", "", ""]);
+    worksheetData.push(leer());
+    worksheetData.push(zeile("", "Datum:", "", "", "", "Unterschrift:"));
 
     const ws = XLSX.utils.aoa_to_sheet(worksheetData);
-    
-    // Spaltenbreiten für 12 Spalten
-    ws["!cols"] = [
-      { wch: 12 },  // A: Datum
-      { wch: 24 },  // B: breiter für Footer-Text
-      { wch: 24 },  // C
-      { wch: 26 },  // D
-      { wch: 12 },  // E
-      { wch: 12 },  // F
-      { wch: 10 },  // G: Stunden
-      { wch: 12 },  // H: Überstunden oder Ort
-      { wch: 12 },  // I: Ort oder Projekt
-      { wch: 22 },  // J: Projekt
-      { wch: 20 },  // K: Tätigkeit
-      { wch: 6 },   // L: PLZ
-    ];
+    ws["!cols"] = includeOvertime
+      ? [{ wch: 8 }, { wch: 34 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 24 }, { wch: 20 }, { wch: 6 }, { wch: 10 }, { wch: 14 }, { wch: 16 }]
+      : [{ wch: 8 }, { wch: 34 }, { wch: 12 }, { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 10 }, { wch: 14 }, { wch: 24 }, { wch: 20 }, { wch: 6 }, { wch: 10 }, { wch: 14 }, { wch: 16 }];
 
-    // Merged Cells
-    const sumRowIndex = worksheetData.length - 9; // Footer hat immer 9 Zeilen
     ws["!merges"] = [
-      // Firmendaten Header
       { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
-      { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
-      { s: { r: 2, c: 0 }, e: { r: 2, c: 5 } },
-      { s: { r: 3, c: 0 }, e: { r: 3, c: 5 } },
-      // Mitarbeiter und Monat
-      { s: { r: 5, c: 0 }, e: { r: 5, c: 1 } },
-      { s: { r: 5, c: 2 }, e: { r: 5, c: 7 } },
-      { s: { r: 5, c: 9 }, e: { r: 5, c: 11 } },
-      { s: { r: 7, c: 1 }, e: { r: 7, c: 2 } },
-      { s: { r: 7, c: 4 }, e: { r: 7, c: 5 } },
-      // Footer Merges - immer aktiv
-      { s: { r: sumRowIndex + 4, c: 1 }, e: { r: sumRowIndex + 4, c: 10 } },
-      { s: { r: sumRowIndex + 6, c: 1 }, e: { r: sumRowIndex + 6, c: 10 } },
-      { s: { r: sumRowIndex + 7, c: 1 }, e: { r: sumRowIndex + 7, c: 10 } }
+      { s: { r: 4, c: 0 }, e: { r: 4, c: 1 } },
+      { s: { r: 4, c: 2 }, e: { r: 4, c: 7 } },
+      { s: { r: 4, c: 9 }, e: { r: 4, c: 11 } },
+      { s: { r: KOPF, c: 1 }, e: { r: KOPF, c: 2 } },
+      { s: { r: KOPF, c: 4 }, e: { r: KOPF, c: 5 } },
+      ...breiteZeilen.map((r) => ({ s: { r, c: 1 }, e: { r, c: 11 } })),
     ];
 
-    // Zeilenhöhe für Header
-    ws["!rows"] = ws["!rows"] || [];
-    [0, 1, 2, 3].forEach((r) => {
-      ws["!rows"][r] = { hpt: 18 };
-    });
-    
-    // Footer-Texte: erhöhte Zeilenhöhe für Lesbarkeit - immer aktiv
-    ws["!rows"][sumRowIndex + 4] = { hpt: 30 }; // "Hiermit bestätige ich..."
-    ws["!rows"][sumRowIndex + 6] = { hpt: 25 }; // "Derzeitiger offener Überstundenstand..."
+    ws["!rows"] = [];
+    [0, 1, 2, 3].forEach((r) => { ws["!rows"]![r] = { hpt: 18 }; });
+    breiteZeilen.forEach((r) => { ws["!rows"]![r] = { hpt: 28 }; });
 
-    // Formatierung anwenden
     const range = XLSX.utils.decode_range(ws["!ref"] || "A1");
     for (let R = range.s.r; R <= range.e.r; ++R) {
       for (let C = range.s.c; C <= range.e.c; ++C) {
-        const cellAddress = XLSX.utils.encode_cell({ r: R, c: C });
-        if (!ws[cellAddress]) {
-          ws[cellAddress] = { t: "s", v: "" };
-        }
-        
-        const isFirmenHeader = R >= 0 && R <= 3;
-        const isHeaderRow = R === 7 || R === 8;
-        const footerBaseRow = worksheetData.length - 9; // Footer hat immer 9 Zeilen
-        const isSumRow = R === footerBaseRow;
-        const isFooterRow = R >= footerBaseRow + 1;
-        
-        const borderStyle = isHeaderRow ? "medium" : "thin";
-        
+        const addr = XLSX.utils.encode_cell({ r: R, c: C });
+        if (!ws[addr]) ws[addr] = { t: "s", v: "" };
+        const isFirmenHeader = R <= 3;
+        const isHeaderRow = R === KOPF || R === KOPF + 1;
+        const isSumRow = R === SUMME;
+        const isFooterRow = R > SUMME;
         if (isFirmenHeader || isFooterRow) {
-          ws[cellAddress].s = {
-            alignment: { 
-              vertical: "center", 
-              horizontal: "left",
-              wrapText: true
-            },
-            font: { bold: R === 0, size: R === 0 ? 14 : 11 },
+          const kontoZeile = isFooterRow && typeof worksheetData[R]?.[1] === "string" && /^(= ZA-Konto|Soll \()/.test(worksheetData[R][1]);
+          ws[addr].s = {
+            alignment: { vertical: "center", horizontal: "left", wrapText: true },
+            font: { bold: R === 0 || kontoZeile, size: R === 0 ? 14 : 11 },
           };
         } else {
-          ws[cellAddress].s = {
+          const borderStyle = isHeaderRow ? "medium" : "thin";
+          ws[addr].s = {
             border: {
               top: { style: borderStyle, color: { rgb: "000000" } },
               bottom: { style: borderStyle, color: { rgb: "000000" } },
               left: { style: borderStyle, color: { rgb: "000000" } },
               right: { style: borderStyle, color: { rgb: "000000" } },
             },
-            alignment: { 
-              vertical: "center", 
-              horizontal: isHeaderRow ? "center" : "left",
-              wrapText: false
-            },
+            alignment: { vertical: "center", horizontal: isHeaderRow ? "center" : "left", wrapText: false },
+            ...(isHeaderRow || isSumRow ? { font: { bold: true } } : {}),
           };
-          
-          if (isHeaderRow || isSumRow) {
-            ws[cellAddress].s = {
-              ...ws[cellAddress].s,
-              font: { bold: true },
-            };
-          }
         }
       }
     }
@@ -953,7 +884,6 @@ export default function HoursReport() {
     XLSX.utils.book_append_sheet(wb, ws, "Arbeitszeit");
     const suffix = includeOvertime ? "_mit_Ueberstunden" : "_ohne_Ueberstunden";
     XLSX.writeFile(wb, `Arbeitszeiterfassung_${employeeName}_${monthNamesShort[month - 1]}_${year}${suffix}.xlsx`);
-
     toast({ title: "Excel exportiert", description: `Datei wurde heruntergeladen` });
   };
 
@@ -1075,18 +1005,23 @@ export default function HoursReport() {
               {selectedUserId && (
                 <>
                   <div className="bg-muted/50 p-4 rounded-lg space-y-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                       <div>
                         <p className="text-sm text-muted-foreground">Gesamtstunden</p>
                         <p className="text-2xl font-bold">{totalHours.toFixed(2)} h</p>
-                        <p className="text-[10px] text-muted-foreground">Soll: {totalSoll.toFixed(2)} h</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Soll: {totalSoll.toFixed(2)} h ({zettel.gebuchteTage} gebuchte Tage)
+                          {zettel.werktageOhneBuchung.length > 0 && ` · ${zettel.werktageOhneBuchung.length} Werktag${zettel.werktageOhneBuchung.length === 1 ? "" : "e"} ohne Buchung`}
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">Saldo Monat</p>
                         <p className={`text-2xl font-bold ${totalSaldo > 0.005 ? "text-green-600" : totalSaldo < -0.005 ? "text-red-600" : ""}`}>
                           {formatSaldo(totalSaldo)} h
                         </p>
-                        <p className="text-[10px] text-muted-foreground">+ Überstunden / − Minusstunden</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Überstunden {formatSaldo(zettel.ueberstunden)} h · ZA verbraucht {formatSaldo(zettel.zeitausgleich)} h
+                        </p>
                       </div>
                       <div>
                         <p className="text-sm text-muted-foreground">ZA-Konto (Stand bis {formatDatumDE(abgeschlossenBis)})</p>
@@ -1107,6 +1042,16 @@ export default function HoursReport() {
                           {timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)} h
                         </p>
                       </div>
+                      {/* Lenkzeit je Person im Monat (Meldung 15.09.2026: „erscheinen nicht") */}
+                      <div>
+                        <p className="text-sm text-muted-foreground flex items-center gap-1">
+                          <Car className="h-3.5 w-3.5" /> Lenkzeit
+                        </p>
+                        <p className="text-2xl font-bold">{formatEuro(zettel.lenkzeit.betrag)}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Fahrer {lenkzeitText(zettel.lenkzeit.minutenFahrer)} · Beifahrer {lenkzeitText(zettel.lenkzeit.minutenBeifahrer)}
+                        </p>
+                      </div>
                     </div>
                   </div>
 
@@ -1125,19 +1070,20 @@ export default function HoursReport() {
                           <TableHead>Projekt</TableHead>
                           <TableHead>Tätigkeit</TableHead>
                           <TableHead>KFZ / km</TableHead>
+                          <TableHead>Lenkzeit</TableHead>
                           {isAdmin && <TableHead className="w-10"></TableHead>}
                         </TableRow>
                       </TableHeader>
                       <TableBody>
                         {loading ? (
                           <TableRow>
-                            <TableCell colSpan={11} className="text-center">
+                            <TableCell colSpan={12} className="text-center">
                               Lade...
                             </TableCell>
                           </TableRow>
                         ) : monthDays.length === 0 ? (
                           <TableRow>
-                            <TableCell colSpan={11} className="text-center">
+                            <TableCell colSpan={12} className="text-center">
                               Keine Daten verfügbar
                             </TableCell>
                           </TableRow>
@@ -1162,7 +1108,7 @@ export default function HoursReport() {
                                       </span>
                                     </div>
                                   </TableCell>
-                                  <TableCell colSpan={isAdmin ? 10 : 10}></TableCell>
+                                  <TableCell colSpan={11}></TableCell>
                                   {isAdmin && (
                                     <TableCell>
                                       <Button
@@ -1228,7 +1174,7 @@ export default function HoursReport() {
                                         "font-medium",
                                         dayBal.saldo > 0 ? "text-orange-600" : "text-red-600"
                                       )}>
-                                        {formatSaldo(dayBal.saldo)} h
+                                        {formatSaldo(dayBal.saldo)} h{dayBal.zeitausgleich < 0 ? " (ZA)" : ""}
                                       </span>
                                     )}
                                   </TableCell>
@@ -1287,6 +1233,9 @@ export default function HoursReport() {
                                       </div>
                                     )}
                                   </TableCell>
+                                  <TableCell className="text-xs whitespace-nowrap">
+                                    {lenkzeitZelle(entry) || <span className="text-muted-foreground">—</span>}
+                                  </TableCell>
                                   {isAdmin && (
                                     <TableCell>
                                       <div className="flex gap-0.5">
@@ -1336,7 +1285,9 @@ export default function HoursReport() {
                           <TableCell className="text-right font-bold text-blue-600">
                             {timeEntries.reduce((s, e) => s + (e.wetterschicht_stunden || 0), 0).toFixed(2)}
                           </TableCell>
-                          <TableCell colSpan={isAdmin ? 4 : 3}></TableCell>
+                          <TableCell colSpan={3}></TableCell>
+                          <TableCell className="text-right font-bold text-xs whitespace-nowrap">{formatEuro(zettel.lenkzeit.betrag)}</TableCell>
+                          {isAdmin && <TableCell></TableCell>}
                         </TableRow>
                       </TableFooter>
                     </Table>
@@ -1345,30 +1296,42 @@ export default function HoursReport() {
               )}
             </CardContent>
           </Card>
-        </TabsContent>
 
-        <TabsContent value="projekte">
-          <ProjectHoursReport />
-        </TabsContent>
-
-        {/* ---------------- Kostenstellen ---------------- */}
-        <TabsContent value="kostenstellen" className="space-y-4">
-          {/* Lenkzeitvergütung — Grundlage für die Lohnverrechnung
-              (Kundenvorgabe 02.09.2026) */}
-          {lenkzeitRows.length > 0 && (
-            <Card className="kb-panel">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
-                  <Car className="w-5 h-5" />
-                  Lenkzeitvergütung
-                </CardTitle>
-                <CardDescription className="text-xs sm:text-sm">
-                  Vergütete Fahrzeit im gewählten Zeitraum — je Mitarbeiter getrennt
-                  nach Fahrer und Beifahrer. Sätze stehen unter Stammdaten/Personal.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {renderPeriodPicker()}
+          {/* Lenkzeitvergütung — Grundlage für die Lohnverrechnung (Kundenvorgabe
+              02.09.2026). Seit 15.09.2026 hier beim Arbeitszeit-Bericht und immer
+              sichtbar: Vorher hing die Karte im Kostenstellen-Tab und verschwand
+              ohne Buchungen ganz („erscheinen noch nicht"). */}
+          <Card className="kb-panel">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">
+                <Car className="w-5 h-5" />
+                Lenkzeitvergütung {monthNames[month - 1]} {year}
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm">
+                Vergütete Fahrzeit je Mitarbeiter, getrennt nach Fahrer und Beifahrer.
+                Sätze: Admin → Einstellungen → Lenkzeitvergütung (Standard laut KV), Ausnahmen je Person unter Stammdaten/Personal.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {lenkzeitRows.length === 0 ? (
+                <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <p className="font-semibold">In diesem Monat ist keine Lenkzeit gebucht.</p>
+                  <p>
+                    Eine Lenkzeit entsteht nur, wenn beim Projekt „Fahrzeit einfach" mindestens {lenkVorgaben?.schwelleMinuten ?? 25} Minuten
+                    eingetragen ist UND in der Zeiterfassung bei der Buchung „Fahrer" oder „Beifahrer" angehakt wurde.
+                    Mitgebuchte Kollegen sind automatisch Beifahrer. Nachträglich geht das über „Eintrag bearbeiten" in der Tabelle oben.
+                  </p>
+                  <p>
+                    Projekte mit Fahrzeit ab {lenkVorgaben?.schwelleMinuten ?? 25} min:{" "}
+                    {(() => {
+                      const liste = Object.values(projects)
+                        .filter((p) => (Number(p.fahrzeit_minuten) || 0) >= (lenkVorgaben?.schwelleMinuten ?? 25))
+                        .map((p) => `${p.name} (${p.fahrzeit_minuten} min)`);
+                      return liste.length ? liste.join(", ") : "keines — bitte bei den Projekten die Fahrzeit eintragen";
+                    })()}
+                  </p>
+                </div>
+              ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -1392,9 +1355,7 @@ export default function HoursReport() {
                               </td>
                               <td className="py-2 text-right tabular-nums">{lenkzeitText(r.minutenFahrer)}</td>
                               <td className="py-2 text-right tabular-nums">{lenkzeitText(r.minutenBeifahrer)}</td>
-                              <td className="py-2 text-right font-semibold tabular-nums">
-                                {new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" }).format(r.betrag)}
-                              </td>
+                              <td className="py-2 text-right font-semibold tabular-nums">{formatEuro(r.betrag)}</td>
                             </tr>
                           );
                         })}
@@ -1402,30 +1363,30 @@ export default function HoursReport() {
                     <tfoot>
                       <tr className="border-t font-semibold">
                         <td className="py-2">Summe</td>
-                        <td className="py-2 text-right tabular-nums">
-                          {lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenFahrer, 0))}
-                        </td>
-                        <td className="py-2 text-right tabular-nums">
-                          {lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenBeifahrer, 0))}
-                        </td>
-                        <td className="py-2 text-right tabular-nums">
-                          {new Intl.NumberFormat("de-AT", { style: "currency", currency: "EUR" })
-                            .format(lenkzeitRows.reduce((s, r) => s + r.betrag, 0))}
-                        </td>
+                        <td className="py-2 text-right tabular-nums">{lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenFahrer, 0))}</td>
+                        <td className="py-2 text-right tabular-nums">{lenkzeitText(lenkzeitRows.reduce((s, r) => s + r.minutenBeifahrer, 0))}</td>
+                        <td className="py-2 text-right tabular-nums">{formatEuro(lenkzeitRows.reduce((s, r) => s + r.betrag, 0))}</td>
                       </tr>
                     </tfoot>
                   </table>
                 </div>
-                {lenkzeitRows.every((r) => r.betrag === 0) && (
-                  <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-                    Es sind Lenkzeiten gebucht, aber noch keine Sätze hinterlegt —
-                    unter Stammdaten/Personal je Mitarbeiter „Lenkzeit Fahrer/Beifahrer" eintragen.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          )}
+              )}
+              {lenkzeitRows.length > 0 && lenkzeitRows.every((r) => r.betrag === 0) && (
+                <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  Es sind Lenkzeiten gebucht, aber die Sätze stehen auf 0 — unter Admin → Einstellungen → Lenkzeitvergütung
+                  den KV-Satz für Fahrer und Beifahrer eintragen (oder je Person unter Stammdaten/Personal).
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
+        <TabsContent value="projekte">
+          <ProjectHoursReport />
+        </TabsContent>
+
+        {/* ---------------- Kostenstellen ---------------- */}
+        <TabsContent value="kostenstellen" className="space-y-4">
           <Card className="kb-panel">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg sm:text-xl">

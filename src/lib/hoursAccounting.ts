@@ -5,9 +5,21 @@
 // eine per-Entry-Berechnung Math.max(0, 6h - 10h) = 0 zweimal liefern,
 // obwohl der Tag in Summe 12h und damit +2h Überstunden hat.
 //
-// Sonderzeiten (Urlaub / Krankenstand / Feiertag / Zeitausgleich /
-// Weiterbildung): Tagessoll wird auf 0 gesetzt UND die Stunden werden
-// nicht als Überstunden gewertet. Saldo neutral pro solchem Tag.
+// EINE Tagesregel für alles (15.09.2026, Meldung Christoph: „im Excel habe
+// ich die ZA-Zeit dazugerechnet — die muss aber irgendwo wieder abgezogen
+// werden, wenn er verbraucht wurde"): Bis dahin rechneten Stundenauswertung,
+// Meine Stunden und der Excel-Export einen Zeitausgleich-Tag neutral (Saldo
+// 0), das Zeitkonto zog ihn ab. Jetzt nutzen alle `tagesBilanz`:
+//
+//   Zeitausgleich-Stunden     → zeitausgleich −= Stunden; sie decken das
+//                               Tagessoll in dieser Höhe ab
+//   Urlaub/Krank/Feiertag/WB  → Tag neutral (Überstunden 0, ZA 0)
+//   sonst                     → ueberstunden = Ist − (Soll − ZA-Stunden)
+//
+// Das Soll eines Tages ist immer das Tagessoll der Person (Mo–Fr), auch an
+// Urlaubstagen — so wie es der alte Stundenzettel gehalten hat („Soll 163,8
+// = 21 Tage × 7,8", Urlaub steht mit 7,8 h im Ist). Damit gilt an jedem
+// nicht-neutralen Tag: Ist − Soll = Überstunden.
 
 import { getNormalWorkingHours } from "@/lib/workingHours";
 import { tagesSoll } from "@/lib/sollStunden";
@@ -20,33 +32,62 @@ export type TimeEntryLite = {
 
 export type DayBalance = {
   datum: string;          // YYYY-MM-DD
-  ist: number;            // gebuchte Summe (alle Einträge des Tages)
-  // Tagessoll aus getNormalWorkingHours: 7,8 h Mo–Fr (39-h-Woche), 0 am
-  // Wochenende und bei Sonderzeit. (Der frühere Vermerk „10/0 Mo–Do" war
-  // seit der Umstellung auf 39 h veraltet — korrigiert 14.09.2026.)
+  ist: number;            // gebuchte Summe (alle Einträge des Tages, inkl. Urlaub/ZA)
+  /** Tagessoll der Person: Mo–Fr, 0 am Wochenende — auch an Urlaubstagen. */
   soll: number;
-  saldo: number;          // ist - soll, kann negativ sein
+  /** Ist − (Soll − ZA-Stunden); an neutralen Tagen 0. */
+  ueberstunden: number;
+  /** Genommener Zeitausgleich, negativ oder 0. */
+  zeitausgleich: number;
+  /** ueberstunden + zeitausgleich — das, was ins Zeitkonto geht. */
+  saldo: number;
+  /** Urlaub / Krankenstand / Feiertag / Weiterbildung am Tag → neutral. */
   istSonderzeit: boolean;
 };
 
+export const ZEITAUSGLEICH = "Zeitausgleich";
+
 /**
- * Tätigkeiten, die das Tagessoll als erfüllt markieren — der Tag
- * wird neutral (Saldo 0) gerechnet, egal wie viele Stunden gebucht
- * sind.
+ * Tätigkeiten mit Sonderregel. Zeitausgleich wird abgezogen, die anderen
+ * stellen den Tag neutral.
  */
 export const SONDER_TAETIGKEITEN = new Set([
   "Urlaub",
   "Krankenstand",
   "Feiertag",
-  "Zeitausgleich",
+  ZEITAUSGLEICH,
   "Weiterbildung",
 ]);
+
+const r2 = (n: number) => Math.round(n * 100) / 100;
+export const istZeitausgleich = (t: string | null | undefined): boolean => String(t || "").trim() === ZEITAUSGLEICH;
+export const istNeutraleSonderzeit = (t: string | null | undefined): boolean =>
+  !istZeitausgleich(t) && SONDER_TAETIGKEITEN.has(String(t || "").trim());
+
+/** Tagessoll: persönlich (sollStunden) oder, ohne Angabe, Vollzeit 7,8 h. */
+export function sollFuerTag(datum: string, sollJeTag?: number): number {
+  const tag = new Date(datum + "T12:00:00");
+  return sollJeTag === undefined ? getNormalWorkingHours(tag) : tagesSoll(tag, sollJeTag);
+}
+
+/** Die eine Tagesregel — für Zeitkonto, Auswertung, Meine Stunden und Excel. */
+export function tagesBilanz(datum: string, dayEntries: TimeEntryLite[], sollJeTag?: number): DayBalance {
+  const soll = sollFuerTag(datum, sollJeTag);
+  const ist = dayEntries.reduce((s, e) => s + (Number(e.stunden) || 0), 0);
+  const za = dayEntries.filter((e) => istZeitausgleich(e.taetigkeit)).reduce((s, e) => s + (Number(e.stunden) || 0), 0);
+  const istSonderzeit = dayEntries.some((e) => istNeutraleSonderzeit(e.taetigkeit));
+  const normalIst = dayEntries
+    .filter((e) => !istZeitausgleich(e.taetigkeit) && !istNeutraleSonderzeit(e.taetigkeit))
+    .reduce((s, e) => s + (Number(e.stunden) || 0), 0);
+  const zeitausgleich = za > 0 ? r2(-za) : 0;   // kein negatives Null
+  const ueberstunden = istSonderzeit ? 0 : r2(normalIst - Math.max(0, soll - za));
+  return { datum, ist: r2(ist), soll, ueberstunden, zeitausgleich, saldo: r2(ueberstunden + zeitausgleich), istSonderzeit };
+}
 
 /**
  * Aggregiert beliebige time_entries nach Datum und liefert je Tag
  * Ist-, Soll- und Saldo-Stunden. Sortiert aufsteigend nach Datum.
- */
-/**
+ *
  * @param sollJeTag Tagessoll der Person (sollStunden.sollProTag) — ohne
  *   Angabe Vollzeit 7,8 h. Seit 14.09.2026 hat jede Person ihr eigenes Soll
  *   (Meldung Katrin: „auf 15 h eingestellt, nicht auf 39").
@@ -60,24 +101,13 @@ export function aggregateByDay(entries: TimeEntryLite[], sollJeTag?: number): Da
     grouped.set(e.datum, list);
   }
   const out: DayBalance[] = [];
-  for (const [datum, dayEntries] of grouped) {
-    const ist = dayEntries.reduce((s, e) => s + Number(e.stunden || 0), 0);
-    const istSonderzeit = dayEntries.some(
-      (e) => !!e.taetigkeit && SONDER_TAETIGKEITEN.has(e.taetigkeit),
-    );
-    const tag = new Date(datum + "T12:00:00");
-    const soll = istSonderzeit
-      ? 0
-      : (sollJeTag === undefined ? getNormalWorkingHours(tag) : tagesSoll(tag, sollJeTag));
-    const saldo = istSonderzeit ? 0 : ist - soll;
-    out.push({ datum, ist, soll, saldo, istSonderzeit });
-  }
+  for (const [datum, dayEntries] of grouped) out.push(tagesBilanz(datum, dayEntries, sollJeTag));
   return out.sort((a, b) => a.datum.localeCompare(b.datum));
 }
 
 /** Saldo-Summe über die gegebenen Einträge — Auto-Saldo aus time_entries. */
 export function totalAutoSaldo(entries: TimeEntryLite[], sollJeTag?: number): number {
-  return aggregateByDay(entries, sollJeTag).reduce((s, d) => s + d.saldo, 0);
+  return r2(aggregateByDay(entries, sollJeTag).reduce((s, d) => s + d.saldo, 0));
 }
 
 /**

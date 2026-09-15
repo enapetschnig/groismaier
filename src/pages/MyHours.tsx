@@ -358,9 +358,9 @@ const MyHours = () => {
                 {(() => {
                   // Soll/Saldo des Monats aus der zentralen Tages-Aggregation —
                   // exakt dieselbe Logik wie das Stundenkonto oben: es zählen nur
-                  // Tage MIT Buchung (kein Phantom-Minus für nicht gebuchte Tage),
-                  // Sonderzeiten (Urlaub/Krankenstand/Feiertag/Zeitausgleich/
-                  // Weiterbildung) werden neutral gerechnet (Soll 0, Saldo 0).
+                  // Tage MIT Buchung (kein Phantom-Minus für nicht gebuchte Tage).
+                  // Urlaub/Krankenstand/Feiertag/Weiterbildung sind neutral,
+                  // Zeitausgleich wird abgezogen (15.09.2026, wie im Zeitkonto).
                   const sollTotal = dayBalances.reduce((s, d) => s + d.soll, 0);
                   const diff = dayBalances.reduce((s, d) => s + d.saldo, 0);
                   return (
@@ -418,7 +418,7 @@ const MyHours = () => {
                           <span className="font-bold text-primary">{dayTotal.toFixed(2)} h</span>
                           {dayBal && Math.abs(dayBal.saldo) >= 0.005 && (
                             <span className={`ml-2 font-medium ${dayBal.saldo > 0 ? "text-green-600" : "text-red-600"}`}>
-                              {formatSaldo(dayBal.saldo)} h
+                              {formatSaldo(dayBal.saldo)} h{dayBal.zeitausgleich < 0 ? " (ZA)" : ""}
                             </span>
                           )}
                         </span>
@@ -523,7 +523,7 @@ const MyHours = () => {
                               <TableCell className="text-right">
                                 {idx === 0 && dayBal && Math.abs(dayBal.saldo) >= 0.005 ? (
                                   <span className={`font-medium ${dayBal.saldo > 0 ? "text-green-600" : "text-red-600"}`}>
-                                    {formatSaldo(dayBal.saldo)} h
+                                    {formatSaldo(dayBal.saldo)} h{dayBal.zeitausgleich < 0 ? " (ZA)" : ""}
                                   </span>
                                 ) : null}
                               </TableCell>
@@ -544,7 +544,7 @@ const MyHours = () => {
                             <TableRow key={`sum-${datum}`} className="bg-muted/30">
                               <TableCell colSpan={6} className="text-right text-xs text-muted-foreground py-1">
                                 Tagesgesamt: <span className="font-medium text-foreground">{dayTotal.toFixed(2)} h</span>
-                                {sollH > 0 && (
+                                {Math.abs(dayDiff) >= 0.005 && (
                                   <span className={`ml-2 ${dayDiff >= 0 ? "text-green-600" : "text-red-600"}`}>
                                     ({dayDiff >= 0 ? "+" : ""}{dayDiff.toFixed(2)})
                                   </span>

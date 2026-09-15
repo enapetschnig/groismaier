@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { projektMoeglich, projektPflicht, projektFeldLabel, projektFeldHinweis } from "@/lib/kostenstellen";
 import { zaAbgeschlossenBisLaden, istAbgeschlossen, abgeschlossenHinweis, type ZaEintragLite } from "@/lib/zeitkonto";
+import { istLenkzeitPflichtig, lenkzeitMinutenProTag, lenkzeitText, LENKZEIT_SCHWELLE_MINUTEN } from "@/lib/lenkzeit";
+import { ladeLenkzeitSchwelle } from "@/lib/lenkzeitSaetze";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -45,7 +47,7 @@ export interface AdminTimeEntryDialogProps {
   employeeLabel?: string;
 }
 
-interface ProjectOpt { id: string; name: string; adresse?: string | null }
+interface ProjectOpt { id: string; name: string; adresse?: string | null; fahrzeit_minuten?: number | null }
 interface VehicleOpt { id: string; bezeichnung: string; kennzeichen?: string | null; art?: string }
 interface KostenstelleOpt { wert: string; label: string }
 const LOCATION_OPTIONS = [
@@ -92,6 +94,11 @@ export function AdminTimeEntryDialog({
   const [urspruenglich, setUrspruenglich] = useState<ZaEintragLite | null>(null);
   const [kostenstellen, setKostenstellen] = useState<KostenstelleOpt[]>(KOSTENSTELLEN_FALLBACK);
   const [isAbsence, setIsAbsence] = useState(false);
+  // Lenkzeit (Kundenvorgabe 02.09.2026) auch beim Admin-Nachtrag — sonst
+  // fehlte die Fahrzeit in Auswertung und Lohn (Meldung 15.09.2026).
+  const [istFahrer, setIstFahrer] = useState(false);
+  const [istBeifahrer, setIstBeifahrer] = useState(false);
+  const [lenkSchwelle, setLenkSchwelle] = useState(LENKZEIT_SCHWELLE_MINUTEN);
 
   // Zahlenfelder werden als ROHTEXT gehalten (österreichische Schreibweise
   // „8,5" muss tippbar bleiben) und erst beim Speichern über parseDecimal
@@ -113,11 +120,12 @@ export function AdminTimeEntryDialog({
   // Stammdaten + ggf. Eintrag laden
   useEffect(() => {
     if (!open) return;
+    ladeLenkzeitSchwelle().then(setLenkSchwelle);
     void (async () => {
       setLoading(true);
       try {
         const [projRes, vehRes, ksRes] = await Promise.all([
-          supabase.from("projects").select("id, name, adresse").not("status", "eq", "Abgeschlossen").order("name"),
+          supabase.from("projects").select("id, name, adresse, fahrzeit_minuten").not("status", "eq", "Abgeschlossen").order("name"),
           // Spalte heißt `aktiv` (nicht is_active) — sonst bleibt die Auswahl leer.
           (supabase.from("vehicles" as never) as any).select("id, bezeichnung, kennzeichen, art").eq("aktiv", true).order("bezeichnung"),
           // Gleiche Quelle wie die Zeiterfassung der Mitarbeiter.
@@ -127,7 +135,7 @@ export function AdminTimeEntryDialog({
             .eq("is_active", true)
             .order("sort_order"),
         ]);
-        setProjects(((projRes.data as any[]) || []).map(p => ({ id: p.id, name: p.name, adresse: p.adresse })));
+        setProjects(((projRes.data as any[]) || []).map(p => ({ id: p.id, name: p.name, adresse: p.adresse, fahrzeit_minuten: p.fahrzeit_minuten })));
         setVehicles(((vehRes.data as any[]) || []).map((v: any) => ({ id: v.id, bezeichnung: v.bezeichnung, kennzeichen: v.kennzeichen })));
         const ksList = ((ksRes?.data as any[]) || []).map((o: any) => ({ wert: o.wert as string, label: o.label as string }));
         if (ksList.length > 0) setKostenstellen(ksList);
@@ -154,6 +162,8 @@ export function AdminTimeEntryDialog({
               notizen: d.notizen || "",
             });
             setIsAbsence(ABWESENHEITS_TAETIGKEITEN.has((d.taetigkeit || "").trim()));
+            setIstFahrer(!!d.ist_fahrer);
+            setIstBeifahrer(!!d.ist_beifahrer);
             setUrspruenglicheKs(d.kostenstelle || "baustelle");
             setUrspruenglich({ datum: d.datum, stunden: Number(d.stunden) || 0, taetigkeit: d.taetigkeit || "" });
             setGeraetId((((d.time_entry_vehicles as any[]) || [])[0]?.vehicle_id as string) || "");
@@ -174,6 +184,8 @@ export function AdminTimeEntryDialog({
             notizen: "",
           });
           setIsAbsence(false);
+          setIstFahrer(false);
+          setIstBeifahrer(false);
           setUrspruenglicheKs("");
           setGeraetId("");
         }
@@ -195,6 +207,10 @@ export function AdminTimeEntryDialog({
     totalMin -= Math.max(0, pause || 0);
     return Math.max(0, Math.round(totalMin / 60 * 100) / 100);
   };
+
+  /** Fahrzeit des gewählten Projekts (eine Strecke) — Grundlage der Lenkzeit. */
+  const projektFahrzeit = projects.find((p) => p.id === form.project_id)?.fahrzeit_minuten ?? null;
+  const lenkzeitMoeglich = projektMoeglich(form.kostenstelle) && !!form.project_id && !isAbsence && istLenkzeitPflichtig(projektFahrzeit, lenkSchwelle);
 
   /** Stunden laut Start/Ende/Pause — Referenzwert für die Plausibilisierung. */
   const stundenAusZeiten = (): number =>
@@ -301,6 +317,10 @@ export function AdminTimeEntryDialog({
         wetterschicht_stunden: form.location_type === "baustelle" && wetterNum !== null && wetterNum > 0
           ? wetterNum : null,
         notizen: form.notizen?.trim() || null,
+        // Lenkzeit nur bei Projekt über der Schwelle und angehaktem Fahrer/Beifahrer.
+        ist_fahrer: lenkzeitMoeglich && istFahrer,
+        ist_beifahrer: lenkzeitMoeglich && !istFahrer && istBeifahrer,
+        lenkzeit_minuten: lenkzeitMoeglich && (istFahrer || istBeifahrer) ? lenkzeitMinutenProTag(projektFahrzeit, lenkSchwelle) : 0,
       };
 
       // Abgeschlossener Monat: gesperrt (Umstellung 14.09.2026) — gilt für
@@ -475,6 +495,25 @@ export function AdminTimeEntryDialog({
                     </SelectContent>
                   </Select>
                   <p className="mt-1 text-xs text-muted-foreground">{projektFeldHinweis(form.kostenstelle)}</p>
+                  {lenkzeitMoeglich && (
+                    <div className="mt-2 rounded-md border border-blue-300/60 bg-blue-50/50 px-3 py-2 dark:bg-blue-950/20">
+                      <div className="mb-1 text-xs font-medium text-blue-900 dark:text-blue-200">
+                        Lenkzeit {lenkzeitText(lenkzeitMinutenProTag(projektFahrzeit, lenkSchwelle))} (hin und retour, {projektFahrzeit} min je Strecke)
+                      </div>
+                      <div className="flex flex-wrap gap-4">
+                        <label className="flex min-h-[36px] cursor-pointer items-center gap-2 text-sm">
+                          <input type="checkbox" className="h-4 w-4" checked={istFahrer}
+                            onChange={(e) => { setIstFahrer(e.target.checked); if (e.target.checked) setIstBeifahrer(false); }} />
+                          Fahrer
+                        </label>
+                        <label className="flex min-h-[36px] cursor-pointer items-center gap-2 text-sm">
+                          <input type="checkbox" className="h-4 w-4" checked={istBeifahrer}
+                            onChange={(e) => { setIstBeifahrer(e.target.checked); if (e.target.checked) setIstFahrer(false); }} />
+                          Beifahrer
+                        </label>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div>

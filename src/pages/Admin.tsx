@@ -31,6 +31,7 @@ import { InvoiceNumberSettings } from "@/components/admin/InvoiceNumberSettings"
 import { DocumentTextsEditor } from "@/components/admin/DocumentTextsEditor";
 import { RegieSaetzeEditor } from "@/components/admin/RegieSaetzeEditor";
 import { UebergabePaketKarte } from "@/components/admin/UebergabePaketKarte";
+import { LenkzeitSaetzeKarte } from "@/components/admin/LenkzeitSaetzeKarte";
 import { ProjectStatusSettings } from "@/components/admin/ProjectStatusSettings";
 import { MahnungSettings } from "@/components/admin/MahnungSettings";
 import { CustomerColorSettings } from "@/components/admin/CustomerColorSettings";
@@ -1330,6 +1331,10 @@ export default function Admin() {
             {/* ===== MAHNUNGEN ===== */}
             <div id="mahnungen" className="scroll-mt-4">
               <MahnungSettings />
+            </div>
+            {/* Lenkzeit-Sätze laut KV (Meldung 15.09.2026) */}
+            <div id="lenkzeit" className="scroll-mt-4">
+              <LenkzeitSaetzeKarte />
             </div>
             <UebergabePaketKarte />
           </TabsContent>
