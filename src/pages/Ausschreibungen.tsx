@@ -26,7 +26,7 @@ import { useToast } from "@/hooks/use-toast";
 import { KBToolbar, KBToolbarButton } from "@/components/kingbill";
 import { parseDecimal, formatForInput } from "@/lib/num";
 import { heuteISO } from "@/lib/datum";
-import { erkenneSpalten, baueLvAusZellen, LvExcelFehler, type Zellen, type SpaltenZuordnung } from "@/lib/lvExcel";
+import { erkenneSpalten, baueLvAusZellen, LvExcelFehler, summenzeileArt, type Zellen, type SpaltenZuordnung } from "@/lib/lvExcel";
 import { baueKalkulationAusLv, schreibePreiseInsLv } from "@/lib/lvKalkulation";
 import { belegSummen } from "@/lib/belegSummen";
 import {
@@ -82,6 +82,7 @@ interface LvPosition {
   ep_sonstiges: number | null;
 }
 
+const r2 = (n: number) => Math.round(n * 100) / 100;
 const eur = (n: number) =>
   `€ ${n.toLocaleString("de-AT", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -254,8 +255,13 @@ export default function Ausschreibungen() {
     if (!offenesLv?.kalkulation_id || kalkLaeuft) return;
     setKalkLaeuft(true);
     try {
-      const { anzahl } = await schreibePreiseInsLv(offenesLv.kalkulation_id);
-      toast({ title: "Preise übernommen", description: `${anzahl} Positionen aus der Kalkulation bepreist.` });
+      const { anzahl, ohneZuordnung } = await schreibePreiseInsLv(offenesLv.kalkulation_id);
+      toast({
+        title: "Preise übernommen",
+        description: `${anzahl} Positionen aus der Kalkulation bepreist.`
+          + (ohneZuordnung.length ? ` Ohne LV-Position (Name beginnt nicht mit einer Pos-Nr): ${ohneZuordnung.join(", ")}` : ""),
+        ...(ohneZuordnung.length ? { variant: "destructive" as const } : {}),
+      });
       await fetchPositionen(offenesLv.id);
     } catch (err) {
       toast({ variant: "destructive", title: "Übernahme fehlgeschlagen", description: err instanceof Error ? err.message : String(err) });
@@ -651,6 +657,11 @@ export default function Ausschreibungen() {
       }
       aktuelle.positionen.push(p);
     }
+    // Eine Gruppe nur aus Summenzeilen des Planers heißt „Summenaufstellung",
+    // nicht „LG 4 — ULG 4 Angebotspreis netto".
+    for (const g of gruppen) {
+      if (g.positionen.every((p) => !istBepreisbar(p) && summenzeileArt(p.stichwort))) g.titel = "Summenaufstellung";
+    }
     return gruppen;
   }, [positionen, nurUnbepreiste, filterIds]);
 
@@ -820,6 +831,12 @@ export default function Ausschreibungen() {
                     const ep = epGesamt(p);
                     const badge = ART_BADGE[p.positionsart];
                     const offen = langtextOffen.has(p.id);
+                    // Summenzeile des Planers (Excel-Altbestand): statt „Vertragstext"
+                    // den Wert aus den bepreisten Normalpositionen zeigen.
+                    const summenArt = !bepreisbar ? summenzeileArt(p.stichwort) : null;
+                    const summenWert = summenArt === "mwst" ? r2(summen.netto * 0.2)
+                      : summenArt === "brutto" ? r2(summen.netto * 1.2)
+                      : summenArt ? summen.netto : null;
                     return (
                       <div key={p.id} className={`p-3 ${bepreisbar && preis === null ? "bg-amber-50/60" : ""}`}>
                         <div className="flex flex-wrap items-start gap-2">
@@ -840,13 +857,18 @@ export default function Ausschreibungen() {
                                   {badge.label}
                                 </span>
                               )}
-                              {!bepreisbar && (
+                              {!bepreisbar && !summenArt && (
                                 <span className="ml-2 inline-block rounded border border-border bg-muted px-1.5 py-0 text-[10px] align-middle text-muted-foreground">
                                   Vertragstext
                                 </span>
                               )}
                             </span>
                           </button>
+                          {summenWert !== null && (
+                            <span className="shrink-0 text-sm font-bold tabular-nums" title="Aus den bepreisten Normalpositionen gerechnet">
+                              {eur(summenWert)}
+                            </span>
+                          )}
                           {bepreisbar && (
                             <span className="shrink-0 text-sm tabular-nums text-muted-foreground">
                               {Number(p.menge).toLocaleString("de-AT")} {p.einheit}
@@ -920,6 +942,25 @@ export default function Ausschreibungen() {
           {!posLoading && nurUnbepreiste && gliederung.length === 0 && (
             <div className="kb-panel p-8 text-center text-muted-foreground">
               Alles bepreist — keine offenen Positionen mehr.
+            </div>
+          )}
+
+          {/* Summenaufstellung am Ende (Meldung 15.09.2026) — wie am Ende jedes
+              LVs üblich; bringt der Planer eigene Summenzeilen mit, stehen die
+              Werte dort und dieser Block entfällt. */}
+          {!posLoading && !nurUnbepreiste && positionen.length > 0 && !positionen.some((p) => !istBepreisbar(p) && summenzeileArt(p.stichwort)) && (
+            <div className="kb-panel p-3 sm:p-4">
+              <div className="ml-auto max-w-sm space-y-1 text-sm">
+                <div className="flex justify-between gap-4"><span>Angebotspreis netto</span><b className="tabular-nums">{eur(summen.netto)}</b></div>
+                <div className="flex justify-between gap-4 text-muted-foreground"><span>zuzüglich 20 % MwSt.</span><span className="tabular-nums">{eur(r2(summen.netto * 0.2))}</span></div>
+                <div className="flex justify-between gap-4 border-t border-border pt-1"><span className="font-bold">Angebotspreis brutto</span><b className="tabular-nums">{eur(r2(summen.netto * 1.2))}</b></div>
+                {(summen.wahl > 0 || summen.eventual > 0) && (
+                  <p className="pt-1 text-[11px] text-muted-foreground">Wahl- und Eventualpositionen sind nicht enthalten.</p>
+                )}
+                {summen.bepreisbar > summen.bepreist && (
+                  <p className="text-[11px] text-amber-700">{summen.bepreisbar - summen.bepreist} Positionen sind noch nicht bepreist.</p>
+                )}
+              </div>
             </div>
           )}
         </div>

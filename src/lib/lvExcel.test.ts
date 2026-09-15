@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { erkenneSpalten, baueLvAusZellen, normalisiereEinheit, nummerTeile } from "./lvExcel";
 import { lvSummen, istBepreisbar } from "./onlv";
+import { summenzeileArt } from "./lvExcel";
 
 // Typische Planer-Tabelle: Titelzeilen, Kopfzeile, LG-/ULG-Überschriften,
 // Positionen mit österreichischen Zahlen, eine Summenzeile am Ende.
@@ -88,5 +89,29 @@ describe("LV aus Excel", () => {
   it("meldet leere Tabellen verständlich", () => {
     expect(() => baueLvAusZellen([["Pos", "Text"]], 0, { pos: 0, kurztext: 1, langtext: null, menge: null, einheit: null, ep: null }, "x.xlsx"))
       .toThrow(/keine Positionen/);
+  });
+});
+
+describe("Summenzeilen des Planers (Meldung 15.09.2026: leere Summenaufstellung)", () => {
+  it("erkennt Angebotspreis netto / MwSt / brutto — auch durchnummeriert", () => {
+    expect(summenzeileArt("Angebotspreis netto")).toBe("netto");
+    expect(summenzeileArt("zuzüglich 20% MwSt.")).toBe("mwst");
+    expect(summenzeileArt("Angebotspreis brutto")).toBe("brutto");
+    expect(summenzeileArt("Summe Holzbauarbeiten")).toBe("summe");
+    expect(summenzeileArt("Massivstiege EG-1.OG")).toBeNull();
+    expect(summenzeileArt("Nettofläche herstellen")).toBeNull();
+    expect(summenzeileArt("")).toBeNull();
+  });
+  it("nummerierte Summenzeilen ohne Menge werden beim Excel-Import weggelassen", () => {
+    const zellen = [
+      ["Pos", "Bezeichnung", "Menge", "Einheit", "EP"],
+      ["1", "Holzbau", "", "", ""],
+      ["1.1", "Sparren", "10", "lfm", "5"],
+      ["22", "Angebotspreis netto", "", "", ""],
+      ["23", "zuzüglich 20% MwSt.", "", "", ""],
+      ["24", "Angebotspreis brutto", "", "", ""],
+    ];
+    const lv = baueLvAusZellen(zellen, 0, { pos: 0, kurztext: 1, langtext: null, menge: 2, einheit: 3, ep: 4 }, "test.xlsx");
+    expect(lv.positionen.map((p) => p.stichwort)).toEqual(["Holzbau", "Sparren"]);
   });
 });

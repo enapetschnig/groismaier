@@ -694,6 +694,10 @@ export default function KalkulationEditor() {
       kopie.name = `${s.modules[i].name || "Aufbau"} (Kopie)`;
       kopie.nachkalk = { actualDays: null };
       kopie.materialRows.forEach((r) => { r.actualVK = null; });
+      // LV-Kalkulation: Die Kopie zeigt nicht auf dieselbe LV-Position. Die
+      // Preisübernahme findet die Position über die Nummer am Namensanfang
+      // („5.3.2 …") — Meldung 15.09.2026, geklonte Stiegen blieben im LV leer.
+      delete kopie.lvPositionId;
       s.modules.splice(i + 1, 0, kopie);
     });
   };

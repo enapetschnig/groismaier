@@ -54,38 +54,97 @@ export function baueKalkulationAusLv(positionen: LvPositionKurz[]): KalkulationS
   return st;
 }
 
+export interface LvZielPosition { id: string; positionsnummer: string; menge: number | null }
+export interface EpZuordnung {
+  eps: { lvPositionId: string; epLohn: number; epSonstiges: number }[];
+  /** Aufbauten mit Betrag, aber ohne erkennbare LV-Position (Name ohne Pos-Nr, kein Verweis). */
+  ohneZuordnung: string[];
+}
+
+/**
+ * Welche LV-Position gehört zu einem Aufbau? Zuerst die Positionsnummer am
+ * Anfang des Namens („5.3.2 Massivstiege …"), sonst der gespeicherte Verweis.
+ *
+ * Meldung 15.09.2026 (LV H38): Der Chef hatte Aufbauten geklont und
+ * umbenannt (5.3.1 → 5.3.2, 5.3.3); die Kopien trugen aber noch den Verweis
+ * des Originals. „Preise ins LV übernehmen" schrieb dreimal auf 5.3.1,
+ * 5.3.2 und 5.3.3 blieben leer. Der Name ist das, was der Chef sieht — er
+ * gewinnt deshalb gegen den unsichtbaren Verweis.
+ */
+export function lvPositionFuerAufbau(
+  m: Pick<KalkModule, "name" | "lvPositionId">,
+  positionen?: LvZielPosition[],
+): LvZielPosition | undefined {
+  if (positionen && positionen.length) {
+    const name = (m.name || "").trim();
+    let beste: LvZielPosition | undefined;
+    for (const p of positionen) {
+      const nr = (p.positionsnummer || "").trim();
+      if (!nr) continue;
+      if (name === nr || name.startsWith(nr + " ") || name.startsWith(nr + "\t")) {
+        if (!beste || nr.length > beste.positionsnummer.length) beste = p;
+      }
+    }
+    if (beste) return beste;
+    if (m.lvPositionId) return positionen.find((p) => p.id === m.lvPositionId);
+    return undefined;
+  }
+  return m.lvPositionId ? { id: m.lvPositionId, positionsnummer: "", menge: null } : undefined;
+}
+
 /**
  * Einheitspreise je LV-Position aus der durchgerechneten Kalkulation:
  * EP = Gesamt ÷ Menge; Lohnanteil = Arbeit ÷ Menge; Sonstiges = Rest.
+ * Mehrere Aufbauten für dieselbe Position werden summiert (Menge = LV-Menge).
  * Aufbauten ohne Betrag bleiben unbepreist (werden nicht auf 0 gesetzt).
  */
-export function epAusKalkulation(projekt: ProjektErgebnis): { lvPositionId: string; epLohn: number; epSonstiges: number }[] {
-  const out: { lvPositionId: string; epLohn: number; epSonstiges: number }[] = [];
+export function zuordnungAusKalkulation(projekt: ProjektErgebnis, positionen?: LvZielPosition[]): EpZuordnung {
+  const summen = new Map<string, { gesamt: number; lohn: number; menge: number }>();
+  const ohneZuordnung: string[] = [];
   for (const z of projekt.zeilen) {
-    const id = z.module.lvPositionId;
-    const menge = Number(z.module.area) || 0;
-    if (!id || menge <= 0 || round2(z.gesamtAdj) <= 0) continue;
-    const gesamt = round2(z.gesamtAdj / menge);
-    const lohn = Math.min(gesamt, Math.max(0, round2(z.laborAdj / menge)));
-    out.push({ lvPositionId: id, epLohn: lohn, epSonstiges: round2(gesamt - lohn) });
+    if (round2(z.gesamtAdj) <= 0) continue;
+    const ziel = lvPositionFuerAufbau(z.module, positionen);
+    if (!ziel) { ohneZuordnung.push(z.module.name || `Aufbau ${z.module.id}`); continue; }
+    const menge = ziel.menge != null && ziel.menge > 0 ? Number(ziel.menge) : (Number(z.module.area) || 0);
+    if (menge <= 0) continue;
+    const e = summen.get(ziel.id) || { gesamt: 0, lohn: 0, menge };
+    e.gesamt += z.gesamtAdj;
+    e.lohn += z.laborAdj;
+    summen.set(ziel.id, e);
   }
-  return out;
+  const eps: EpZuordnung["eps"] = [];
+  for (const [lvPositionId, e] of summen) {
+    const gesamt = round2(e.gesamt / e.menge);
+    const lohn = Math.min(gesamt, Math.max(0, round2(e.lohn / e.menge)));
+    eps.push({ lvPositionId, epLohn: lohn, epSonstiges: round2(gesamt - lohn) });
+  }
+  return { eps, ohneZuordnung };
+}
+
+export function epAusKalkulation(projekt: ProjektErgebnis, positionen?: LvZielPosition[]): EpZuordnung["eps"] {
+  return zuordnungAusKalkulation(projekt, positionen).eps;
 }
 
 /**
  * Kalkulation laden, durchrechnen und die Einheitspreise in die LV-Positionen
  * schreiben. Liefert die Anzahl der bepreisten Positionen und die LV-ID.
  */
-export async function schreibePreiseInsLv(kalkulationId: string): Promise<{ anzahl: number; lvId: string | null }> {
+export async function schreibePreiseInsLv(kalkulationId: string): Promise<{ anzahl: number; lvId: string | null; ohneZuordnung: string[] }> {
   const { data: kalk } = await (supabase.from("kalkulationen" as never) as any)
     .select("id, lv_id, data").eq("id", kalkulationId).maybeSingle();
-  if (!kalk?.lv_id) return { anzahl: 0, lvId: null };
+  if (!kalk?.lv_id) return { anzahl: 0, lvId: null, ohneZuordnung: [] };
+  // Die Positionen des LVs — Zuordnung über die Positionsnummer im Aufbau-Namen.
+  const { data: posData } = await (supabase.from("lv_positionen" as never) as any)
+    .select("id, positionsnummer, menge").eq("lv_id", kalk.lv_id).neq("positionsart", "text");
+  const positionen: LvZielPosition[] = ((posData as any[]) || []).map((p) => ({
+    id: p.id, positionsnummer: String(p.positionsnummer || ""), menge: p.menge != null ? Number(p.menge) : null,
+  }));
   const { data: setData } = await supabase.from("app_settings").select("key, value").like("key", "kalk\\_%");
   const settings: Record<string, string> = {};
   for (const s of setData || []) settings[s.key] = s.value;
   const st = normalizeKalkulationState(kalk.data);
   const bd = resolveBetriebsdaten(st.settings.businessData, settings);
-  const eps = epAusKalkulation(calcProjekt(st, bd));
+  const { eps, ohneZuordnung } = zuordnungAusKalkulation(calcProjekt(st, bd), positionen);
   const jetzt = new Date().toISOString();
   let anzahl = 0;
   for (const e of eps) {
@@ -94,5 +153,5 @@ export async function schreibePreiseInsLv(kalkulationId: string): Promise<{ anza
       .eq("id", e.lvPositionId).eq("lv_id", kalk.lv_id);
     if (!error) anzahl += 1;
   }
-  return { anzahl, lvId: kalk.lv_id as string };
+  return { anzahl, lvId: kalk.lv_id as string, ohneZuordnung };
 }

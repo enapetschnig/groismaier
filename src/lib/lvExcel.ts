@@ -33,6 +33,26 @@ export interface SpaltenZuordnung {
 
 export class LvExcelFehler extends Error {}
 
+/**
+ * Summen-/Übertragszeilen des Planers („Angebotspreis netto", „zuzüglich 20 %
+ * MwSt.", „Angebotspreis brutto", „Summe …"). Sie sind keine Positionen —
+ * die App rechnet die Summen selbst und zeigt sie am Ende des LVs.
+ * (Meldung 15.09.2026: „ganz am Ende … die Summenaufstellung — da steht gar
+ * nichts drinnen": die drei Zeilen waren als Vertragstext importiert worden.)
+ */
+export function summenzeileArt(stichwort: string | null | undefined): "netto" | "mwst" | "brutto" | "summe" | null {
+  const t = (stichwort || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!t) return null;
+  if (/(mwst|ust|umsatzsteuer|mehrwertsteuer)/.test(t) && /(zuz|zzgl|inkl|%|\d)/.test(t)) return "mwst";
+  if (/^(angebotspreis|angebotssumme|gesamtpreis|gesamtsumme|endsumme|summe|gesamt|netto|brutto)\b/.test(t)) {
+    if (/brutto/.test(t)) return "brutto";
+    if (/netto/.test(t)) return "netto";
+    return "summe";
+  }
+  if (/^(zwischensumme|übertrag|uebertrag)/.test(t)) return "summe";
+  return null;
+}
+
 const text = (z: Zelle): string => (z == null ? "" : String(z)).replace(/\s+/g, " ").trim();
 
 /** Überschriften, wie sie in Planer-Tabellen üblicherweise stehen (klein, ohne Sonderzeichen). */
@@ -153,11 +173,11 @@ export function baueLvAusZellen(
     const epRoh = wert(zeile, zu.ep);
     const ep = epRoh ? parseDecimal(epRoh) : null;
     if (!nr && !kurz && !lang) continue; // Leerzeile
-    // Summen-/Übertragszeilen des Planers gehören nicht ins LV.
-    if (!nr && /^(summe|gesamtsumme|zwischensumme|übertrag|uebertrag|netto|brutto|ust|mwst)/i.test(kurz)) continue;
-
     const teile = nummerTeile(nr);
     const bepreisbar = menge !== null && !!einheit;
+    // Summen-/Übertragszeilen des Planers gehören nicht ins LV — auch wenn
+    // sie durchnummeriert sind („22 Angebotspreis netto").
+    if (!bepreisbar && summenzeileArt(kurz)) continue;
     const stichwort = kurz || lang.split(/\r?\n/)[0] || nr;
     if (!bepreisbar) {
       // Überschrift / Vorbemerkung → Gliederung mitführen
