@@ -98,6 +98,11 @@ describe("Arbeitsstunden-Erkennung", () => {
     expect(istStundensatzName("Regiestunde")).toBe(true);
     expect(istStundensatzName("Arbeitszeit: 10 Tage × 3 Arbeiter")).toBe(true);
     expect(istStundensatzName("Lehrling Stunde")).toBe(true);
+    // BV Schindelböck (16.09.2026): alle vier Personal-Zeilen zählen
+    for (const n of ["Zimmerer Vorarbeiter", "Zimmerer Facharbeiter", "Zimmerer Hilfsarbeiter", "Lehrling 1. LJ", "Partiestunde Montage Innenausbau", "Polier"]) {
+      expect(istArbeitszeitZeile(n, "Std.")).toBe(true);
+    }
+    expect(istArbeitszeitZeile("Zellulose Helfer", "Std.")).toBe(false);
   });
 
   it("zählt nur Zeilen mit Stunden-Einheit UND Lohnsatz-Namen", () => {

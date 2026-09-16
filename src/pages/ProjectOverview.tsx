@@ -20,6 +20,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { supabase } from "@/integrations/supabase/client";
 import { countProjectFiles } from "@/lib/projectFiles";
 import { istArbeitszeitZeile } from "@/lib/stunden";
+import { ladeSollStunden, type SollStunden } from "@/lib/projektSollStunden";
+import { SollStundenQuelle } from "@/components/project/SollStundenQuelle";
 import { toNumber } from "@/lib/num";
 import { useProjectStatuses } from "@/hooks/useProjectStatuses";
 import { Badge } from "@/components/ui/badge";
@@ -91,6 +93,9 @@ const ProjectOverview = () => {
   const [angebotPositionen, setAngebotPositionen] = useState<{position: number; beschreibung: string; menge: number; einheit: string; stunden?: number; stundenQuelle?: "stunden" | "kalkulation"}[]>([]);
   // Stundenabgleich: im Angebot kalkulierte Lohnstunden (Σ arbeitszeit_minuten × Menge)
   const [angeboteneStunden, setAngeboteneStunden] = useState<number | null>(null);
+  // Händisch oder aus verknüpfter Kalkulation (Kundenwunsch 16.09.2026, BV Zimmerl) — geht vor dem Angebot.
+  const [sollQuelle, setSollQuelle] = useState<SollStunden | null>(null);
+  const ladeSollQuelle = async () => { if (projectId) setSollQuelle(await ladeSollStunden(projectId)); };
   const [categories, setCategories] = useState<DocumentCategory[]>([
     {
       type: "photos",
@@ -152,6 +157,7 @@ const ProjectOverview = () => {
       fetchFileCounts();
       fetchInvoiceCount();
       fetchAngebotPositionen();
+      void ladeSollQuelle();
     }
   }, [projectId, isAdmin]);
 
@@ -887,27 +893,37 @@ const ProjectOverview = () => {
                   drei große Zahlen + Ampel-Fortschrittsbalken. */}
               {(() => {
                 const gebucht = gebuchtGesamt;
-                if (angeboteneStunden === null || angeboteneStunden <= 0) {
+                const sollH = sollQuelle?.stunden ?? angeboteneStunden;
+                const quelleLabel = sollQuelle?.quelle === "manuell" ? "Std. geplant (händisch)"
+                  : sollQuelle?.quelle === "kalkulation" ? `Std. laut Kalkulation${sollQuelle.kalkulationName ? ` „${sollQuelle.kalkulationName}"` : ""}`
+                  : "Std. laut Angebot";
+                const quellenWahl = (
+                  <SollStundenQuelle projectId={projectId!} angebotStunden={angeboteneStunden} quelle={sollQuelle} onGeaendert={() => void ladeSollQuelle()} />
+                );
+                if (sollH === null || sollH <= 0) {
                   return (
-                    <p className="mb-4 text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">
-                      Kein Angebot mit kalkulierten Stunden verknüpft — sobald ein Angebot mit
-                      Katalog-Positionen an diesem Projekt hängt, erscheint hier automatisch der
-                      Soll/Ist-Vergleich.
-                    </p>
+                    <div className="mb-4 space-y-2">
+                      <p className="text-sm text-muted-foreground rounded-md border border-dashed px-3 py-2.5">
+                        Kein Angebot mit Stunden verknüpft — Soll-Stunden kommen automatisch, sobald ein
+                        Angebot mit Stunden-Positionen am Projekt hängt. Oder unten eine Kalkulation
+                        verknüpfen bzw. die geplanten Stunden händisch eintragen.
+                      </p>
+                      {quellenWahl}
+                    </div>
                   );
                 }
-                const pctRaw = Math.round((gebucht / angeboteneStunden) * 100);
+                const pctRaw = Math.round((gebucht / sollH) * 100);
                 const pct = Math.min(100, pctRaw);
-                const ueber = gebucht > angeboteneStunden;
+                const ueber = gebucht > sollH;
                 const knapp = !ueber && pctRaw >= 80;
                 const barFarbe = ueber ? "bg-destructive" : knapp ? "bg-amber-500" : "bg-green-600";
-                const rest = angeboteneStunden - gebucht;
+                const rest = sollH - gebucht;
                 return (
                   <div className="mb-4 space-y-3">
                     <div className="grid grid-cols-3 gap-2">
                       <div className="rounded-lg border bg-muted/30 p-3 text-center">
-                        <div className="text-xl font-bold tabular-nums">{angeboteneStunden.toFixed(1)}</div>
-                        <div className="text-[11px] text-muted-foreground">Std. laut Angebot</div>
+                        <div className="text-xl font-bold tabular-nums">{sollH.toFixed(1)}</div>
+                        <div className="text-[11px] text-muted-foreground">{quelleLabel}</div>
                       </div>
                       <div className="rounded-lg border bg-muted/30 p-3 text-center">
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : ""}`}>{gebucht.toFixed(1)}</div>
@@ -923,7 +939,7 @@ const ProjectOverview = () => {
                       </div>
                       <div className={`rounded-lg border p-3 text-center ${ueber ? "border-destructive/50 bg-destructive/5" : knapp ? "border-amber-300 bg-amber-50" : "border-green-500/40 bg-green-50"}`}>
                         <div className={`text-xl font-bold tabular-nums ${ueber ? "text-destructive" : knapp ? "text-amber-700" : "text-green-700"}`}>
-                          {ueber ? `+${(gebucht - angeboteneStunden).toFixed(1)}` : rest.toFixed(1)}
+                          {ueber ? `+${(gebucht - sollH).toFixed(1)}` : rest.toFixed(1)}
                         </div>
                         <div className="text-[11px] text-muted-foreground">{ueber ? "Std. ÜBER Angebot" : "Std. verbleibend"}</div>
                       </div>
@@ -940,10 +956,11 @@ const ProjectOverview = () => {
                     </p>
                     {/* Aufschlüsselung: WOHER kommen die Angebotsstunden?
                         Jede Position trägt ihre einkalkulierte Arbeitszeit bei. */}
-                    {angebotPositionen.some(p => (p.stunden || 0) > 0) && (
+                    {quellenWahl}
+                    {!sollQuelle && angebotPositionen.some(p => (p.stunden || 0) > 0) && (
                       <details className="text-xs">
                         <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-                          Woraus sich die {angeboteneStunden.toFixed(1)} Std. ergeben ▾
+                          Woraus sich die {sollH.toFixed(1)} Std. ergeben ▾
                         </summary>
                         <ul className="mt-1.5 space-y-0.5 rounded-md border bg-muted/20 p-2">
                           {angebotPositionen.filter(p => (p.stunden || 0) > 0).map(p => (

@@ -17,6 +17,7 @@ import { getDocConfig } from "@/lib/documentTypes";
 import { getStatusLabel } from "@/lib/statusColors";
 import { formatDateShort } from "@/lib/dateFormat";
 import { istArbeitszeitZeile } from "@/lib/stunden";
+import { ladeSollStundenJeProjekt, type SollStunden } from "@/lib/projektSollStunden";
 import { cn } from "@/lib/utils";
 import { AUFTRAGS_STATUS, waehleSollBelege, istSollKandidat, berechneVerrechnet, verteileEingangsrechnung } from "@/lib/nachkalkulation";
 import {
@@ -233,6 +234,8 @@ export function ProjektNachkalkulation() {
   const [projects, setProjects] = useState<ProjectRaw[]>([]);
   const [invoices, setInvoices] = useState<InvoiceRaw[]>([]);
   const [sollStundenByInvoice, setSollStundenByInvoice] = useState<Record<string, number>>({});
+  // Händisch/Kalkulation je Projekt (16.09.2026) — geht vor den Angebotsstunden.
+  const [sollJeProjekt, setSollJeProjekt] = useState<Record<string, SollStunden>>({});
   const [timeEntries, setTimeEntries] = useState<TimeEntryRaw[]>([]);
   const [materialEntries, setMaterialEntries] = useState<MaterialRaw[]>([]);
   const [purchases, setPurchases] = useState<PurchaseRaw[]>([]);
@@ -386,6 +389,7 @@ export function ProjektNachkalkulation() {
       setNameByUser(names);
       setFaktor(Number(factRes.data?.value) || 1.8);
       setSollStundenByInvoice(hours);
+      setSollJeProjekt(await ladeSollStundenJeProjekt());
     } catch (e) {
       toast.error("Fehler beim Laden der Nachkalkulation", {
         description: e instanceof Error ? e.message : String(e),
@@ -499,7 +503,7 @@ export function ProjektNachkalkulation() {
         status: i.status,
       }));
       const sollNetto = sollDocs.reduce((s, d) => s + d.netto, 0);
-      const sollStunden = sollSource.reduce((s, i) => s + (sollStundenByInvoice[i.id] || 0), 0);
+      const sollStunden = sollJeProjekt[proj.id]?.stunden ?? sollSource.reduce((s, i) => s + (sollStundenByInvoice[i.id] || 0), 0);
 
       // Ist: verrechnete Beträge (Beleg-Summen wie gespeichert; die
       // Schlussrechnung enthält Anzahlungs-Abzüge bereits als negative
@@ -568,7 +572,7 @@ export function ProjektNachkalkulation() {
       });
     }
     return result;
-  }, [projects, invoices, sollStundenByInvoice, timeEntries, materialEntries, purchases, allocations, lohnByUser, nameByUser, faktor, statusFilter, zeitraum]);
+  }, [projects, invoices, sollStundenByInvoice, sollJeProjekt, timeEntries, materialEntries, purchases, allocations, lohnByUser, nameByUser, faktor, statusFilter, zeitraum]);
 
   /** Angebote/ABs anbieten, die noch keinem oder genau diesem Projekt gehören. */
   const oeffneZuordnen = async (proj: { id: string; name: string }) => {

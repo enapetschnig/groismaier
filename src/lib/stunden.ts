@@ -22,7 +22,11 @@ export const istStundensatzName = (name: string | null | undefined) =>
   // als Zeile „Arbeitszeit: X Tage × Y Arbeiter" (Einheit h, Menge =
   // Gesamtstunden) ins Angebot — ohne dieses Muster war das Stunden-Soll
   // bei allen Kalkulations-Angeboten 0 (Kundenwunsch Stundenabgleich).
-  /(stunden?\b|arbeitszeit|facharbeiter|lehrling|baumeister|kranfahrer|hiab)/i.test(String(name || ""));
+  // Meldung 16.09.2026 (BV Schindelböck): „Zimmerer Vorarbeiter 50 Std." und
+  // „Zimmerer Hilfsarbeiter 50 Std." zählten nicht — nur Facharbeiter und
+  // Lehrling waren bekannt, das Soll stand bei 100 statt 200 Std. Jetzt jeder
+  // Personalbegriff (…arbeiter deckt Vor-/Fach-/Hilfsarbeiter ab).
+  /(stunden?\b|arbeitszeit|arbeiter|zimmerer|zimmermann|polier|monteur|partie|geselle|lehrling|baumeister|kranfahrer|hiab)/i.test(String(name || ""));
 
 /**
  * Angebots-/Rechnungszeile = explizit angebotene eigene Arbeitszeit?
