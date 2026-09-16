@@ -319,7 +319,10 @@ export default function KalkulationHub() {
     const id = await insertCopy({
       name: `${src.name} (Kopie)`,
       customer_id: src.customer_id,
-      project_id: src.project_id,
+      // Die Kopie ist NICHT die Kalkulation des Projekts (Stundenabgleich,
+      // 16.09.2026): Sonst gäbe es zwei verknüpfte Kalkulationen, und die
+      // zuletzt gespeicherte würde still das Soll bestimmen.
+      project_id: null,
       // Sonst rutscht die Kopie einer Kalkulation ohne Kunden nach „Ohne Kunde",
       // obwohl das Original einen Ordner hat.
       bauvorhaben: src.bauvorhaben ?? null,
