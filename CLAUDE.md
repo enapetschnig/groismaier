@@ -22,7 +22,7 @@ Fuhrpark, Finanzplanung.
 **Das ist ein Betrieb, der damit sein Geld verrechnet.** Ein Fehler in einer
 Rechnung ist kein Anzeigefehler, sondern ein steuerrechtliches Problem.
 
-Größenordnung: ~99.000 Zeilen Code, 39 Seiten, ~100 Tabellen, 305 Migrationen,
+Größenordnung: ~99.000 Zeilen Code, 39 Seiten, ~100 Tabellen, 306 Migrationen,
 20 Serverfunktionen, 379 Tests.
 
 ---

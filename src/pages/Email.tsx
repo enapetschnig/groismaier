@@ -69,11 +69,19 @@ interface MailZeile {
   betreff: string;
   von: string;
   vonAdresse: string;
+  /** Empfänger (Reiter „Gesendet"). */
+  an?: string;
   empfangen: string;
   hatAnhaenge: boolean;
   vorschau: string;
   gelesen: boolean;
+  /** Im Reiter „Gesendet": aus welchem Konto die Mail stammt. */
+  postfach?: string;
 }
+
+/** Reiter „Gesendet" — gesendete Mails aus allen Konten (Kundenwunsch 16.09.2026). */
+const GESENDET = "gesendet";
+const postfachKurz = (adresse: string) => POSTFAECHER.find((p) => p.adresse === adresse)?.kurz || adresse;
 
 interface MailDetail {
   id: string;
@@ -120,6 +128,10 @@ export default function Email() {
     });
   }, [postfach]);
   const deepLinkMail = useRef(suchParams.get("mail"));
+  // Ansicht: ein Postfach (Posteingang) oder „Gesendet" über alle Konten.
+  const [ansicht, setAnsicht] = useState<"postfach" | typeof GESENDET>("postfach");
+  // Konto der gerade geöffneten Mail — im Reiter „Gesendet" je Zeile anders.
+  const [detailPostfach, setDetailPostfach] = useState(postfach);
   const [mails, setMails] = useState<MailZeile[]>([]);
   const [mehrDa, setMehrDa] = useState(false);
   const [laedt, setLaedt] = useState(false);
@@ -169,6 +181,18 @@ export default function Email() {
     anhaengen ? setLaedtMehr(true) : setLaedt(true);
     setFehler(null);
     try {
+      if (pf === GESENDET) {
+        // Alle Konten parallel, Ordner „Gesendete Elemente", nach Datum gemischt.
+        // skip gilt je Konto (jede Seite = 25 je Konto).
+        const teile = await Promise.all(POSTFAECHER.map(async (k) => {
+          const d = await rufe({ aktion: "liste", postfach: k.adresse, ordner: "sentitems", suche: such || undefined, skip });
+          return { mehr: !!d.mehr, mails: (d.mails as MailZeile[]).map((m) => ({ ...m, postfach: k.adresse })) };
+        }));
+        const neu = teile.flatMap((t) => t.mails).sort((a, b) => (b.empfangen || "").localeCompare(a.empfangen || ""));
+        setMails((alt) => (anhaengen ? [...alt, ...neu] : neu));
+        setMehrDa(teile.some((t) => t.mehr) && !such);
+        return;
+      }
       const d = await rufe({ aktion: "liste", postfach: pf, suche: such || undefined, skip });
       setMails((alt) => (anhaengen ? [...alt, ...d.mails] : d.mails));
       setMehrDa(!!d.mehr && !such);
@@ -179,13 +203,19 @@ export default function Email() {
       setLaedtMehr(false);
     }
   }, [rufe]);
+  /** Je Konto geladene Seiten im Reiter „Gesendet" (für „Ältere laden"). */
+  const gesendetSeiten = useRef(0);
+  /** Was gerade zu laden ist: das Postfach oder der Sammel-Reiter. */
+  const quelle = ansicht === GESENDET ? GESENDET : postfach;
 
   useEffect(() => {
     setDetail(null);
     setMails([]);
     sucheAktiv.current = "";
     setSuche("");
-    lade(postfach, "");
+    gesendetSeiten.current = 0;
+    setDetailPostfach(postfach);
+    lade(quelle, "");
     // Deep-Link aus der Kundenmaske: die angefragte Mail direkt öffnen.
     const mailId = deepLinkMail.current;
     if (mailId) {
@@ -198,18 +228,20 @@ export default function Email() {
         finally { setDetailLaedt(false); }
       })();
     }
-  }, [postfach, lade, rufe]);
+  }, [postfach, quelle, lade, rufe]);
 
   const suchen = () => {
     sucheAktiv.current = suche.trim();
     setDetail(null);
-    lade(postfach, sucheAktiv.current);
+    lade(quelle, sucheAktiv.current);
   };
 
   const oeffne = async (m: MailZeile) => {
     setDetailLaedt(true);
+    const pf = m.postfach || postfach;
+    setDetailPostfach(pf);
     try {
-      const d = await rufe({ aktion: "detail", postfach, id: m.id });
+      const d = await rufe({ aktion: "detail", postfach: pf, id: m.id });
       setDetail(d);
       setMails((alt) => alt.map((x) => (x.id === m.id ? { ...x, gelesen: true } : x)));
     } catch (e) {
@@ -220,7 +252,7 @@ export default function Email() {
   };
 
   const anhangHolen = async (anhangId: string): Promise<File | null> => {
-    const a = await rufe({ aktion: "anhang", postfach, id: detail!.id, anhangId });
+    const a = await rufe({ aktion: "anhang", postfach: detailPostfach, id: detail!.id, anhangId });
     if (!a.inhaltBase64) return null;
     const bytes = Uint8Array.from(atob(a.inhaltBase64), (c) => c.charCodeAt(0));
     return new File([bytes], a.name || "anhang", { type: normalisierterDateityp(a.name, a.typ) });
@@ -336,7 +368,7 @@ export default function Email() {
    */
   const alsUngelesen = async (mailId: string) => {
     try {
-      await rufe({ aktion: "gelesen", postfach, id: mailId, gelesen: false });
+      await rufe({ aktion: "gelesen", postfach: detailPostfach, id: mailId, gelesen: false });
       setMails((alt) => alt.map((x) => (x.id === mailId ? { ...x, gelesen: false } : x)));
       setDetail(null);
       toast({ title: "Als ungelesen markiert" });
@@ -351,7 +383,8 @@ export default function Email() {
     try {
       await rufe({
         aktion: "senden",
-        postfach,
+        // Antwort/Weiterleitung geht aus dem Konto der Bezugsmail (Reiter „Gesendet").
+        postfach: verfassen.bezugId ? detailPostfach : postfach,
         modus: verfassen.modus,
         id: verfassen.bezugId,
         an: verfassen.an.split(/[;,]/).map((x) => x.trim()).filter(Boolean),
@@ -372,7 +405,7 @@ export default function Email() {
     if (!detail) return;
     if (!confirm(`„${detail.betreff}" in den Papierkorb verschieben?`)) return;
     try {
-      await rufe({ aktion: "loeschen", postfach, id: detail.id });
+      await rufe({ aktion: "loeschen", postfach: detailPostfach, id: detail.id });
       setMails((alt2) => alt2.filter((m) => m.id !== detail.id));
       setDetail(null);
       toast({ title: "In den Papierkorb verschoben" });
@@ -394,17 +427,29 @@ export default function Email() {
             <button
               key={p.adresse}
               type="button"
-              className={postfach === p.adresse ? "kb-tab-active" : "kb-tab"}
+              className={ansicht === "postfach" && postfach === p.adresse ? "kb-tab-active" : "kb-tab"}
               title={p.adresse}
-              onClick={() => setPostfach(p.adresse)}
+              onClick={() => { setAnsicht("postfach"); setPostfach(p.adresse); }}
             >
               <Mail className="mr-1.5 inline h-3.5 w-3.5" />
               {p.kurz}
             </button>
           ))}
-          <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">{postfach}</span>
+          {/* Gesendete Mails aus allen Konten (Kundenwunsch 16.09.2026) */}
+          <button
+            type="button"
+            className={ansicht === GESENDET ? "kb-tab-active" : "kb-tab"}
+            title="Gesendete Mails aus allen drei Konten, nach Datum gemischt"
+            onClick={() => setAnsicht(GESENDET)}
+          >
+            <Send className="mr-1.5 inline h-3.5 w-3.5" />
+            Gesendet
+          </button>
+          <span className="ml-2 hidden text-xs text-muted-foreground sm:inline">
+            {ansicht === GESENDET ? "Gesendete Elemente aus allen Konten" : postfach}
+          </span>
           <Button variant="ghost" size="icon" className="ml-auto h-8 w-8" title="Aktualisieren"
-            onClick={() => lade(postfach, sucheAktiv.current)}>
+            onClick={() => lade(quelle, sucheAktiv.current)}>
             <RefreshCw className={`h-4 w-4 ${laedt ? "animate-spin" : ""}`} />
           </Button>
         </div>
@@ -415,7 +460,7 @@ export default function Email() {
             <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               className="pl-8"
-              placeholder="Postfach durchsuchen (Absender, Betreff, Inhalt)…"
+              placeholder={ansicht === GESENDET ? "Gesendete Mails durchsuchen (Empfänger, Betreff, Inhalt)…" : "Postfach durchsuchen (Absender, Betreff, Inhalt)…"}
               value={suche}
               onChange={(e) => setSuche(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && suchen()}
@@ -425,7 +470,7 @@ export default function Email() {
                 type="button"
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground"
                 title="Suche löschen"
-                onClick={() => { setSuche(""); sucheAktiv.current = ""; setDetail(null); lade(postfach, ""); }}
+                onClick={() => { setSuche(""); sucheAktiv.current = ""; setDetail(null); lade(quelle, ""); }}
               >
                 <X className="h-4 w-4" />
               </button>
@@ -449,7 +494,7 @@ export default function Email() {
                 <div className="px-4 py-6 text-center text-sm text-destructive">
                   {fehler}
                   <div className="mt-2">
-                    <Button variant="outline" size="sm" onClick={() => lade(postfach, sucheAktiv.current)}>Nochmal versuchen</Button>
+                    <Button variant="outline" size="sm" onClick={() => lade(quelle, sucheAktiv.current)}>Nochmal versuchen</Button>
                   </div>
                 </div>
               )}
@@ -475,7 +520,14 @@ export default function Email() {
                       {m.gelesen
                         ? <MailOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                         : <Mail className="h-3.5 w-3.5 shrink-0 text-kb-blue" />}
-                      <span className={`min-w-0 flex-1 truncate text-sm ${m.gelesen ? "" : "font-bold"}`}>{m.von}</span>
+                      <span className={`min-w-0 flex-1 truncate text-sm ${m.gelesen ? "" : "font-bold"}`}>
+                        {ansicht === GESENDET ? `An: ${m.an || "?"}` : m.von}
+                      </span>
+                      {ansicht === GESENDET && m.postfach && (
+                        <span className="shrink-0 rounded border border-border bg-muted px-1 text-[10px] text-muted-foreground" title={m.postfach}>
+                          {postfachKurz(m.postfach)}
+                        </span>
+                      )}
                       {m.hatAnhaenge && <Paperclip className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
                       <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{datumKurz(m.empfangen)}</span>
                     </div>
@@ -487,7 +539,10 @@ export default function Email() {
               {mehrDa && (
                 <div className="p-2 text-center">
                   <Button variant="outline" size="sm" disabled={laedtMehr}
-                    onClick={() => lade(postfach, "", true, mails.length)}>
+                    onClick={() => {
+                      if (ansicht === GESENDET) { gesendetSeiten.current += 1; lade(GESENDET, "", true, gesendetSeiten.current * 25); }
+                      else lade(postfach, "", true, mails.length);
+                    }}>
                     {laedtMehr ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Ältere Mails laden
                   </Button>
@@ -516,6 +571,9 @@ export default function Email() {
                         <div className="mt-0.5 text-xs text-muted-foreground">
                           <span className="font-medium text-foreground">{detail.von}</span> &lt;{detail.vonAdresse}&gt;
                           {" · "}{new Date(detail.empfangen).toLocaleString("de-AT")}
+                          {ansicht === GESENDET && detail.an?.length > 0 && (
+                            <span className="block">An: {detail.an.join(", ")} · Konto {postfachKurz(detailPostfach)}</span>
+                          )}
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">

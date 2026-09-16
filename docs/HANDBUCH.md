@@ -19,7 +19,7 @@ Regieberichte, Eingangsrechnungen, Fuhrpark, Finanzplanung.
 Läuft im Browser, auf dem Handy als installierbare App. Rund 15 Nutzer.
 
 **Kennzahlen:** ~99.000 Zeilen TypeScript · 39 Seiten · ~100 Tabellen ·
-305 Migrationen · 20 Serverfunktionen · 379 Unit-Tests + Playwright-Tests
+306 Migrationen · 20 Serverfunktionen · 379 Unit-Tests + Playwright-Tests
 
 ---
 

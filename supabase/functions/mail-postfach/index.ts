@@ -282,15 +282,17 @@ Deno.serve(async (req) => {
     const mb = encodeURIComponent(postfach);
 
     if (aktion === "liste") {
-      const felder = "id,subject,from,receivedDateTime,hasAttachments,bodyPreview,isRead";
+      // toRecipients: für den Reiter „Gesendet" (Kundenwunsch 16.09.2026) —
+      // dort ist der Empfänger die interessante Zeile, nicht der Absender.
+      const felder = "id,subject,from,toRecipients,receivedDateTime,hasAttachments,bodyPreview,isRead";
+      const basis = ordner ? `/users/${mb}/mailFolders/${encodeURIComponent(ordner)}/messages` : `/users/${mb}/messages`;
       let pfad: string;
       if (suche && String(suche).trim()) {
         // Graph-Volltextsuche (Betreff, Absender, Inhalt). $search kann nicht
         // mit $orderby kombiniert werden — Graph sortiert nach Relevanz.
         const q = encodeURIComponent(`"${String(suche).replace(/"/g, "")}"`);
-        pfad = `/users/${mb}/messages?$search=${q}&$select=${felder}&$top=25`;
+        pfad = `${basis}?$search=${q}&$select=${felder}&$top=25`;
       } else {
-        const basis = ordner ? `/users/${mb}/mailFolders/${encodeURIComponent(ordner)}/messages` : `/users/${mb}/messages`;
         pfad = `${basis}?$select=${felder}&$orderby=receivedDateTime desc&$top=25&$skip=${Number(skip) || 0}`;
       }
       const r = await graph(pfad);
@@ -302,6 +304,9 @@ Deno.serve(async (req) => {
           betreff: m.subject || "(kein Betreff)",
           von: (m.from as any)?.emailAddress?.name || (m.from as any)?.emailAddress?.address || "?",
           vonAdresse: (m.from as any)?.emailAddress?.address || "",
+          an: ((m.toRecipients as any[]) || [])
+            .map((r) => r?.emailAddress?.name || r?.emailAddress?.address || "")
+            .filter(Boolean).join(", "),
           empfangen: m.receivedDateTime,
           hatAnhaenge: !!m.hasAttachments,
           vorschau: m.bodyPreview || "",
