@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { AlertTriangle, FileCode2, Loader2, Paperclip, Send } from "lucide-react";
+import { baueBelegMail, ladeMailVorlagen, signaturFuer, signaturTauschen, LEERE_VORLAGEN, type MailVorlagen } from "@/lib/mailVorlagen";
 
 /**
  * Obergrenze für alle Anhänge zusammen.
@@ -97,31 +98,37 @@ export function BelegMailDialog({
   const [anhangWahl, setAnhangWahl] = useState<"pdf" | "beides" | "xml">("pdf");
   /** Regieberichte im Original mitschicken (Kundenwunsch 01.09.2026). */
   const [regieMitschicken, setRegieMitschicken] = useState(true);
+  /** Vorlagen + Signaturen aus dem Admin (Kundenwunsch 18.09.2026); Standards, bis geladen. */
+  const [vorlagen, setVorlagen] = useState<MailVorlagen>(LEERE_VORLAGEN);
 
   useEffect(() => {
     if (!open) return;
     setAn(empfaenger || "");
     setCc("");
     setAnhangWahl("pdf");
-    setBetreff(`${belegBezeichnung} ${belegNummer}`.trim());
-    // Anrede aus den Kundendaten ableiten — „Frau Salat" statt „Damen und Herren".
-    const nachname = (kundeName || "").trim().split(/\s+/).slice(-1)[0] || "";
-    const anrede = kundeAnrede === "Frau" && nachname
-      ? `Sehr geehrte Frau ${nachname},`
-      : kundeAnrede === "Herr" && nachname
-        ? `Sehr geehrter Herr ${nachname},`
-        : "Sehr geehrte Damen und Herren,";
-    // BEWUSST ohne Artikel ("unser/unsere/unseren"): Die Bezeichnung ist
-    // Freitext des Anwenders ("Teilrechnung 1", "Anzahlung 30 %") — jede
-    // Artikel-Heuristik produziert dort früher oder später falsches Deutsch.
-    // "anbei erhalten Sie Anzahlungsrechnung 2026-044" ist immer korrekt.
-    setText(
-      `${anrede}\n\n` +
-      `anbei erhalten Sie ${belegBezeichnung} ${belegNummer}.\n\n` +
-      `Bei Fragen stehen wir Ihnen gerne zur Verfügung.\n\n` +
-      `Mit freundlichen Grüßen\nHolzbau Groismaier GmbH`,
-    );
-  }, [open, empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName]);
+    let abgebrochen = false;
+    // Betreff und Text aus den Vorlagen (Admin → Rechnungs-Layout → Textbausteine):
+    // Anrede aus den Kundendaten, Bezeichnung BEWUSST ohne Artikel („anbei
+    // erhalten Sie Anzahlungsrechnung 2026-044" ist immer korrektes Deutsch),
+    // Signatur des gewählten Postfachs.
+    (async () => {
+      const v = await ladeMailVorlagen();
+      if (abgebrochen) return;
+      setVorlagen(v);
+      const m = baueBelegMail({ belegTyp: protokoll?.belegTyp, belegBezeichnung, belegNummer, kundeAnrede, kundeName, postfach: von, vorlagen: v });
+      setBetreff(m.betreff);
+      setText(m.text);
+    })();
+    return () => { abgebrochen = true; };
+    // `von` bewusst nicht dabei — der Postfachwechsel tauscht nur die Signatur (unten).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, empfaenger, belegBezeichnung, belegNummer, kundeAnrede, kundeName, protokoll?.belegTyp]);
+
+  /** Postfachwechsel: Signatur im Text mittauschen, sonst bleibt der Text wie getippt. */
+  const postfachWechseln = (neu: string) => {
+    setText((t) => signaturTauschen(t, signaturFuer(von, vorlagen), signaturFuer(neu, vorlagen)));
+    setVon(neu);
+  };
 
   const senden = async () => {
     const empfaengerListe = an.split(/[;,]/).map((x) => x.trim()).filter(Boolean);
@@ -278,7 +285,7 @@ export function BelegMailDialog({
             <select
               className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
               value={von}
-              onChange={(e) => setVon(e.target.value)}
+              onChange={(e) => postfachWechseln(e.target.value)}
             >
               {POSTFAECHER.map((p) => (
                 <option key={p.adresse} value={p.adresse}>{p.adresse}</option>

@@ -19,7 +19,7 @@ Regieberichte, Eingangsrechnungen, Fuhrpark, Finanzplanung.
 Läuft im Browser, auf dem Handy als installierbare App. Rund 15 Nutzer.
 
 **Kennzahlen:** ~99.000 Zeilen TypeScript · 39 Seiten · ~100 Tabellen ·
-307 Migrationen · 20 Serverfunktionen · 381 Unit-Tests + Playwright-Tests
+308 Migrationen · 20 Serverfunktionen · 388 Unit-Tests + Playwright-Tests
 
 ---
 
@@ -85,7 +85,7 @@ Weitere Befehle:
 
 ```sh
 npm run build      # Produktionsbau nach dist/
-npm test -- --run  # 381 Unit-Tests
+npm test -- --run  # 388 Unit-Tests
 npm run lint
 npx playwright test tests/full-app.spec.ts
 ```

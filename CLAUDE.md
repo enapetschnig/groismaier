@@ -22,8 +22,8 @@ Fuhrpark, Finanzplanung.
 **Das ist ein Betrieb, der damit sein Geld verrechnet.** Ein Fehler in einer
 Rechnung ist kein Anzeigefehler, sondern ein steuerrechtliches Problem.
 
-Größenordnung: ~99.000 Zeilen Code, 39 Seiten, ~100 Tabellen, 307 Migrationen,
-20 Serverfunktionen, 381 Tests.
+Größenordnung: ~99.000 Zeilen Code, 39 Seiten, ~100 Tabellen, 308 Migrationen,
+20 Serverfunktionen, 388 Tests.
 
 ---
 
@@ -60,7 +60,7 @@ SQL gegen die Produktivdatenbank.
 
 ```sh
 npx tsc --noEmit -p tsconfig.app.json   # exakt 5 bekannte Fehler, nicht mehr
-npm test -- --run                        # 381 Tests, alle grün
+npm test -- --run                        # 388 Tests, alle grün
 npm run build                            # muss durchlaufen
 ```
 

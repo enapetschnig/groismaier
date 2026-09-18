@@ -28,35 +28,10 @@ import {
   ReceiptText, RefreshCw, Reply, ReplyAll, Search, Send, Trash2, X,
 } from "lucide-react";
 import { buildProjectFilePath, safeStorageName } from "@/lib/projectFiles";
+import { ladeMailVorlagen, signaturFuer as signaturAus, LEERE_VORLAGEN, type MailVorlagen } from "@/lib/mailVorlagen";
 
-/**
- * Mail-Signaturen je Postfach (Kundenwunsch 01.09.2026: "Wenn ich eine Mail
- * beantworte, ist keine Mailsignatur dabei"). Wortlaut aus Christians
- * eigenen Mails übernommen; die anderen Postfächer bekommen die
- * Firmenvariante ohne persönlichen Namen.
- */
-const FIRMEN_SIGNATUR = `-----------------------------------
-HOLZBAU GROISMAIER GMBH
-3753 Dallein 43
-
-M +43 (0) 664 4520 758
-T +43 (0) 2913 221 30
-
-office@cg-holzbau.at
-www.cg-holzbau.at
------------------------------------`;
-const SIGNATUREN: Record<string, string> = {
-  "christian.groismaier@cg-holzbau.at": `Mit freundlichen Grüßen
-
-Christian Groismaier
-Holzbaumeister
-
-${FIRMEN_SIGNATUR}`,
-};
-const signaturFuer = (postfach: string) =>
-  SIGNATUREN[postfach] || `Mit freundlichen Grüßen
-
-${FIRMEN_SIGNATUR}`;
+// Signaturen je Postfach: Standard in lib/mailVorlagen.ts, im Admin
+// überschreibbar (Rechnungs-Layout → Textbausteine → Signaturen, 18.09.2026).
 
 const POSTFAECHER = [
   { adresse: "christian.groismaier@cg-holzbau.at", kurz: "Christian" },
@@ -112,6 +87,9 @@ export default function Email() {
   const [suchParams] = useSearchParams();
   const startPostfach = POSTFAECHER.find((p) => p.adresse === suchParams.get("postfach"))?.adresse;
   const [postfach, setPostfach] = useState(startPostfach || POSTFAECHER[0].adresse);
+  const [vorlagen, setVorlagen] = useState<MailVorlagen>(LEERE_VORLAGEN);
+  useEffect(() => { void ladeMailVorlagen().then(setVorlagen); }, []);
+  const signaturFuer = (pf: string) => signaturAus(pf, vorlagen);
   // Signatur beim Postfachwechsel nachziehen (Prüfbefund 02.09.2026): sonst
   // stand Christians persönliche Signatur unter einer Office-Mail, wenn das
   // Postfach erst NACH dem Öffnen des Verfassen-Fensters gewechselt wurde.
@@ -578,15 +556,15 @@ export default function Email() {
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Antworten"
-                          onClick={() => setVerfassen({ modus: "antwort", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "antwort", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(detailPostfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <Reply className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Allen antworten"
-                          onClick={() => setVerfassen({ modus: "antwortAlle", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "antwortAlle", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(detailPostfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <ReplyAll className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Weiterleiten"
-                          onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(postfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
+                          onClick={() => setVerfassen({ modus: "weiterleiten", an: "", cc: "", betreff: "", text: `\n\n${signaturFuer(detailPostfach)}`, bezugId: detail.id, bezugBetreff: detail.betreff })}>
                           <Forward className="h-4 w-4" />
                         </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" title="Als ungelesen markieren"
