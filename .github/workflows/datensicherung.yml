@@ -1,4 +1,11 @@
-# Monatliche Sicherung der Datenbank
+# Tägliche Sicherung der Datenbank (Kundenwunsch 19.09.2026: „1 x pro 24
+# Stunden … die alten Daten werden auch irgendwann überschrieben")
+#
+# Jeden Tag: Datenbank-Dump → GitHub-Artefakt (90 Tage) UND als gepackte
+# Datei in die App (Admin → Sicherheitskopie, Ordner „sicherungen/", die
+# letzten 60 Tage; ältere werden gelöscht — die Rotation, die der Betrieb
+# von der externen Festplatte kennt).
+# Am 1. des Monats und bei Handstart zusätzlich das komplette Übergabepaket.
 #
 # Warum hier und nicht auf einem Rechner: Ein Sicherungslauf, den jemand von
 # Hand starten muss, wird irgendwann vergessen. Hier läuft er von allein, an
@@ -39,8 +46,8 @@ name: Datensicherung
 
 on:
   schedule:
-    # 1. jedes Monats, 03:00 UTC (04:00 bzw. 05:00 österreichischer Zeit)
-    - cron: "0 3 1 * *"
+    # täglich 03:00 UTC (04:00 bzw. 05:00 österreichischer Zeit)
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       hinweis:
@@ -239,6 +246,51 @@ jobs:
             psql "$DATENBANK_URL" -f 01_firmendaten.sql
           ANLEITUNG
 
+      - name: Tagessicherung in die App legen (Rotation 60 Tage)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          PROJECT_REF: tdehljzmqwmfgfoyyoee
+        run: |
+          set -euo pipefail
+          DATUM=$(date -u +%Y-%m-%d)
+          # Alle Dumps des Tages in EINE gepackte Datei (ca. 5 MB statt 32).
+          tar -czf "/tmp/sicherung_${DATUM}.tar.gz" -C sicherung .
+          echo "Tagessicherung: $(du -h /tmp/sicherung_${DATUM}.tar.gz | cut -f1)"
+
+          KEYS=$(curl -sS "https://api.supabase.com/v1/projects/${PROJECT_REF}/api-keys" \
+                   -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}") || KEYS=""
+          SERVICE_KEY=$(echo "$KEYS" | jq -r '.[]? | select(.name=="service_role") | .api_key' 2>/dev/null || true)
+          if [ -z "$SERVICE_KEY" ] || [ "$SERVICE_KEY" = "null" ]; then
+            echo "::warning::Service-Role-Key nicht abrufbar (Token abgelaufen?) — Tagessicherung bleibt nur als Artefakt."
+            exit 0
+          fi
+          ST="https://${PROJECT_REF}.supabase.co/storage/v1"
+          HTTP=$(curl -sS -o /tmp/up.json -w "%{http_code}" -X POST "${ST}/object/uebergabe/sicherungen/sicherung_${DATUM}.tar.gz" \
+            -H "Authorization: Bearer ${SERVICE_KEY}" -H "Content-Type: application/gzip" -H "x-upsert: true" \
+            --data-binary "@/tmp/sicherung_${DATUM}.tar.gz")
+          if [ "$HTTP" -ge 200 ] && [ "$HTTP" -lt 300 ]; then echo "✓ sicherungen/sicherung_${DATUM}.tar.gz liegt in der App."; else echo "HTTP ${HTTP}"; cat /tmp/up.json; echo "::warning::Hochladen fehlgeschlagen."; exit 0; fi
+
+          # Rotation: alles älter als 60 Tage im Ordner sicherungen/ löschen.
+          GRENZE=$(date -u -d "60 days ago" +%Y-%m-%d)
+          curl -sS -o /tmp/liste.json -X POST "${ST}/object/list/uebergabe" \
+            -H "Authorization: Bearer ${SERVICE_KEY}" -H "Content-Type: application/json" \
+            --data "{\"prefix\":\"sicherungen/\",\"limit\":1000}"
+          ALT=$(jq -r --arg g "$GRENZE" '.[]? | .name | select(test("^sicherung_[0-9]{4}-[0-9]{2}-[0-9]{2}\\.tar\\.gz$")) | select((.[10:20]) < $g)' /tmp/liste.json || true)
+          if [ -n "$ALT" ]; then
+            PFADE=$(echo "$ALT" | jq -R -s 'split("\n") | map(select(length>0)) | map("sicherungen/" + .)')
+            curl -sS -o /dev/null -X DELETE "${ST}/object/uebergabe" \
+              -H "Authorization: Bearer ${SERVICE_KEY}" -H "Content-Type: application/json" \
+              --data "{\"prefixes\":${PFADE}}"
+            echo "✓ Rotation: $(echo "$ALT" | wc -l | tr -d ' ') Sicherung(en) älter als ${GRENZE} gelöscht."
+          else
+            echo "Rotation: nichts älter als ${GRENZE}."
+          fi
+
+      - name: Paket heute bauen?
+        run: |
+          # Nur am 1. des Monats oder bei Handstart — das Paket ist ~20 MB und ändert sich langsam.
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$(date -u +%d)" = "01" ]; then echo "PAKET=ja" >> "$GITHUB_ENV"; else echo "PAKET=nein" >> "$GITHUB_ENV"; fi
+
       # ────────────────────────────────────────────────────────────────────
       # Das komplette Uebergabepaket bauen und in die App legen
       #
@@ -249,11 +301,13 @@ jobs:
       # ist es nie veraltet, und es muss nichts verschickt werden.
       # ────────────────────────────────────────────────────────────────────
       - name: Node einrichten
+        if: env.PAKET == 'ja'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
       - name: Uebergabepaket bauen
+        if: env.PAKET == 'ja'
         env:
           SICHERUNG_ORDNER: ${{ github.workspace }}/sicherung
         run: |
@@ -264,6 +318,7 @@ jobs:
           ls -lh /tmp/Groismaier-App.zip
 
       - name: Paket in die App hochladen
+        if: env.PAKET == 'ja'
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PROJECT_REF: tdehljzmqwmfgfoyyoee

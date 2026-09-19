@@ -163,6 +163,9 @@ interface ProjectRow {
   mitarbeiter: MitarbeiterStunden[];
   materialkosten: number;
   fremdkosten: number;
+  /** Subgewerke laut verknüpfter Kalkulation, EK (0 = keine gekennzeichnet). */
+  fremdSoll: number;
+  fremdSollAnzahl: number;
   purchaseDocs: PurchaseRef[];
   basis: number;
   basisIsSoll: boolean;
@@ -179,6 +182,7 @@ type SortKey =
   | "lohnkosten"
   | "materialkosten"
   | "fremdkosten"
+  | "fremdSoll"
   | "db"
   | "marge";
 
@@ -535,6 +539,10 @@ export function ProjektNachkalkulation() {
 
       const purchaseDocs = purchasesByProject.get(proj.id) || [];
       const fremdkosten = purchaseDocs.reduce((s, p) => s + p.netto, 0);
+      // Subgewerke laut Kalkulation (Kundenwunsch 19.09.2026): Soll-Wert für die Eingangsrechnungen.
+      const sub = sollJeProjekt[proj.id]?.subgewerke;
+      const fremdSoll = sub?.ek || 0;
+      const fremdSollAnzahl = sub?.anzahl || 0;
 
       // Deckungsbeitrag: Basis = Verrechnet; solange nichts verrechnet
       // wurde, die Auftragssumme (gekennzeichnet als "Soll-Basis").
@@ -564,6 +572,8 @@ export function ProjektNachkalkulation() {
         mitarbeiter,
         materialkosten,
         fremdkosten,
+        fremdSoll,
+        fremdSollAnzahl,
         purchaseDocs,
         basis,
         basisIsSoll,
@@ -633,6 +643,7 @@ export function ProjektNachkalkulation() {
       lohnkosten: 0,
       materialkosten: 0,
       fremdkosten: 0,
+      fremdSoll: 0,
       basis: 0,
       db: 0,
     };
@@ -644,6 +655,7 @@ export function ProjektNachkalkulation() {
       t.lohnkosten += r.lohnkosten;
       t.materialkosten += r.materialkosten;
       t.fremdkosten += r.fremdkosten;
+      t.fremdSoll += r.fremdSoll;
       t.basis += r.basis;
       t.db += r.db;
     }
@@ -752,6 +764,7 @@ export function ProjektNachkalkulation() {
                   <SortHead label="Std. Ist" k="istStunden" className="text-right" />
                   <SortHead label="Lohn Ist" k="lohnkosten" className="text-right" />
                   <SortHead label="Material Ist" k="materialkosten" className="text-right" />
+                  <SortHead label="Fremd Soll" k="fremdSoll" className="text-right" />
                   <SortHead label="Fremd Ist" k="fremdkosten" className="text-right" />
                   <SortHead label="DB" k="db" className="text-right" />
                   <SortHead label="Marge" k="marge" className="text-right" />
@@ -779,6 +792,7 @@ export function ProjektNachkalkulation() {
                   <TableCell className="text-right font-semibold tabular-nums">{formatStunden(totals.istStunden)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.lohnkosten)}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.materialkosten)}</TableCell>
+                  <TableCell className="text-right font-semibold tabular-nums text-muted-foreground">{totals.fremdSoll > 0 ? formatEUR(totals.fremdSoll) : "—"}</TableCell>
                   <TableCell className="text-right font-semibold tabular-nums">{formatEUR(totals.fremdkosten)}</TableCell>
                   <TableCell className={cn("text-right font-semibold tabular-nums", totals.db < 0 && "text-red-600")}>
                     {formatEUR(totals.db)}
@@ -933,7 +947,13 @@ function ProjectTableRow({
         <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">
           {row.materialkosten !== 0 ? formatEUR(row.materialkosten) : "—"}
         </TableCell>
-        <TableCell className="py-2 text-right tabular-nums whitespace-nowrap">{formatEUR(row.fremdkosten)}</TableCell>
+        <TableCell className="py-2 text-right tabular-nums whitespace-nowrap text-muted-foreground" title="Subgewerke laut verknüpfter Kalkulation (EK)">
+          {row.fremdSoll > 0 ? formatEUR(row.fremdSoll) : "—"}
+        </TableCell>
+        <TableCell className={cn("py-2 text-right tabular-nums whitespace-nowrap", row.fremdSoll > 0 && row.fremdkosten > row.fremdSoll && "text-red-600 font-medium")}
+          title={row.fremdSoll > 0 ? `Subgewerke: Soll ${formatEUR(row.fremdSoll)} · Ist ${formatEUR(row.fremdkosten)}` : undefined}>
+          {formatEUR(row.fremdkosten)}
+        </TableCell>
         <TableCell className={cn("py-2 text-right tabular-nums whitespace-nowrap font-medium", row.db < 0 && "text-red-600")}>
           <span className="inline-flex items-center gap-1.5">
             {row.basisIsSoll && (
@@ -967,6 +987,13 @@ function ProjectTableRow({
                   <DetailLine label="Lohnkosten (Lohn × Faktor)" value={formatEUR(row.lohnkosten)} />
                   <DetailLine label="Materialkosten" value={formatEUR(row.materialkosten)} />
                   <DetailLine label="Fremdkosten" value={formatEUR(row.fremdkosten)} />
+                  {row.fremdSoll > 0 && (
+                    <DetailLine
+                      label={`Subgewerke laut Kalkulation (${row.fremdSollAnzahl} Aufbau${row.fremdSollAnzahl === 1 ? "" : "ten"}, EK)`}
+                      value={`${formatEUR(row.fremdSoll)} → ${row.fremdkosten - row.fremdSoll >= 0 ? "+" : ""}${formatEUR(row.fremdkosten - row.fremdSoll)}`}
+                      valueClass={row.fremdkosten > row.fremdSoll ? "text-red-600" : "text-green-700"}
+                    />
+                  )}
                   <DetailLine
                     label="Deckungsbeitrag"
                     value={formatEUR(row.db)}

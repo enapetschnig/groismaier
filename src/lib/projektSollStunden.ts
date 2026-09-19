@@ -14,7 +14,7 @@
 // woher er kommt.
 // ============================================================================
 import { supabase } from "@/integrations/supabase/client";
-import { calcProjekt, normalizeKalkulationState, resolveBetriebsdaten } from "./kalkulationEngine";
+import { calcProjekt, normalizeKalkulationState, resolveBetriebsdaten, subgewerkSumme, type SubgewerkSumme } from "./kalkulationEngine";
 
 export type SollQuelle = "manuell" | "kalkulation" | "angebot";
 
@@ -24,6 +24,8 @@ export interface SollStunden {
   /** Bei Quelle „kalkulation": Name der verknüpften Kalkulation. */
   kalkulationName?: string;
   kalkulationId?: string;
+  /** Bei Quelle „kalkulation": Subgewerke laut Kalkulation (Kundenwunsch 19.09.2026). */
+  subgewerke?: SubgewerkSumme;
 }
 
 export interface KalkulationKurz { id: string; name: string; bauvorhaben: string | null; kundeName: string | null; project_id: string | null }
@@ -45,6 +47,13 @@ export function kalkulationArbeitsstunden(data: unknown, settings: Record<string
   return r1(calcProjekt(st, bd).gesamt.arbeitszeitH);
 }
 
+/** Subgewerke einer Kalkulation (VK/EK der gekennzeichneten Aufbauten). */
+export function kalkulationSubgewerke(data: unknown, settings: Record<string, string>): SubgewerkSumme {
+  const st = normalizeKalkulationState(data);
+  const bd = resolveBetriebsdaten(st.settings.businessData, settings);
+  return subgewerkSumme(calcProjekt(st, bd));
+}
+
 /** Händisch oder aus der verknüpften Kalkulation — sonst null (dann gilt das Angebot). */
 export async function ladeSollStunden(projectId: string): Promise<SollStunden | null> {
   const [{ data: proj }, { data: kalks }] = await Promise.all([
@@ -57,7 +66,7 @@ export async function ladeSollStunden(projectId: string): Promise<SollStunden | 
   const k = ((kalks as any[]) || [])[0];
   if (k) {
     const settings = await ladeSettings();
-    return { quelle: "kalkulation", stunden: kalkulationArbeitsstunden(k.data, settings), kalkulationName: k.name, kalkulationId: k.id };
+    return { quelle: "kalkulation", stunden: kalkulationArbeitsstunden(k.data, settings), kalkulationName: k.name, kalkulationId: k.id, subgewerke: kalkulationSubgewerke(k.data, settings) };
   }
   return null;
 }
@@ -74,12 +83,13 @@ export async function ladeSollStundenJeProjekt(): Promise<Record<string, SollStu
     const settings = await ladeSettings();
     for (const k of kalkListe) {
       if (out[k.project_id]) continue;   // neueste je Projekt gewinnt (sortiert)
-      out[k.project_id] = { quelle: "kalkulation", stunden: kalkulationArbeitsstunden(k.data, settings), kalkulationName: k.name, kalkulationId: k.id };
+      out[k.project_id] = { quelle: "kalkulation", stunden: kalkulationArbeitsstunden(k.data, settings), kalkulationName: k.name, kalkulationId: k.id, subgewerke: kalkulationSubgewerke(k.data, settings) };
     }
   }
   for (const p of ((projs as any[]) || [])) {
     const h = Number(p.geplante_stunden);
-    if (h > 0) out[p.id] = { quelle: "manuell", stunden: r1(h) };
+    // Händische Stunden gehen vor — die Subgewerke der Kalkulation bleiben erhalten.
+    if (h > 0) out[p.id] = { quelle: "manuell", stunden: r1(h), subgewerke: out[p.id]?.subgewerke };
   }
   return out;
 }

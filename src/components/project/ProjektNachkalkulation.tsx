@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { supabase } from "@/integrations/supabase/client";
+import { ladeSollStunden } from "@/lib/projektSollStunden";
+import type { SubgewerkSumme } from "@/lib/kalkulationEngine";
 import { TrendingUp, TrendingDown, AlertTriangle, Info, ChevronDown, ChevronUp } from "lucide-react";
 
 /**
@@ -36,6 +38,13 @@ export function ProjektNachkalkulation({ projectId }: Props) {
   // Standardmäßig ZUGEKLAPPT — die Geldzahlen erscheinen erst auf
   // "Nachkalkulation öffnen" (bewusster Blick statt Dauer-Anzeige).
   const [offen, setOffen] = useState(false);
+  // Subgewerke laut verknüpfter Kalkulation (Kundenwunsch 19.09.2026)
+  const [sub, setSub] = useState<SubgewerkSumme | null>(null);
+  useEffect(() => {
+    let weg = false;
+    void ladeSollStunden(projectId).then((q) => { if (!weg && q?.subgewerke && q.subgewerke.anzahl > 0) setSub(q.subgewerke); });
+    return () => { weg = true; };
+  }, [projectId]);
   const [d, setD] = useState<null | {
     erloes: number; lohn: number; material: number; fremd: number;
     faktor: number; stundenIst: number;
@@ -186,7 +195,8 @@ export function ProjektNachkalkulation({ projectId }: Props) {
         <Zeile label="Erlöse (gestellte Rechnungen, netto)" wert={d.erloes} />
         <Zeile label="Lohnkosten" sub={`${d.stundenIst} Std × Lohn × ${d.faktor.toLocaleString("de-AT")} (inkl. Nebenkosten)`} wert={d.lohn} minus />
         <Zeile label="Materialkosten (Verbrauch × EK)" wert={d.material} minus />
-        <Zeile label="Fremdkosten (Eingangsrechnungen)" wert={d.fremd} minus />
+        <Zeile label="Fremdkosten (Eingangsrechnungen)" wert={d.fremd} minus
+          sub={sub ? `Subgewerke laut Kalkulation: ${eur(sub.ek)} EK (${sub.anzahl} Aufbau${sub.anzahl === 1 ? "" : "ten"}, verkauft um ${eur(sub.vk)}) · ${d.fremd > sub.ek ? "über" : "unter"} Kalkulation um ${eur(Math.abs(d.fremd - sub.ek))}` : undefined} />
         <div className={`flex items-baseline justify-between mt-2 pt-2 border-t-2 ${positiv ? "border-green-600/40" : "border-destructive/40"}`}>
           <span className="font-semibold">Deckungsbeitrag</span>
           <span className={`font-mono tabular-nums font-bold text-lg ${positiv ? "text-green-700" : "text-destructive"}`}>

@@ -185,6 +185,13 @@ export interface KalkModule {
    * Position bepreist (07.09.2026, siehe lvKalkulation.ts). undefined sonst.
    */
   lvPositionId?: string;
+  /**
+   * Subgewerk / Fremdleistung (Kundenwunsch 19.09.2026): Dieser Aufbau wird
+   * nicht selbst ausgeführt, sondern zugekauft (Maler, Spengler, Elektriker…).
+   * In der Nachkalkulation steht er als eigener Posten „Subgewerke laut
+   * Kalkulation" den Eingangsrechnungen gegenüber.
+   */
+  istSubgewerk?: boolean;
   area: number;               // Fläche in m²
   wallHeight: number;         // Wandhöhe in m — im HTML tot, hier für die
                               // Excel-Riegelgeometrie wiederbelebt
@@ -1772,6 +1779,7 @@ export function normalizeKalkulationState(raw: unknown): KalkulationState {
         wallHeight: num(m.wallHeight),
         insulationThickness: num(m.insulationThickness) || 20,
         isOptional: !!m.isOptional,
+        istSubgewerk: m.istSubgewerk === true ? true : undefined,
         collapsed: !!m.collapsed,
         materialRows: rows,
         workers: num(m.workers),
@@ -1836,3 +1844,28 @@ const nf = new Intl.NumberFormat("de-AT", { minimumFractionDigits: 2, maximumFra
 
 export const fmt = (n: number): string => nf.format(Number.isFinite(n) ? n : 0);
 export const fmtEuro = (n: number): string => `${fmt(n)} €`;
+
+// ── Subgewerke (Kundenwunsch 19.09.2026) ─────────────────────────────────────
+
+export interface SubgewerkSumme {
+  /** Verkauf (adjustiert) der als Subgewerk gekennzeichneten Aufbauten. */
+  vk: number;
+  /** Was der Sub dafür kostet: Material-EK + eingekaufte Dienstleistungen (Selbstkosten ohne Lohn/Fahrten). */
+  ek: number;
+  anzahl: number;
+  /** Optionale Aufbauten sind NICHT enthalten — sie sind noch nicht beauftragt. */
+  optionalAnzahl: number;
+}
+
+/** Summe der Subgewerk-Aufbauten eines Projekts — Vergleichswert für die Eingangsrechnungen. */
+export function subgewerkSumme(projekt: Pick<ProjektErgebnis, "zeilen">): SubgewerkSumme {
+  const out: SubgewerkSumme = { vk: 0, ek: 0, anzahl: 0, optionalAnzahl: 0 };
+  for (const z of projekt.zeilen) {
+    if (!z.module.istSubgewerk) continue;
+    if (z.module.isOptional) { out.optionalAnzahl += 1; continue; }
+    out.anzahl += 1;
+    out.vk = round2(out.vk + z.gesamtAdj);
+    out.ek = round2(out.ek + z.verdienst.materialEk + z.verdienst.dienstleistungen);
+  }
+  return out;
+}

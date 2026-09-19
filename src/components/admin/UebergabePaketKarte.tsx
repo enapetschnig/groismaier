@@ -28,6 +28,10 @@ interface PaketInfo {
   stand: Date;
 }
 
+/** Tägliche Datensicherung (Kundenwunsch 19.09.2026), Ordner sicherungen/. */
+interface Tagessicherung { name: string; datum: string; groesseMb: number }
+const SICHERUNGEN = "sicherungen";
+
 /** Wie viele Tage ist das Paket alt? */
 const tageAlt = (d: Date) => Math.floor((Date.now() - d.getTime()) / 86_400_000);
 
@@ -36,10 +40,17 @@ export function UebergabePaketKarte() {
   const [paket, setPaket] = useState<PaketInfo | null>(null);
   const [laedt, setLaedt] = useState(true);
   const [holt, setHolt] = useState(false);
+  const [tages, setTages] = useState<Tagessicherung[]>([]);
 
   useEffect(() => {
     void (async () => {
-      const { data, error } = await supabase.storage.from(ABLAGE).list("", { limit: 100 });
+      const [{ data, error }, { data: sich }] = await Promise.all([
+        supabase.storage.from(ABLAGE).list("", { limit: 100 }),
+        supabase.storage.from(ABLAGE).list(SICHERUNGEN, { limit: 200, sortBy: { column: "name", order: "desc" } }),
+      ]);
+      setTages(((sich || []) as any[])
+        .filter((d) => /^sicherung_\d{4}-\d{2}-\d{2}\.tar\.gz$/.test(d.name))
+        .map((d) => ({ name: d.name, datum: d.name.slice(10, 20), groesseMb: (d.metadata?.size ?? 0) / 1024 / 1024 })));
       setLaedt(false);
       if (error || !data) return;
       const eintrag = data.find((d) => d.name === DATEI);
@@ -51,12 +62,12 @@ export function UebergabePaketKarte() {
     })();
   }, []);
 
-  const herunterladen = async () => {
+  const herunterladen = async (pfad: string = DATEI) => {
     setHolt(true);
     // Signierte URL statt öffentlichem Link: Die Ablage bleibt geschlossen,
     // der Link gilt nur fünf Minuten und nur für diesen Klick.
-    const { data, error } = await supabase.storage.from(ABLAGE).createSignedUrl(DATEI, 300, {
-      download: DATEI,
+    const { data, error } = await supabase.storage.from(ABLAGE).createSignedUrl(pfad, 300, {
+      download: pfad.split("/").pop() || pfad,
     });
     setHolt(false);
     if (error || !data?.signedUrl) {
@@ -82,7 +93,8 @@ export function UebergabePaketKarte() {
         <CardDescription>
           Alles, was zu dieser App gehört, in einer Datei: das Programm selbst, die
           Anleitungen und eine Sicherung aller Daten — Kunden, Angebote, Rechnungen,
-          Stunden, Projekte. Wird automatisch jeden Monat neu erstellt.
+          Stunden, Projekte. Das Paket wird monatlich neu erstellt, die Datenbank
+          zusätzlich jede Nacht gesichert (unten).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -114,7 +126,7 @@ export function UebergabePaketKarte() {
               </p>
             )}
 
-            <Button onClick={herunterladen} disabled={holt}>
+            <Button onClick={() => void herunterladen()} disabled={holt}>
               <Download className="mr-2 h-4 w-4" />
               {holt ? "Wird vorbereitet …" : "Herunterladen"}
             </Button>
@@ -140,6 +152,36 @@ export function UebergabePaketKarte() {
             Sicherungslauf erstellt.
           </p>
         )}
+
+        {/* Tägliche Datensicherung (Kundenwunsch 19.09.2026: „1 x pro 24 Stunden …
+            die alten werden irgendwann überschrieben") */}
+        <div className="space-y-2 border-t pt-4">
+          <p className="font-medium">Tägliche Datensicherung</p>
+          <p className="text-sm text-muted-foreground">
+            Jede Nacht um 4 Uhr wird die komplette Datenbank gesichert (Kunden, Belege, Stunden, Projekte,
+            Benutzer). Die letzten 60 Tage liegen hier, ältere werden automatisch gelöscht. Zusätzlich
+            bewahrt GitHub jede Sicherung 90 Tage auf. Zum Aufheben auf der eigenen Platte: gewünschten
+            Tag herunterladen. Fotos und PDFs sind nicht enthalten.
+          </p>
+          {tages.length === 0 ? (
+            <p className="text-sm text-muted-foreground">Noch keine Tagessicherung — die erste kommt beim nächsten nächtlichen Lauf.</p>
+          ) : (
+            <ul className="divide-y rounded-md border text-sm">
+              {tages.slice(0, 10).map((t) => (
+                <li key={t.name} className="flex items-center justify-between gap-2 px-3 py-1.5">
+                  <span>
+                    {new Date(t.datum + "T12:00:00").toLocaleDateString("de-AT", { weekday: "short", day: "2-digit", month: "2-digit", year: "numeric" })}
+                    <span className="ml-2 text-muted-foreground">{t.groesseMb.toFixed(1)} MB</span>
+                  </span>
+                  <Button size="sm" variant="outline" className="h-8" disabled={holt} onClick={() => void herunterladen(`${SICHERUNGEN}/${t.name}`)}>
+                    <Download className="mr-1 h-3.5 w-3.5" /> Laden
+                  </Button>
+                </li>
+              ))}
+              {tages.length > 10 && <li className="px-3 py-1.5 text-xs text-muted-foreground">… und {tages.length - 10} ältere (bis 60 Tage).</li>}
+            </ul>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

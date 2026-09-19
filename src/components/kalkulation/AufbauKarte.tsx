@@ -103,7 +103,7 @@ export function AufbauKarte({
           title="Ziehen zum Umsortieren"
         ><GripVertical className="h-4 w-4" /></span>
         <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-kb-blue text-xs font-bold text-white">{index + 1}</span>
-        <span className="min-w-0 flex-1 truncate text-sm font-bold">{titel}{m.isOptional ? " (optional)" : ""}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-bold">{titel}{m.isOptional ? " (optional)" : ""}{m.istSubgewerk ? " · Subgewerk" : ""}</span>
         <span className="hidden text-xs text-muted-foreground sm:block">
           Material <b className="tabular-nums">{fmtEuro(materialAdj)}</b> · Arbeit <b className="tabular-nums">{fmtEuro(laborAdj)}</b> · Gesamt <b className="tabular-nums text-foreground">{fmtEuro(gesamtAdj)}</b>
         </span>
@@ -389,6 +389,14 @@ export function AufbauKarte({
               <input type="checkbox" className="h-4 w-4" checked={m.isOptional}
                 onChange={(e) => onPatch({ isOptional: e.target.checked })} />
               optional
+            </label>
+            {/* Subgewerk (Kundenwunsch 19.09.2026): zugekaufte Leistung — in der
+                Nachkalkulation eigener Posten gegen die Eingangsrechnungen. */}
+            <label className="flex h-11 cursor-pointer items-center gap-2 px-1 text-xs sm:h-7"
+              title="Zugekaufte Leistung (Maler, Spengler, Elektriker …). Erscheint in der Nachkalkulation als eigener Posten und wird mit den Eingangsrechnungen verglichen.">
+              <input type="checkbox" className="h-4 w-4" checked={!!m.istSubgewerk}
+                onChange={(e) => onPatch({ istSubgewerk: e.target.checked || undefined })} />
+              Subgewerk
             </label>
             {/* Direkt an der Karte (Kundenwunsch 22.08.2026: "Ich muss einzelne
                 Aufbauten als z. B. AW 1 speichern können") — der Weg über den

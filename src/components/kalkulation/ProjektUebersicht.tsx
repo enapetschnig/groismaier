@@ -8,7 +8,7 @@
 import { AlertTriangle } from "lucide-react";
 import {
   ProjektErgebnis, VerdienstErgebnis, MargeAmpel,
-  fmt, fmtEuro, margeAmpel, margeStatus,
+  fmt, fmtEuro, margeAmpel, margeStatus, subgewerkSumme,
 } from "@/lib/kalkulationEngine";
 
 /** Farbklassen der Marge-Ampel (grün ≥ Schwelle+10, gelb ≥ Schwelle, rot darunter). */
@@ -254,6 +254,12 @@ export function ProjektUebersicht({ projekt }: { projekt: ProjektErgebnis }) {
                 <span>Material <b className="tabular-nums text-foreground">{fmtEuro(projekt.totalMaterial)}</b></span>
                 <span>Arbeit <b className="tabular-nums text-foreground">{fmtEuro(projekt.totalArbeit)}</b></span>
                 <span className="flex items-center gap-1">Marge <MargeBadge v={projekt.verdienst} schwelle={projekt.warnMargeProzent} /></span>
+                {subgewerkSumme(projekt).anzahl > 0 && (
+                  <span title="Als Subgewerk gekennzeichnete Aufbauten — Vergleichswert für die Eingangsrechnungen in der Nachkalkulation">
+                    davon Subgewerke <b className="tabular-nums text-foreground">{fmtEuro(subgewerkSumme(projekt).vk)}</b>
+                    {" "}(EK {fmtEuro(subgewerkSumme(projekt).ek)}, {subgewerkSumme(projekt).anzahl} Aufbau{subgewerkSumme(projekt).anzahl === 1 ? "" : "ten"})
+                  </span>
+                )}
               </div>
             </div>
           )}

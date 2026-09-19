@@ -31,7 +31,7 @@ import {
   AngebotItem, ProjektErgebnis, buildAngebotItems, calcProjekt,
   normalizeKalkulationState, resolveBetriebsdaten, round2,
   alsUnterkapitel,
-  bereichsZeilen,
+  bereichsZeilen, subgewerkSumme,
 } from "@/lib/kalkulationEngine";
 
 // Hinweis: Die Tabelle `kalkulationen` (inkl. Spalte `ist_vorlage`, siehe
@@ -255,6 +255,61 @@ export default function KalkulationHub() {
     return [...map.values()].sort((a, b) => (a.letzte < b.letzte ? 1 : -1));
   }, [kalkulationen]);
   const offenesBvObjekt = bauvorhaben.find((b) => b.key === offenesBv) || null;
+
+  /**
+   * Neue Kalkulation IM geöffneten Bauvorhaben (Kundenfrage 19.09.2026: „rechts
+   * oben auf Neue Kalkulation macht einen neuen Hauptordner"): Kunde bzw.
+   * Ordnername sind vorbelegt, die Kalkulation landet im selben Ordner.
+   */
+  const neueKalkulationImBv = () => {
+    if (!offenesBvObjekt) return;
+    const erste = offenesBvObjekt.rows[0];
+    if (erste?.customer_id) { setCustomerId(erste.customer_id); setNeuBauvorhaben(""); }
+    else { setCustomerId(null); setNeuBauvorhaben((erste?.bauvorhaben || erste?.name || offenesBvObjekt.titel).trim()); }
+    setName(""); setTemplateId(NO_TEMPLATE);
+    setDialogOpen(true);
+  };
+
+  /**
+   * Gesamtauswertung des Bauvorhabens (Kundenwunsch 19.09.2026: „Stunden,
+   * Marge … so wie es in den einzelnen Kalkulationen auch hervorgeht"):
+   * alle Kalkulationen des Ordners werden durchgerechnet und summiert.
+   */
+  type BvZeile = { id: string; name: string; material: number; arbeit: number; stunden: number; gesamt: number; marge: number | null; sub: number; unsicher: boolean };
+  const [bvAuswertung, setBvAuswertung] = useState<{ key: string; zeilen: BvZeile[]; laedt: boolean } | null>(null);
+  useEffect(() => {
+    if (!offenesBvObjekt) { setBvAuswertung(null); return; }
+    const key = offenesBvObjekt.key;
+    const ids = offenesBvObjekt.rows.map((r) => r.id);
+    let weg = false;
+    setBvAuswertung({ key, zeilen: [], laedt: true });
+    (async () => {
+      const [{ data: kalks }, { data: setData }] = await Promise.all([
+        kalkTable().select("id, name, data").in("id", ids),
+        supabase.from("app_settings").select("key, value").like("key", "kalk\\_%"),
+      ]);
+      if (weg) return;
+      const settings: Record<string, string> = {};
+      for (const x of (setData || []) as any[]) settings[x.key] = x.value;
+      const zeilen: BvZeile[] = [];
+      for (const k of ((kalks as any[]) || [])) {
+        try {
+          const st = normalizeKalkulationState(k.data);
+          const bd = resolveBetriebsdaten(st.settings.businessData, settings);
+          const pr: ProjektErgebnis = calcProjekt(st, bd);
+          zeilen.push({
+            id: k.id, name: k.name, material: pr.totalMaterial, arbeit: pr.totalArbeit, stunden: pr.gesamt.arbeitszeitH,
+            gesamt: pr.totalGesamt, marge: pr.verdienst.erloes > 0 ? pr.verdienst.margeProzent : null,
+            sub: subgewerkSumme(pr).vk, unsicher: pr.verdienst.unsicher,
+          });
+        } catch { zeilen.push({ id: k.id, name: k.name, material: 0, arbeit: 0, stunden: 0, gesamt: 0, marge: null, sub: 0, unsicher: true }); }
+      }
+      zeilen.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      setBvAuswertung({ key, zeilen, laedt: false });
+    })();
+    return () => { weg = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [offenesBvObjekt?.key, offenesBvObjekt?.rows.map((r) => r.id + r.updated_at).join("|")]);
 
   /** Vollständige Zeile (inkl. data-Blob) für Kopier-Aktionen laden. */
   const fetchFull = async (id: string): Promise<any | null> => {
@@ -712,9 +767,70 @@ export default function KalkulationHub() {
                   <ArrowLeft className="h-4 w-4" /> Alle Bauvorhaben
                 </Button>
                 <span className="min-w-0 truncate text-sm font-semibold">{offenesBvObjekt.titel}</span>
+                <Button size="sm" className="h-9 gap-1" onClick={neueKalkulationImBv} title="Leere Kalkulation in diesem Bauvorhaben anlegen">
+                  <Plus className="h-4 w-4" /> Neue Kalkulation hier
+                </Button>
                 <span className="ml-auto text-sm font-bold text-primary">{fmtEuro(offenesBvObjekt.summe)}</span>
               </div>
             )}
+            {/* Gesamtauswertung des Bauvorhabens (Kundenwunsch 19.09.2026) */}
+            {tab === "kalkulationen" && offenesBvObjekt && bvAuswertung?.key === offenesBvObjekt.key && (() => {
+              const z = bvAuswertung.zeilen;
+              const sum = (f: (x: BvZeile) => number) => z.reduce((a, x) => a + f(x), 0);
+              const gesamt = sum((x) => x.gesamt), material = sum((x) => x.material), arbeit = sum((x) => x.arbeit), stunden = sum((x) => x.stunden), sub = sum((x) => x.sub);
+              // Marge des Ordners = gewichtet über die Erlöse (Σ DB ÷ Σ Erlös)
+              const erloes = z.reduce((a, x) => a + (x.marge !== null ? x.gesamt : 0), 0);
+              const db = z.reduce((a, x) => a + (x.marge !== null ? x.gesamt * x.marge / 100 : 0), 0);
+              const marge = erloes > 0 ? (db / erloes) * 100 : null;
+              const fmtH = (n: number) => `${n.toLocaleString("de-AT", { maximumFractionDigits: 1 })} h`;
+              const fmtP = (n: number | null) => (n === null ? "—" : `${n.toLocaleString("de-AT", { maximumFractionDigits: 1 })} %`);
+              return (
+                <div className="mb-3 rounded-lg border bg-card p-3">
+                  <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted-foreground">Gesamtauswertung {offenesBvObjekt.titel}</div>
+                  {bvAuswertung.laedt ? (
+                    <p className="text-sm text-muted-foreground">Rechnet …</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+                        <div><p className="text-[11px] text-muted-foreground">Gesamt</p><p className="text-lg font-bold tabular-nums">{fmtEuro(gesamt)}</p></div>
+                        <div><p className="text-[11px] text-muted-foreground">Material</p><p className="text-lg font-bold tabular-nums">{fmtEuro(material)}</p></div>
+                        <div><p className="text-[11px] text-muted-foreground">Arbeit</p><p className="text-lg font-bold tabular-nums">{fmtEuro(arbeit)}</p></div>
+                        <div><p className="text-[11px] text-muted-foreground">Arbeitsstunden</p><p className="text-lg font-bold tabular-nums">{fmtH(stunden)}</p></div>
+                        <div><p className="text-[11px] text-muted-foreground">Marge (gewichtet)</p><p className={`text-lg font-bold tabular-nums ${marge !== null && marge < 20 ? "text-amber-700" : ""}`}>{fmtP(marge)}</p></div>
+                        <div><p className="text-[11px] text-muted-foreground">davon Subgewerke</p><p className="text-lg font-bold tabular-nums">{sub > 0 ? fmtEuro(sub) : "—"}</p></div>
+                      </div>
+                      <div className="mt-3 overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b text-left text-muted-foreground">
+                              <th className="py-1 pr-2">Kalkulation</th>
+                              <th className="py-1 pr-2 text-right">Material</th>
+                              <th className="py-1 pr-2 text-right">Arbeit</th>
+                              <th className="py-1 pr-2 text-right">Stunden</th>
+                              <th className="py-1 pr-2 text-right">Gesamt</th>
+                              <th className="py-1 text-right">Marge</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {z.map((x) => (
+                              <tr key={x.id} className="border-b last:border-0">
+                                <td className="py-1 pr-2">{x.name}{x.sub > 0 ? <span className="ml-1 text-[10px] text-muted-foreground">(Sub {fmtEuro(x.sub)})</span> : null}</td>
+                                <td className="py-1 pr-2 text-right tabular-nums">{fmtEuro(x.material)}</td>
+                                <td className="py-1 pr-2 text-right tabular-nums">{fmtEuro(x.arbeit)}</td>
+                                <td className="py-1 pr-2 text-right tabular-nums">{fmtH(x.stunden)}</td>
+                                <td className="py-1 pr-2 text-right font-medium tabular-nums">{fmtEuro(x.gesamt)}</td>
+                                <td className={`py-1 text-right tabular-nums ${x.marge !== null && x.marge < 20 ? "text-amber-700" : ""}`}>{fmtP(x.marge)}{x.unsicher ? " *" : ""}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {z.some((x) => x.unsicher) && <p className="mt-1 text-[10px] text-muted-foreground">* Marge unsicher — mindestens ein Material-EK ist geschätzt.</p>}
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })()}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {(tab === "kalkulationen" && offenesBvObjekt ? offenesBvObjekt.rows : list).map(renderCard)}
             </div>
@@ -820,7 +936,7 @@ export default function KalkulationHub() {
       {/* Neue Kalkulation Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Neue Kalkulation</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>Neue Kalkulation{offenesBvObjekt && (customerId || neuBauvorhaben) ? ` in „${offenesBvObjekt.titel}"` : ""}</DialogTitle></DialogHeader>
           <div className="space-y-4 py-2">
             <div className="space-y-1.5">
               <Label htmlFor="kalk-name">Bezeichnung *</Label>
